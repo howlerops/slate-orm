@@ -4923,9 +4923,9 @@
     {
       "entry": "2026-09-23-five-built-features-the-docs-never-mentioned.md",
       "key": "The client-facing docs were not touched.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "site/docs/clients.html carries a table of the five against each client's spelling, and each of the three SDK READMEs carries the same five as running code in its own idiom — ledger/2026-09-27-the-client-docs-said-there-were-no-computed-values.md. Reading the clients to write it also withdrew two false 'what is not here' bullets in the Go and TypeScript READMEs: computed values and a vector surface both exist.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-23-the-cliff-did-not-come-when-called.md",
@@ -6674,6 +6674,27 @@
       "key": "Nothing stops the docstring going stale again.",
       "verdict": "deliberate",
       "by": "this entry: a guard would have to extract Python from a Rust doc comment and execute it against the same fixtures, which is running untrusted-shaped code out of a comment in a static check that otherwise makes no subprocess calls. What is kept instead is that the transcript now reproduces five pinned values rather than three, so the next arm added without updating it breaks two of them.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-client-docs-said-there-were-no-computed-values.md",
+      "key": "None of the twenty-odd lines of example code is executed.",
+      "verdict": "open",
+      "by": "a README fence that is wrong is the defect this entry is about, and four of these were wrong when first written. The cheap version — move each fence into the client's own suite and quote it from there — is real work nobody has done.",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-client-docs-said-there-were-no-computed-values.md",
+      "key": "It documents the five, not the surface.",
+      "verdict": "deliberate",
+      "by": "this entry: enumerating what the clients can reach against what the wire offers needs a machine-readable inventory of the wire's surface, which is the second schema rejected in ledger/2026-09-21-store-the-hash-inputs-and-nothing-else.md and again for the features page in ledger/2026-09-23-five-built-features-the-docs-never-mentioned.md.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-client-docs-said-there-were-no-computed-values.md",
+      "key": "The two withdrawn bullets were found by hand, and nothing lo",
+      "verdict": "deliberate",
+      "by": "this entry: a guard would have to decide whether a sentence of English is still true of the code, which is the prose parsing every guard here declines. What is possible and not done is narrower — a roster of 'what is not here' claims, each naming a symbol that must NOT exist — and it is the EXPECTED_REFUSALS idiom pointed at documentation.",
       "reviewed": "2026-09-27"
     }
   ]

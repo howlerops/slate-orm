@@ -160,6 +160,78 @@
       The three-SDK conformance runner compares all three clients on every one
       of them. <a href="limits.html">What is still missing is here.</a>
     </p>
+
+    <h2>Windows, arrays, full-text, views and soft delete</h2>
+
+    <p>
+      Five features shipped after the clients did, and each of the three spells
+      them in its own idiom. Whether a feature is reachable from your language
+      used to be answerable only by reading the entry that built it; this is
+      the one place that says so.
+    </p>
+
+    <div class="doc-table">
+    <table>
+      <tr><th></th><th>Python</th><th>Go</th><th>TypeScript</th></tr>
+      <tr>
+        <td>window functions</td>
+        <td><code>query.window(Window.row_number().over(…))</code>,
+            read with <code>row.windowed(i)</code></td>
+        <td><code>slate.RowNumberOver().Over(…)</code>,
+            read with <code>stream.Windowed()</code></td>
+        <td><code>rowNumber()</code>, <code>over(…)</code>,
+            named in a sort key by <code>windowed(i)</code></td>
+      </tr>
+      <tr>
+        <td>array columns</td>
+        <td><code>Column(…, ValueType.ARRAY, element=…)</code>;
+            values are <code>Array([…])</code></td>
+        <td><code>ColumnDef{Type: slate.TypeArray, Element: …}</code>;
+            values are <code>slate.Array{…}</code></td>
+        <td><code>{ type: "array", element: … }</code>;
+            values are <code>array([…])</code></td>
+      </tr>
+      <tr>
+        <td>full-text</td>
+        <td><code>columns.text.contains("…")</code></td>
+        <td><code>slate.Contains(ordinal, "…")</code></td>
+        <td><code>contains(ordinal, "…")</code></td>
+      </tr>
+      <tr>
+        <td>views</td>
+        <td><code>table.as_view("name")</code></td>
+        <td><code>table.AsView("name")</code></td>
+        <td><code>asView(table, "name")</code></td>
+      </tr>
+      <tr>
+        <td>soft delete</td>
+        <td><code>query.include_deleted()</code>,
+            <code>session.purge_deleted(…)</code></td>
+        <td><code>Query{IncludeDeleted: true}</code>,
+            <code>session.PurgeDeleted(…)</code></td>
+        <td><code>{ includeDeleted: true }</code>,
+            <code>session.purgeDeleted(…)</code></td>
+      </tr>
+    </table>
+    </div>
+
+    <p>
+      Two of these need a grant rather than a method.
+      <strong>Reading retired rows</strong> is privileged: without
+      <code>read_deleted</code> the flag is refused rather than ignored, because
+      a request that asked to see deleted rows and silently did not is worse
+      than one that failed. And a <strong>purge</strong> needs
+      <code>delete</code> <em>and</em> <code>read_deleted</code>, since it scans
+      what it is about to destroy.
+    </p>
+
+    <p>
+      There is no <code>restore</code> in any client, and that is not an
+      omission. A soft delete stamps a column, so undoing one is an ordinary
+      update writing null into that column — reachable from all three today,
+      given <code>read_deleted</code>. A dedicated call would be a second way
+      to write one column, with its own authorization to keep in step.
+    </p>
     <nav class="doc-pager" data-docs="pager"></nav>
   </article>
 

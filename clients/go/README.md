@@ -232,10 +232,53 @@ first. `NotFound` and not `Aborted`: a row that moved can be re-read and the
 decision remade, and a row that is gone cannot, so a retry loop on `Aborted`
 would spin.
 
+## Windows, arrays, full-text, views and soft delete
+
+Five features shipped after this client did. All five are reachable; none has
+a section above, which is why they are listed here.
+
+```go
+// A window value, and reading it back.
+q := slate.Query{
+    Table:  "docs",
+    Window: []slate.Window{slate.RowNumberOver().Over([]slate.Column{kind}, nil)},
+}
+for stream.Next() {
+    rank := stream.Windowed()[0]
+}
+
+// An array column, and a value for one.
+slate.ColumnDef{Name: "tags", Type: slate.TypeArray, Element: slate.TypeString}
+slate.Array{slate.String("a"), slate.String("b")}
+
+// Full text, over a column with a text index.
+slate.Contains(body, "slate")
+
+// A view: the same declaration under the catalog's name for it.
+docs.AsView("recent")
+
+// Soft delete: reading retired rows, and erasing them.
+slate.Query{Table: "docs", IncludeDeleted: true}   // needs `read_deleted`
+session.PurgeDeleted(ctx, "docs", before, 0)       // needs `delete` *and* `read_deleted`
+```
+
+`IncludeDeleted` without the grant is **refused**, not ignored: a read that
+asked to see retired rows and silently did not is worse than one that failed.
+
+There is no `Restore`. A soft delete stamps a column, so undoing one is an
+ordinary update writing null into that column — which works today, given
+`read_deleted`.
+
 ## What is not here
 
-No vector similarity search surface, and no computed values in a `Query` or a
-join input.
+No index-backed nearest-neighbour operator: `slate.Distance(a, b, metric)` is
+a scalar, so a similarity search here is computed per row and sorted, which is
+a full scan.
+
+This used to say there were no computed values in a `Query` or a join input,
+and no vector surface at all. Both stopped being true — `Query.Compute`,
+`JoinInput.Compute` and `JoinQuery.Compute` all take `[]Scalar` — and nothing
+noticed until somebody read this file against the code.
 
 The Python client in `clients/python` is the fuller one; where the two
 disagree about the protocol, that is a bug in one of them rather than a
