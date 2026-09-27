@@ -1610,9 +1610,9 @@
     {
       "entry": "2026-09-19-a-stops-at-that-stopped-being-true.md",
       "key": "Only N4 was checked.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "all fourteen *Stops at* lines in docs/orm-comparison.md re-read against the wire and the kernel, each against a named artefact. Two were false and are struck through with what superseded them: P2's 'one level, one relationship per request' against `RelatedRequest.path`, and N3's problem statement '`JoinQuery` has no cursor' against the resume-after field N3 itself built. ledger/2026-09-27-a-stops-at-that-had-stopped-somewhere-else.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
@@ -6802,6 +6802,27 @@
       "verdict": "deliberate",
       "by": "this entry: what is pinned is that the row reaching the expression contains nulls rather than being skipped, which is the property every null-aware function then depends on. A case per Scalar variant would be a case per variant times per join type, and the variants' own null behaviour is scalars.rs's subject.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-stops-at-that-had-stopped-somewhere-else.md",
+      "key": "It is a reading, and readings expire.",
+      "verdict": "deliberate",
+      "by": "this entry: the guard that would replace it is the one the sibling caveat in ledger/2026-09-19-a-stops-at-that-stopped-being-true.md argues against — a note's claims are prose and a checker needs them marked, and the marking is the work. Two of fourteen went stale in eight days, which is the cost, stated.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-stops-at-that-had-stopped-somewhere-else.md",
+      "key": "The plan prose still reads as present tense.",
+      "verdict": "deliberate",
+      "by": "this entry: marking plan text as plan across sixteen items means editing prose in the twelve nobody has re-read, which is the same mistake in the other direction — a sweeping edit to paragraphs whose truth has not been checked.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-a-stops-at-that-had-stopped-somewhere-else.md",
+      "key": "Only the *Stops at* lines were read.",
+      "verdict": "open",
+      "by": "each item also has a Why, a Build and a Test paragraph, any of which can go stale the same way — N3's did, found by accident while reading the line above it. A full re-read of docs/orm-comparison.md is several times this much work and is ordinary undone work.",
+      "checked": "2026-09-27"
     }
   ]
 }
