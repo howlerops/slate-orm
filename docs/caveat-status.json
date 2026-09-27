@@ -835,9 +835,9 @@
     {
       "entry": "2026-09-15-the-values-that-arrived-and-vanished.md",
       "key": "No test declares a computed value on an outer join's unmatch",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide in clients/go/slate/scalar_test.go and \"an input's own computed value is undefined on an unmatched outer side\" in clients/typescript/test/scalar.test.ts, both against a live server on 2026-09-27, reported in ledger/2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md. Each asserts `nil` / `undefined` rather than an empty collection, and each is mutation-tested against exactly that wrong answer. Whole suites: Go `ok ... 8.282s`, TypeScript `# pass 195 / # fail 0`.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-15-the-values-that-arrived-and-vanished.md",
@@ -6785,9 +6785,9 @@
     {
       "entry": "2026-09-27-an-expression-over-a-row-that-is-half-missing.md",
       "key": "The client accessors on an unmatched side are still untested",
-      "verdict": "open",
-      "by": "an input's own computed values on a side that produced no row — InputComputed in Go, inputComputed in TypeScript — need a live server and all three client suites. It is the caveat ledger/2026-09-15-the-values-that-arrived-and-vanished.md already carries, and it is ordinary undone work.",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "the same two tests, written the same day this caveat pointed at them — see ledger/2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md. `InputComputed` in Go and `inputComputed` in TypeScript are both exercised over an input that produced no row, against a live slate-serverd.",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-27-an-expression-over-a-row-that-is-half-missing.md",
@@ -6900,6 +6900,28 @@
       "key": "I did not extend the reading to the other 29 files the walk ",
       "verdict": "deliberate",
       "by": "this entry: the alternative is reading all 29, which is a day's work whose output is a claim that goes stale on the next commit — the exact thing the rosters replaced. The structural answer covers the case that matters (a name becoming a `TableDef`) and the case it does not is the pass-along hole, tracked in check_handlers.py's docstring.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md",
+      "key": "Only the streaming reader is exercised.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is running each assertion twice, once through `Session.PageJoin` / `pageJoin`. Not taken because both readers call the same decoder — `joinedRowFromProto` and `joinedRowFromWire`, each extracted for exactly this reason — so the second run would exercise the same line twice and pass for the same reason. It becomes worth doing the day either reader stops calling it, which is a deliberate change somebody would have to make.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md",
+      "key": "The unmatched side is produced by a left join only.",
+      "verdict": "narrowed",
+      "by": "a left join produces the row the caveat is about with one fewer moving part, and the client decoders cannot see which join produced a missing input — they receive an absent `row` either way, so the right and full cases exercise the same branch.",
+      "residual": "that is an argument from the decoder's shape, not a demonstration. A server that filled an unmatched input differently for a full outer join — an empty row rather than no row — would pass both tests and be wrong in the clients.",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md",
+      "key": "Nothing stops the next accessor being added without this cas",
+      "verdict": "deliberate",
+      "by": "this entry, and the same call the caveat it closes made: the generalisation is a list of every kind of value a request can produce with a per-client test generated from it, which is a code generator over three languages' test files. Not taken here because two hand-written tests close the recorded gap today and the generator closes a hypothetical third client accessor; the generator is worth building when a third one is actually proposed.",
       "reviewed": "2026-09-27"
     }
   ]

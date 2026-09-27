@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-27T03:43:41+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && go test ./slate -count=1 -run ComputedValue"
+  ],
+  "commit": "057a86c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an unmatched input's computed values become an empty slice, not nil",
+      "old": "\t\t\tinputs = append(inputs, nil)\n\t\t\tperInput = append(perInput, nil)",
+      "new": "\t\t\tinputs = append(inputs, nil)\n\t\t\tperInput = append(perInput, []Value{})",
+      "verdict": "caught",
+      "caught_by": [
+        "TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

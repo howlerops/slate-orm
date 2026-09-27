@@ -102,6 +102,8 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "sole-missing-table": ("NAMES_A_MISSING_TABLE", "scripts/check_handlers.py"),
  "converter-callers": ("a handler converting before authorising fails", "scripts/test_check_handlers.py"),
  "convert-audited": ("pub fn aggregate_from_proto_query", "crates/slate-server/src/convert.rs"),
+ "unmatched-go": ("TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide", "clients/go/slate/scalar_test.go"),
+ "unmatched-ts": ("undefined on an unmatched outer side", "clients/typescript/test/scalar.test.ts"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
  "site-cost-prose": ("site.glob", "scripts/check_cost_prose.py"),
  "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
@@ -359,6 +361,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-the-caveat-was-already-true.md',
      'I did not re-audit the rest of `convert.rs`.'):
         'convert-audited',
+    ('2026-09-15-the-values-that-arrived-and-vanished.md',
+     "No test declares a computed value on an outer join's unmatch"):
+        'unmatched-go',
+    ('2026-09-27-an-expression-over-a-row-that-is-half-missing.md',
+     'The client accessors on an unmatched side are still untested'):
+        'unmatched-ts',
     ('2026-09-23-five-built-features-the-docs-never-mentioned.md',
      'The client-facing docs were not touched.'):
         'client-five',

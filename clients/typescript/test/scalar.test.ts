@@ -483,3 +483,60 @@ test("calendar truncation agrees with JavaScript's own Date", async () => {
     assert.ok(asInt(values[0], "month start") <= BigInt(seconds));
   }
 });
+
+// An input's own computed value on the unmatched side of an outer join is
+// `undefined`.
+//
+// The doc comment on `inputComputed` said so and nothing demonstrated it; the
+// gap is `ledger/2026-09-15-the-values-that-arrived-and-vanished.md`'s, which
+// recorded it as "reasoned about rather than demonstrated" because both
+// fixtures above are inner joins.
+//
+// `undefined` and not an empty array, and the distinction is the whole point:
+// the input produced no row, so there was nothing to compute over, which is a
+// different statement from "it computed nothing". `joinedRowFromWire` decides
+// this in one place for both the streaming and the paged reader, so a decoder
+// that returned `[]` here would be wrong in both at once.
+//
+// The matched rows are checked in the same loop, because a decoder returning
+// `undefined` for every row would pass an unmatched-only assertion.
+test("an input's own computed value is undefined on an unmatched outer side", async () => {
+  const session = await library();
+  // The shared fixture gives every author a book, so there is nothing
+  // unmatched in it. One more author, with none, is the row this is about.
+  await session.insert("authors", [uint(3), str("cy"), str("IE")]);
+
+  const b = newJoin();
+  const authors = b.add({ table: "authors" });
+  const booksAt = 1;
+  const books = b.add({
+    table: "books",
+    type: "left",
+    on: [{ earlier: at(authors, 0), own: 1 }],
+    // The decade of the book's year. Author 3 has no books, so this is the
+    // expression with no row to evaluate over.
+    compute: [mul(div(ref(at(booksAt, 3)), lit(int(10))), lit(int(10)))],
+  });
+  assert.equal(books, booksAt, "the second input's compute names the wrong one");
+
+  let matched = 0;
+  let unmatched = 0;
+  for await (const row of session.join(b.query()).withComputed()) {
+    const right = row.inputs[1];
+    const rightOwn = row.inputComputed[1];
+    if (right === undefined) {
+      unmatched += 1;
+      assert.equal(rightOwn, undefined, "an unmatched book side computed something");
+      continue;
+    }
+    matched += 1;
+    assert.ok(rightOwn, "a matched book computed nothing");
+    const year = right[3];
+    assert.ok(year?.kind === "int");
+    const decade = rightOwn[0];
+    assert.ok(decade?.kind === "int");
+    assert.equal(decade.value, (year.value / 10n) * 10n);
+  }
+  assert.equal(matched, 4, "matched rows");
+  assert.equal(unmatched, 1, "author 3 has no books");
+});

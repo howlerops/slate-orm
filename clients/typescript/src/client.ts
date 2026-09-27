@@ -300,6 +300,12 @@ export interface ComputedJoinedRow {
    * input-level computed value, have the server evaluate it, and have no way
    * to read it back: it arrived in that input's `row.computed` and
    * `rowFromWire` dropped it.
+   *
+   * `undefined` on the unmatched side of an outer join — the input produced no
+   * row, so there was nothing to compute over, which is a different statement
+   * from "it computed nothing" and so is not `[]`. Documented before anything
+   * ran it; `test/scalar.test.ts`'s "an input's own computed value is
+   * undefined on an unmatched outer side" is what now does.
    */
   readonly inputComputed: (Value[] | undefined)[];
 }
