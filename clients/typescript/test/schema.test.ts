@@ -128,6 +128,36 @@ test("the fingerprint matches the canonical form", () => {
 });
 
 /**
+ * The two properties a column can carry beyond its name and type, pinned.
+ *
+ * `DOCS` above has neither a decimal nor an array, so this port could drop
+ * `scale` and `element` from its hash and the test above would still pass —
+ * the gap `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md`
+ * recorded: four implementations each computing the element type's
+ * contribution separately, compared only by the live suites and only for the
+ * tables those suites exercise.
+ *
+ * One table with both, because a column is never both at once and the two
+ * arms are independent: dropping either changes this number and neither
+ * changes `DOCS`.
+ */
+test("the scale and the element type are pinned too", () => {
+  const SHELVES: TableDef = {
+    name: "shelves",
+    columns: [
+      { name: "id", type: "u64" },
+      { name: "tags", type: "array", element: "string" },
+      { name: "price", type: "decimal", scale: 2 },
+    ],
+    primaryKey: ["id"],
+  };
+  //	>>> from slate.schema import fingerprint_of
+  //	>>> hex(fingerprint_of(SHELVES))
+  //	'0xdf013a5ccb6808c0'
+  assert.equal(fingerprint(SHELVES), 0xdf013a5ccb6808c0n);
+});
+
+/**
  * A key naming a column the declaration does not have must not collide with a
  * correct declaration whose key is the first column.
  *

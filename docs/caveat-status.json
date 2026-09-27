@@ -2166,9 +2166,10 @@
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The four fingerprint implementations are held together only ",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "narrowed",
+      "by": "the named half is closed: Rust, Go and TypeScript each pin 0xdf013a5ccb6808c0 for a table with an `array<string>` and a `decimal(2)`, against the Python client's `fingerprint_of`. Six mutations, one per arm per port, all caught — ledger/2026-09-27-three-ports-could-have-dropped-the-element-type-and-passed.md. Measured there: dropping both arms leaves `docs` byte-identical, so every pin that existed before was blind to them.",
+      "checked": "2026-09-27",
+      "residual": "two tables are pinned, not the type surface. `vector`, `uuid`, `bytes` and `f64` appear in no pinned value, so a port misspelling one is still caught only by a live suite that writes such a column. And the Python client remains unpinned by construction: it is the reference the other three are pinned against."
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
@@ -6652,6 +6653,27 @@
       "key": "`wants()` still ignores an element type it does not recognis",
       "verdict": "deliberate",
       "by": "this entry: `wants` decides which names to import and treats an unrecognised scalar the same way, so refusing there would be a different rule from the one the rest of the file follows. The failure it leaves is a NameError at import of the generated module, which is loud and immediate; a `wants` that refused every type it cannot import would refuse `bool` and `string`, which need no import at all.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-three-ports-could-have-dropped-the-element-type-and-passed.md",
+      "key": "It pins two tables, not the type lattice.",
+      "verdict": "deliberate",
+      "by": "this entry: the alternative is a pinned value per type, which is ten more constants to re-derive whenever the canonical form changes at all. The types left out carry no extra state, so the only thing to get wrong is one spelling in a table each port lists explicitly, where the arms just pinned were conditional code paths.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-three-ports-could-have-dropped-the-element-type-and-passed.md",
+      "key": "The Python client is still unpinned by construction.",
+      "verdict": "deliberate",
+      "by": "this entry: pinning the reference against itself is what the original test's docstring calls not evidence. What checks the Python client is its own suite against a live server, which is the same protection the other three had and which this entry's own reasoning calls insufficient — stated rather than argued, because the alternative is a fifth implementation to be the reference for the reference.",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-three-ports-could-have-dropped-the-element-type-and-passed.md",
+      "key": "Nothing stops the docstring going stale again.",
+      "verdict": "deliberate",
+      "by": "this entry: a guard would have to extract Python from a Rust doc comment and execute it against the same fixtures, which is running untrusted-shaped code out of a comment in a static check that otherwise makes no subprocess calls. What is kept instead is that the transcript now reproduces five pinned values rather than three, so the next arm added without updating it breaks two of them.",
       "reviewed": "2026-09-27"
     }
   ]

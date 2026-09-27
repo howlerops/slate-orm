@@ -140,6 +140,40 @@ func TestTheFingerprintMatchesTheServers(t *testing.T) {
 	}
 }
 
+// The two properties a column can carry beyond its name and type, pinned.
+//
+// `docs` above has neither a decimal nor an array, so this port could drop the
+// scale and the element type from its hash and that test would still pass —
+// which is exactly what
+// `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md` recorded as
+// the gap: four implementations each computing the element type's contribution
+// separately, compared only by the live suites, and only for the tables those
+// suites exercise.
+//
+// One table with both, because a column is never both at once and the two arms
+// are independent: dropping either changes this number and neither changes
+// `docs`.
+func TestTheScaleAndTheElementTypeArePinnedToo(t *testing.T) {
+	// shelves {id u64, tags array<string>, price decimal(2)}, primary key (id).
+	//
+	//	>>> from slate.schema import fingerprint_of
+	//	>>> hex(fingerprint_of(SHELVES))
+	//	'0xdf013a5ccb6808c0'
+	const canonical uint64 = 0xdf01_3a5c_cb68_08c0
+	shelves := slate.TableDef{
+		Name: "shelves",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "tags", Type: slate.TypeArray, Element: slate.TypeString},
+			{Name: "price", Type: slate.TypeDecimal, Scale: 2},
+		},
+		PrimaryKey: []string{"id"},
+	}
+	if got := shelves.Fingerprint(); got != canonical {
+		t.Errorf("fingerprint = %#016x, the canonical form is %#016x", got, canonical)
+	}
+}
+
 // A key naming a column the declaration does not have must not collide with a
 // correct declaration whose key is the first column.
 //

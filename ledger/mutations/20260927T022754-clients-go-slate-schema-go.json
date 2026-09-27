@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-27T02:27:54+00:00",
+  "file": "clients/go/slate/schema.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -run TestThe -count=1"
+  ],
+  "commit": "a1b2256",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the Go port drops an array's element type",
+      "old": "\t\tif column.Type == TypeArray {\n\t\t\th.text(string(column.Element))\n\t\t}",
+      "new": "\t\tif false {\n\t\t\t_ = column.Element\n\t\t}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestTheScaleAndTheElementTypeArePinnedToo"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the Go port drops a decimal's scale",
+      "old": "\t\tif column.Type == TypeDecimal {\n\t\t\th.number(column.Scale)\n\t\t}",
+      "new": "\t\tif false {\n\t\t\t_ = column.Scale\n\t\t}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestTheScaleAndTheElementTypeArePinnedToo"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
