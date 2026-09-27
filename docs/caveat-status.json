@@ -3025,9 +3025,9 @@
     {
       "entry": "2026-09-20-the-undo-a-visitor-can-see.md",
       "key": "No screenshot or visual regression.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "decided in ledger/2026-09-27-five-gaps-decided-rather-than-deferred.md (2): a committed binary baseline regenerated on every styling change, in a repository that argues against committed binaries, to catch a layout failure a person sees on first look",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-the-undo-a-visitor-can-see.md",
@@ -3179,9 +3179,9 @@
     {
       "entry": "2026-09-20-where-else-does-this-live.md",
       "key": "It does not examine side channels.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "decided in ledger/2026-09-27-five-gaps-decided-rather-than-deferred.md (5): the planner's value is choosing differently when the statistics differ, so the mitigation removes the feature; a caller who can time it already holds a valid identity for that tenant. Refused as outside the threat model",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-20-where-else-does-this-live.md",
@@ -3813,8 +3813,9 @@
     {
       "entry": "2026-09-21-generate-the-rows-from-the-table.md",
       "key": "It does not know what a column means.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "decided in ledger/2026-09-27-five-gaps-decided-rather-than-deferred.md (3-4): the generator's contract is a row that satisfies the schema; widening it to a row that looks real needs a different contract, not a bigger vocabulary",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-generate-the-rows-from-the-table.md",
@@ -3840,8 +3841,9 @@
     {
       "entry": "2026-09-21-generate-the-rows-from-the-table.md",
       "key": "Plausible is a low bar.",
-      "verdict": "open",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "decided in ledger/2026-09-27-five-gaps-decided-rather-than-deferred.md (3-4): a column-name registry guesses, and country_code is not country. A row that looks real and is not is worse for a fixture than an obviously synthetic one, because a reader stops checking it",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-generate-the-rows-from-the-table.md",
@@ -3867,9 +3869,9 @@
     {
       "entry": "2026-09-21-one-entry-per-term.md",
       "key": "Japanese and Chinese tokenize into one enormous term",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "deliberate",
+      "by": "decided in ledger/2026-09-27-five-gaps-decided-rather-than-deferred.md (1): a tokenizer becomes part of the index's identity, so the choice has to be stored and migrated, and docs/full-text.md has not made that decision. Bigrams roughly double the CJK term count for a feature nothing outside the kernel uses",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-21-one-entry-per-term.md",
@@ -6221,6 +6223,26 @@
       "key": "Neither guard can see a fourth kind of silent pass.",
       "verdict": "open",
       "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-27-five-gaps-decided-rather-than-deferred.md",
+      "key": "It decides; it does not implement.",
+      "verdict": "deliberate",
+      "by": "that entry: a decision has no implementation by definition, and each of the five says what building it would look like so a later session can reverse it and say why",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-five-gaps-decided-rather-than-deferred.md",
+      "key": "It does not touch the caveats that are genuinely unfinished ",
+      "verdict": "deliberate",
+      "by": "that entry: a CJK tokenizer is a decision and a DISTINCT ON is not, and sorting the second kind is not something a reading can do",
+      "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-five-gaps-decided-rather-than-deferred.md",
+      "key": "The threat-model decision in 5 is the one worth arguing with",
+      "verdict": "open",
+      "checked": "2026-09-27"
     },
     {
       "entry": "2026-09-27-the-page-a-visitor-reaches-first.md",
