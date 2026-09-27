@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-26T23:22:02+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "2695707",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the node dialect skips a per-file wrapper again",
+      "old": "re.compile(r\"^not ok \\d+ - (.+?)\\s*$\", re.MULTILINE),",
+      "new": "re.compile(r\"^not ok \\d+ - (?!.*\\.js$)(.+?)\\s*$\", re.MULTILINE),",
+      "verdict": "caught",
+      "caught_by": [
+        "a test file that will not load is counted, not skipped"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

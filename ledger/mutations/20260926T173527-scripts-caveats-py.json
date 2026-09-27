@@ -1,0 +1,70 @@
+{
+  "at": "2026-09-26T17:35:27+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "4181965",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a narrowed caveat with no residual is accepted",
+      "old": "        if verdict == \"narrowed\" and not row.get(RESIDUAL):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "narrowed without naming what closed and what is left is refused: problems: wanted 2, got 1 ['a.md: `It does not do the first thing.` is narrowed and names nothing that closed or decided it']",
+        "narrowed with a `by` and no `residual` is refused: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a settled verdict wearing `checked` is accepted",
+      "old": "        if verdict in (\"closed\", \"deliberate\", \"moment\") and row.get(CHECKED):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a settled verdict carrying `checked` rather than `reviewed` is refused: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "`open` is caught by the settled-verdict rule too",
+      "old": "        if verdict in (\"closed\", \"deliberate\", \"moment\") and row.get(CHECKED):",
+      "new": "        if row.get(CHECKED):",
+      "verdict": "caught",
+      "caught_by": [
+        "an open caveat carrying `checked` is accepted: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is open and carries `checked`, which means read against the tree. A settled verdict re-read for correctness carries `reviewed`.']",
+        "a narrowed caveat carrying `checked` is accepted: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is narrowed and carries `checked`, which means read against the tree. A settled verdict re-read for correctness carries `reviewed`.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the residual is read from `by` rather than its own field",
+      "old": "        if verdict == \"narrowed\" and not row.get(RESIDUAL):",
+      "new": "        if verdict == \"narrowed\" and not row.get(\"by\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "narrowed with a `by` and no `residual` is refused: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "--residual lists nothing",
+      "old": "        if row.get(\"verdict\") == \"narrowed\":",
+      "new": "        if False:",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

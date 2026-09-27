@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-27T01:05:54+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "32c132c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the narrowed/reviewed rule never fires",
+      "old": "        if verdict == \"narrowed\" and row.get(REVIEWED):",
+      "new": "        if verdict == \"narrowed\" and row.get(REVIEWED) and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a narrowed caveat carrying `reviewed` rather than `checked` is refused: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the rule reads `checked` rather than `reviewed`",
+      "old": "        if verdict == \"narrowed\" and row.get(REVIEWED):",
+      "new": "        if verdict == \"narrowed\" and row.get(CHECKED):",
+      "verdict": "caught",
+      "caught_by": [
+        "a narrowed caveat carrying `reviewed` rather than `checked` is refused: problems: wanted 1, got 0 []",
+        "a narrowed caveat carrying `checked` is accepted: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is narrowed and carries `reviewed`, which is the settled-verdict stamp. A narrowed caveat still has a residual to re-read, so its date is `checked` \u2014 `--unread` reads that one and nothing else.']",
+        "a narrowed caveat carrying `checked` is accepted: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is narrowed and carries `reviewed`, which is the settled-verdict stamp. A narrowed caveat still has a residual to re-read, so its date is `checked` \u2014 `--unread` reads that one and nothing else.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the rule applies to every verdict, not only narrowed",
+      "old": "        if verdict == \"narrowed\" and row.get(REVIEWED):",
+      "new": "        if row.get(REVIEWED):",
+      "verdict": "caught",
+      "caught_by": [
+        "a settled verdict carrying `reviewed` is accepted: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is narrowed and carries `reviewed`, which is the settled-verdict stamp. A narrowed caveat still has a residual to re-read, so its date is `checked` \u2014 `--unread` reads that one and nothing else.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

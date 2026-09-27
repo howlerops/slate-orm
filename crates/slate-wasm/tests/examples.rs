@@ -134,7 +134,7 @@ fn the_kitchen_sink_uses_everything_it_claims_to() {
         .expect("a Kitchen sink example");
 
     let results: Vec<Json> = serde_json::from_str(&playground.sql(&sql)).unwrap();
-    assert_eq!(results.len(), 2, "two statements");
+    assert_eq!(results.len(), 3, "three statements");
 
     // One: the grouped join, with conditions on both sides.
     let join = &results[0];
@@ -142,6 +142,39 @@ fn the_kitchen_sink_uses_everything_it_claims_to() {
     assert_eq!(join["columns"][0], "borough");
     assert_eq!(join["spec"]["leftWhere"].as_array().unwrap().len(), 1);
     assert_eq!(join["spec"]["rightWhere"].as_array().unwrap().len(), 2);
+
+    // Three: the bracketed disjunction. Checked here rather than left to the
+    // "every example runs" test, because running is not the claim — the claim
+    // in the comment is that the brackets group the `OR` against a trailing
+    // `AND`, and a parser that flattened them would return different rows and
+    // still run.
+    let disjunction = &results[2];
+    let predicate = &disjunction["spec"]["predicate"];
+    assert!(
+        !predicate.is_null(),
+        "a bracketed mixture lands in `predicate`, not a flat list: {}",
+        disjunction["spec"]
+    );
+    let outer = predicate["all"].as_array().expect("an ANDed root");
+    assert_eq!(
+        outer.len(),
+        2,
+        "the bracket and the trailing condition: {predicate}"
+    );
+    assert_eq!(
+        outer[0]["any"].as_array().map(Vec::len),
+        Some(3),
+        "three ORed zones inside the bracket: {predicate}"
+    );
+    for flat in ["filters", "anyOf"] {
+        assert!(
+            disjunction["spec"][flat]
+                .as_array()
+                .is_none_or(Vec::is_empty),
+            "a nested WHERE fills neither flat list, and filled `{flat}`: {}",
+            disjunction["spec"]
+        );
+    }
 
     // Two: the monster. Every claim in its comment, checked.
     let sink = &results[1];

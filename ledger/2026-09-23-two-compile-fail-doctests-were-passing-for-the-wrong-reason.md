@@ -12,7 +12,9 @@ doctests. Its own closing paragraph: *"It does not re-verify the repository's
 doctests. `slate-orm/src/lib.rs` alone has five `compile_fail` blocks."*
 Thirteen, in fact. Eight had a macro check behind them that could be broken.
 
-Six mutations were caught, each naming the doctest that caught it:
+Six mutations were caught, each naming the doctest that caught it —
+[`ledger/mutations/20260923T135240-crates-slate-derive-src-lib-rs.json`](mutations/20260923T135240-crates-slate-derive-src-lib-rs.json), eight
+cases, six caught and the two below surviving:
 
 ```text
 ok  belongs_to local names a field that does not exist

@@ -1169,6 +1169,11 @@ func (j *JoinStream) Computed() []Value {
 // three cases, matching [JoinStream.Row]'s treatment of an unmatched input:
 // this is a cursor, and it has nowhere to put one.
 //
+// The third case was documented here before anything ran it, and
+// TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide is what now does:
+// nil, and not a slice holding a null per declared expression, which would
+// satisfy every assertion about lengths and none about meaning.
+//
 // This was missing while [JoinStream.Computed] existed, so a Go caller could
 // declare an input-level computed value, have the server evaluate it, and have
 // no way to read it back — the value arrived on the wire in that input's

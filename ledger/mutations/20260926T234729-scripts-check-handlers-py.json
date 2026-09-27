@@ -1,0 +1,110 @@
+{
+  "at": "2026-09-26T23:47:29+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "006e49c",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "rule 9 reports nothing",
+      "old": "    problems.extend(unscanned(root, sources))",
+      "new": "    problems.extend([])",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate outside SOURCES that fingerprints is reported",
+        "a crate outside SOURCES with a fourth Authenticator is reported",
+        "a crate outside SOURCES serving the wire is reported",
+        "and it says which line to add to SOURCES"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a crate already covered is reported anyway",
+      "old": "        if any(where == one or one in where.parents or where in one.parents for one in covered):\n            continue",
+      "new": "        if False:\n            continue",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "MARKERS loses fingerprint::check",
+      "old": "    \"fingerprint::check\",\n    \"impl Authenticator for\",",
+      "new": "    \"impl Authenticator for\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate outside SOURCES that fingerprints is reported",
+        "and it says which line to add to SOURCES"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "MARKERS loses the Authenticator implementation",
+      "old": "    \"impl Authenticator for\",\n    \"Request<pb::\",",
+      "new": "    \"Request<pb::\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate outside SOURCES with a fourth Authenticator is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "MARKERS loses the wire handler",
+      "old": "    \"Request<pb::\",\n)",
+      "new": ")",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate outside SOURCES serving the wire is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a crate with no src/ is scanned anyway",
+      "old": "        if not where.is_dir():\n            continue",
+      "new": "        if False:\n            continue",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the no-members never-fires half is gone",
+      "old": "    elif not members(root):",
+      "new": "    elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a workspace with no members fails, not passes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "members() reads a key that is not there",
+      "old": "        return list(tomllib.loads(manifest.read_text(encoding=\"utf-8\"))[\"workspace\"][\"members\"])",
+      "new": "        return list(tomllib.loads(manifest.read_text(encoding=\"utf-8\"))[\"workspace\"][\"member\"])",
+      "verdict": "caught",
+      "caught_by": [
+        "a handler that authorises before fingerprinting passes",
+        "a fingerprint whose table arrives already authorised passes",
+        "a file with no fingerprint check at all fails, rather than passing",
+        "a tree with no authenticators needs no roster",
+        "a handler that authorises its inputs first passes",
+        "a function taking a catalog but no request is not a converter",
+        "a converter holding a context can check for itself",
+        "one converter delegating to another is not a handler"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

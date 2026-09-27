@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-25T23:13:08+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "1759ce2",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": [
+    {
+      "name": "a bracketed group really becomes a sub-tree",
+      "old": "        if self.eat_symbol(\"(\") {\n            let inner = self.disjunction(table)?;\n            self.expect_symbol(\")\")?;\n            return Ok((inner, true));\n        }",
+      "new": "        if self.eat_symbol(\"(\") {\n            let inner = self.disjunction(table)?;\n            self.expect_symbol(\")\")?;\n            return Ok((inner, false));\n        }",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a bare conjunction inside a disjunction is refused",
+      "old": "            if bare.iter().any(|b| *b) || bare_and {\n                return Err(Self::mixed_connectives(at));\n            }",
+      "new": "            if false {\n                return Err(Self::mixed_connectives(at));\n            }",
+      "verdict": "caught",
+      "caught_by": [
+        "and_and_or_cannot_be_mixed_in_one_where",
+        "mixing_without_brackets_is_still_refused_and_the_message_says_to_write_them",
+        "the_other_order_of_mixing_is_refused_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ]
+}

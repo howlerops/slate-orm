@@ -137,8 +137,31 @@ fn row(id: u64) -> Row {
 /// fixture, the cases and the summary are all the same — only when the cache
 /// is dropped differs, and duplicating three hundred lines to vary one line is
 /// how two files end up disagreeing about what they measure.
+/// Any argument other than `--cold` is refused rather than ignored.
+///
+/// A `.any(|arg| arg == "--cold")` was here, and `--codl` ran the whole
+/// warm suite and exited 0 — the caller gets the numbers they did not ask
+/// for with nothing to say so, which is `head_report --typo` in a second
+/// place. Exit 2, matching `sections::from_args` and `s3_server`, because
+/// `run_examples.sh` reads that as "you asked for the wrong thing" rather
+/// than "the benchmark failed".
+///
+/// Called from five places and so parses five times. That is five string
+/// comparisons against a run that takes minutes, and the alternative — a
+/// `OnceLock` or threading a bool through the five call sites — buys nothing
+/// measurable and costs a reader the one-line answer to "is this cold?".
 fn cold() -> bool {
-    std::env::args().skip(1).any(|arg| arg == "--cold")
+    let mut cold = false;
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "--cold" => cold = true,
+            other => {
+                eprintln!("usage: cost_calibration [--cold]; `{other}` is not an option");
+                std::process::exit(2);
+            }
+        }
+    }
+    cold
 }
 
 /// A store over the loaded fixture, carrying statistics somebody else gathered.
@@ -170,6 +193,19 @@ fn opened(
 #[tokio::main]
 async fn main() {
     slate_slatedb::announce();
+    // Read here for the refusal, before anything is built. `cold()` is not
+    // otherwise reached until the first case, several minutes and 200,000
+    // inserted rows later, so a mistyped flag would pay the whole fixture
+    // before exiting 2 — and in `run_examples.sh` that is the example's
+    // budget spent twice.
+    println!(
+        "  cache: {}\n",
+        if cold() {
+            "dropped before each case (--cold)"
+        } else {
+            "warm, as the numbers quoted in docs/performance.md were taken"
+        }
+    );
     let server = s3server::LocalS3::start("slate-orm").await;
     let counters = server.counters();
     let path = format!("/calibration-{}", std::process::id());

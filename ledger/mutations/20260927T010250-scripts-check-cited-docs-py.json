@@ -1,0 +1,108 @@
+{
+  "at": "2026-09-27T01:02:50+00:00",
+  "file": "scripts/check_cited_docs.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_docs.py"
+  ],
+  "commit": "6f0173d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "prose is not read as a source",
+      "old": "    for path in source_files(root) + prose_files(root):",
+      "new": "    for path in source_files(root):",
+      "verdict": "caught",
+      "caught_by": [
+        "a ledger entry citing an entry that is gone is reported",
+        "a document citing a document that is gone is reported",
+        "a rostered citation is neither counted nor reported",
+        "the same citation in another file is still checked",
+        "a rostered file's other citations are still checked",
+        "a roster row whose citation is gone is reported",
+        "every citation in this repository resolves"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only ledger/ is read, not docs/",
+      "old": "PROSE_TREES = (\"docs\", \"ledger\")",
+      "new": "PROSE_TREES = (\"ledger\",)",
+      "verdict": "caught",
+      "caught_by": [
+        "a document citing a document that is gone is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the roster exempts a whole file rather than one citation",
+      "old": "                if (here, cited) in roster:",
+      "new": "                if any(here == where for where, _ in roster):",
+      "verdict": "caught",
+      "caught_by": [
+        "a rostered file's other citations are still checked",
+        "a roster row whose citation is gone is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a rostered citation is counted as seen after all",
+      "old": "                    used.add((here, cited))\n                    continue",
+      "new": "                    used.add((here, cited))\n                    seen += 1\n                    continue",
+      "verdict": "caught",
+      "caught_by": [
+        "a rostered citation is neither counted nor reported",
+        "the same citation in another file is still checked",
+        "a rostered file's other citations are still checked"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a stale roster row is not reported",
+      "old": "        if (where, cited) not in used:",
+      "new": "        if False and (where, cited) not in used:",
+      "verdict": "caught",
+      "caught_by": [
+        "a roster row whose citation is gone is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "prose_files reads every suffix, not only .md",
+      "old": "for path in sorted((root / tree).rglob(\"*.md\")):",
+      "new": "for path in sorted((root / tree).rglob(\"*\")):",
+      "verdict": "caught",
+      "caught_by": [
+        "a non-Markdown file under ledger/ is read by neither pass"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "check defaults to the real roster over a fixture",
+      "old": "    if roster is None:\n        roster = NOT_A_FILE",
+      "new": "    if roster is None or not roster:\n        roster = NOT_A_FILE",
+      "verdict": "caught",
+      "caught_by": [
+        "a citation that resolves is counted and not reported",
+        "a citation that does not resolve is reported",
+        "a broken citation in an error message is reported too",
+        "every source language is read, not only Rust",
+        "source citing a ledger entry that resolves is counted",
+        "source citing a ledger entry that is gone is reported",
+        "a ledger entry citing an entry that is gone is reported",
+        "a document citing a document that is gone is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

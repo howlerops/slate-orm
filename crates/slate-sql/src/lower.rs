@@ -18,7 +18,7 @@
 //! three SDKs send over gRPC, so lowering it is not a SQL concern — SQL is one
 //! of two front ends onto the same shape, and this is the back of both.
 
-use crate::{AggregateSpec, ComputeSpec, FilterSpec, QuerySpec, WindowSpec};
+use crate::{AggregateSpec, ComputeSpec, FilterSpec, PredicateSpec, QuerySpec, WindowSpec};
 use slate_kernel::{
     Aggregate, CalendarPart, CalendarUnit, CmpOp, Expr, Query, Scalar, SortKey, TimeUnit,
     window::{Window as KernelWindow, WindowFunction},
@@ -72,6 +72,41 @@ pub fn build(spec: &QuerySpec, table: &TableDef) -> Result<Query, String> {
         // is the same predicate and gives the planner more work to undo.
         query = query.filter(Expr::all(parts));
     }
+    // ORed conditions, as one conjunct beside the ANDed ones.
+    //
+    // `Expr::Or` directly rather than a fold, for the reason above: the
+    // planner's `conjuncts()` flattens `And` and stops at anything else, so a
+    // disjunction arrives as one opaque conjunct it will evaluate per row
+    // rather than turn into a scan bound. That is correct and it is the cost
+    // of the feature — `a = 1 OR b = 2` has no single key range — and it is
+    // why this is a filter and not an access path.
+    //
+    // Conjoined with whatever `filters` produced rather than replacing it, so
+    // a spec carrying both means `(all) AND (any)`. The parser never produces
+    // both today; the lowering is written for the shape a widened parser
+    // would send, so that widening does not silently change what an existing
+    // spec means.
+    if !spec.any_of.is_empty() {
+        let mut parts = Vec::with_capacity(spec.any_of.len());
+        for condition in &spec.any_of {
+            parts.push(comparison(condition, table)?);
+        }
+        // `Expr::and` on the predicate built above, taken out of the builder
+        // first: `Query::filter` consumes the query, so reading the field it
+        // is about to overwrite has to happen before the call rather than
+        // inside it.
+        let existing = std::mem::replace(&mut query.filter, Expr::True);
+        query = query.filter(existing.and(Expr::Or(parts)));
+    }
+    if let Some(tree) = &spec.predicate {
+        // ANDed onto whatever came before, the same way `any_of` is. Nothing
+        // the parser produces populates both — a `WHERE` lands in exactly one
+        // of the three fields — but a spec built by hand can, and the meaning
+        // then is the conjunction of all of them, which is what the nesting
+        // would mean anyway.
+        let existing = std::mem::replace(&mut query.filter, Expr::True);
+        query = query.filter(existing.and(predicate(tree, table)?));
+    }
     if !spec.sort.is_empty() {
         let keys: Vec<SortKey> = spec
             .sort
@@ -105,6 +140,39 @@ pub fn build(spec: &QuerySpec, table: &TableDef) -> Result<Query, String> {
 /// that is what makes the key encoding sortable — so handing a `Str` to a `U64`
 /// column would not fail, it would compare the *types* and match nothing.
 /// Getting this wrong is silent, so it is done once, here.
+/// A nested predicate, lowered to the kernel's own tree.
+///
+/// Recursive over a shape the parser bounds: a `WHERE` can only nest as deep
+/// as its brackets, and the tokenizer has already read the whole statement, so
+/// there is no input that recurses without a matching `(` in the text. The
+/// depth limit the *wire* needs — `ledger/2026-09-18-a-depth-limit-this-server-states-rather-than-inherits.md`
+/// — exists because a protobuf message can nest arbitrarily with no such
+/// bound; a SQL string cannot.
+///
+/// `All` and `Any` with one part are collapsed by the parser and cannot arrive
+/// here, but they are lowered correctly anyway rather than being made
+/// unrepresentable: `Expr::And` of one is that one, and a spec built by hand
+/// should mean what it says.
+pub fn predicate(spec: &PredicateSpec, table: &TableDef) -> Result<Expr, String> {
+    match spec {
+        PredicateSpec::Of(filter) => comparison(filter, table),
+        PredicateSpec::All(parts) => {
+            let mut out = Vec::with_capacity(parts.len());
+            for part in parts {
+                out.push(predicate(part, table)?);
+            }
+            Ok(Expr::And(out))
+        }
+        PredicateSpec::Any(parts) => {
+            let mut out = Vec::with_capacity(parts.len());
+            for part in parts {
+                out.push(predicate(part, table)?);
+            }
+            Ok(Expr::Or(out))
+        }
+    }
+}
+
 pub fn comparison(filter: &FilterSpec, table: &TableDef) -> Result<Expr, String> {
     let column = Ordinal(filter.column as usize);
     let def = table
@@ -684,6 +752,49 @@ pub fn having(
         };
     }
     Ok(out)
+}
+
+/// A group predicate from both connectives: the ANDed terms and the ORed ones.
+///
+/// One function rather than two call sites composing `having` twice, because
+/// every consumer wants the same composition — `(all of these) AND (any of
+/// those)` — and the three that exist would each have written it out.
+///
+/// The parser produces one list or the other and never both: a bare mixture
+/// is refused, and a `HAVING` has no bracketed form to land anywhere else —
+/// parentheses reached the `WHERE` first. The composition is written for both
+/// anyway, so that widening the parser later cannot change what an existing
+/// spec means; that is the promise `QuerySpec::predicate` was able to keep
+/// when the `WHERE` did widen.
+pub fn group_predicate(
+    all: &[FilterSpec],
+    any: &[FilterSpec],
+    keys: &[Ordinal],
+    aggregates: &[Aggregate],
+    inputs: &[&TableDef],
+) -> Result<Expr, String> {
+    let conjunction = having(all, keys, aggregates, inputs)?;
+    if any.is_empty() {
+        return Ok(conjunction);
+    }
+    // Each ORed term through the same `having`, one at a time, so the
+    // per-term conversion — the operator table, the literal parsing, the
+    // group-space type lookup — has exactly one implementation. A second copy
+    // is how the two paths come to disagree about what `matches` does.
+    let mut parts = Vec::with_capacity(any.len());
+    for spec in any {
+        parts.push(having(
+            std::slice::from_ref(spec),
+            keys,
+            aggregates,
+            inputs,
+        )?);
+    }
+    let disjunction = Expr::Or(parts);
+    Ok(match conjunction {
+        Expr::True => disjunction,
+        existing => existing.and(disjunction),
+    })
 }
 
 /// One aggregate, by the name the spec uses, over an ordinal already resolved

@@ -1,0 +1,67 @@
+{
+  "at": "2026-09-25T07:47:41+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "bbe045c",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a withdrawal in prose is counted as a caveat again",
+      "old": "            if WITHDRAWN.match(bullet.strip()):\n                continue\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a caveat withdrawn in prose is not counted: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the withdrawal pattern matches anywhere, not at the lead",
+      "old": "WITHDRAWN.match(bullet.strip())",
+      "new": "WITHDRAWN.search(bullet.strip())",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "moment is dropped from the verdicts",
+      "old": "\"deliberate\", \"moment\", \"untriaged\"",
+      "new": "\"deliberate\", \"untriaged\"",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "moment is held to naming a `by`",
+      "old": "if verdict in (\"closed\", \"deliberate\") and not status.get(k, {}).get(\"by\"):",
+      "new": "if verdict in (\"closed\", \"deliberate\", \"moment\") and not status.get(k, {}).get(\"by\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "a moment is counted as its own verdict, not as open: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is moment and names nothing that closed or decided it']",
+        "a moment needs no `by`, where closed and deliberate do: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is moment and names nothing that closed or decided it', 'a.md: `It does not do the second thing.` is closed and names nothing that closed or decided it']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the listing returns every caveat, not the matching verdict",
+      "old": "if status.get(k, {}).get(\"verdict\", \"untriaged\") == verdict:",
+      "new": "if True:",
+      "verdict": "caught",
+      "caught_by": [
+        "the listing returned ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

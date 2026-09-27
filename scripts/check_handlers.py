@@ -80,6 +80,8 @@ import re
 import sys
 from pathlib import Path
 
+import tomllib
+
 ROOT = Path(__file__).resolve().parent.parent
 
 #: Where the handlers live. Directories rather than one file, because the
@@ -91,6 +93,56 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCES = (
     ROOT / "crates" / "slate-server" / "src",
     ROOT / "crates" / "slate-serverd" / "src",
+)
+
+#: What makes a file this guard's business, whichever crate it is in.
+#:
+#: Rule 9 uses these to answer the question `SOURCES` cannot: not "is every
+#: file under these two directories checked" — it is — but "is every file that
+#: needs checking under them". Two entries in the ledger named that gap in the
+#: same week:
+#:
+#: > **Rule 3 runs over `slate-server` and `slate-serverd` only.** A converter
+#: > in another crate reached from a handler is outside `SOURCES`.
+#:
+#: > **Two crates, named explicitly.** A third server crate is outside this
+#: > until somebody adds it, and the never-fires check will not notice — it
+#: > fires on "nothing found anywhere", not on "a tree nobody listed".
+#:
+#: That second sentence is the precise shape of the hole. Every never-fires
+#: half here asks whether the *listed* tree still contains what the rule is
+#: about; none of them can ask whether an unlisted tree does. A crate that grew
+#: a `fingerprint::check` would pass this file in silence, which is the same
+#: failure `SOURCES` itself had when it was one file — named in that entry as
+#: "the same boundary the other rules have and the same one that was wrong once
+#: already".
+#:
+#: Each marker is the subject of a rule above, so the roster cannot drift from
+#: what is guarded without a rule losing its subject: `fingerprint::check` is
+#: rules 1-2, `impl Authenticator for` is rule 4, and a `Request<pb::` method
+#: is rule 5's handler.
+#:
+#: **`self.table(` is deliberately absent, and the absence is measured.** It is
+#: rule 1's subject and the obvious fourth entry, and with it this rule reported
+#: three crates, all three false:
+#:
+#:   - `slate-sql/src/sql.rs` — `self.table()`, no argument, a parser method on
+#:     a builder.
+#:   - `slate-schema/src/catalog.rs` — the `Catalog::table` this whole file is
+#:     about. It *is* the unauthorised resolver; it is also the primitive the
+#:     authorised one is built from, and a crate holding a primitive is not a
+#:     crate that discloses.
+#:   - `slate-wasm/src/lib.rs` — the browser binding, which has no tenant to
+#:     cross.
+#:
+#: The three that are here name a thing by the same name everywhere it appears.
+#: `self.table(` names a method on whatever `self` happens to be, and the rule
+#: it belongs to is about a `self` that is a gRPC service. A cross-crate roster
+#: cannot carry a marker whose meaning is the type of its receiver.
+MARKERS = (
+    "fingerprint::check",
+    "impl Authenticator for",
+    "Request<pb::",
 )
 
 #: How far above a `fingerprint::check` its authorisation may sit.
@@ -481,10 +533,78 @@ def unrostered_authenticators(files: list[Path]) -> list[str]:
     return problems
 
 
-def main(argv: list[str] | None = None) -> int:
+def members(root: Path) -> list[str]:
+    """Workspace members, by path, or empty when the manifest cannot be read.
+
+    Empty covers three different things — no manifest, unparseable TOML, no
+    `[workspace] members` — and the caller reports all three the same way,
+    because all three leave rule 9 checking nothing and all three want a person.
+    """
+    manifest = root / "Cargo.toml"
+    if not manifest.exists():
+        return []
+    try:
+        return list(tomllib.loads(manifest.read_text(encoding="utf-8"))["workspace"]["members"])
+    except (tomllib.TOMLDecodeError, KeyError, OSError):
+        return []
+
+
+def unscanned(root: Path, sources: list[Path]) -> list[str]:
+    """Rule 9: no workspace crate outside `sources` carries a marker.
+
+    The other eight rules are thorough about the files they are given and say
+    nothing about which files those are. This is the half that asks.
+
+    Workspace members are read from `Cargo.toml` rather than globbed, for the
+    reason `scripts/check_examples_roster.py` gives: a directory under
+    `crates/` that is not a member is compiled by nothing, and demanding
+    coverage of it would be demanding coverage of dead code.
+
+    A manifest that cannot be read yields no members and this reports nothing,
+    which is the weak point: this rule can only ever report an unlisted crate,
+    never the absence of a manifest to read. The never-fires half in `main`
+    asks that question instead.
+    """
+    covered = [one.resolve() for one in sources]
+    said = []
+    for member in members(root):
+        # No `is_dir()` guard. One was here and a mutation deleting it changed
+        # no verdict: `rglob` on a path that is not there yields nothing and
+        # raises nothing, so a member with no `src/` — a proto crate, a
+        # build-script-only crate — is already skipped by finding no files. A
+        # dead safety check is worse than none, which `check_cost_prose.py`
+        # records for the same reason about a `pub const` exclusion.
+        where = (root / member / "src").resolve()
+        if any(where == one or one in where.parents or where in one.parents for one in covered):
+            continue
+        for path in sorted(where.rglob("*.rs")):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for marker in MARKERS:
+                if marker in text:
+                    said.append(
+                        f"{path.relative_to(root)} contains `{marker}` and is "
+                        "in no directory this reads.\n"
+                        f"  Add `{member}/src` to SOURCES, or say in a comment "
+                        "there why that crate is different. Every rule here is\n"
+                        "  thorough about the files it is given and silent "
+                        "about which files those are; this is the half that asks."
+                    )
+                    break
+    return said
+
+
+def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     # The subject is an argument so the tests beside this file can run the real
     # checks over a file they wrote, rather than against `service.rs` — where a
     # broken check passes for whatever `service.rs` happens to contain.
+    #
+    # `root` is the same argument for rule 9, which reads a workspace manifest
+    # rather than the files it is handed. Without it that rule would read *this*
+    # repository's `Cargo.toml` while every other rule read a fixture, and the
+    # never-fires case — a workspace with no members — could never be written.
+    # That is the third time a parameter with a real default made a test
+    # exercise the repository instead of its fixture; `check_cost_prose.py`'s
+    # `main` carries the same note about `docs` and `readmes`.
     argv = sys.argv[1:] if argv is None else argv
     sources = [Path(one) for one in argv] if argv else list(SOURCES)
 
@@ -587,6 +707,7 @@ def main(argv: list[str] | None = None) -> int:
         problems.extend(unauthorised_conversions(files, converters))
     handlers = wire_handlers(files)
     problems.extend(unauthenticated_handlers(files, handlers))
+    problems.extend(unscanned(root, sources))
 
     # A check that finds nothing has stopped checking, and reads identically to
     # one that found nothing wrong. `CLAUDE.md`: "a check that never fires is a
@@ -594,6 +715,17 @@ def main(argv: list[str] | None = None) -> int:
     # going quietly green over an empty tree.
     if not files:
         problems.append(f"no Rust sources under {[str(one) for one in sources]}")
+    elif not members(root):
+        # Rule 9's never-fires half, and it has to be here rather than in
+        # `unscanned` because that function's silence is indistinguishable from
+        # a clean tree. A manifest that stopped parsing, or a `members` key
+        # renamed, leaves rule 9 comparing `SOURCES` against nothing and
+        # reporting a crate it never looked for.
+        problems.append(
+            f"no workspace members parsed from {root / 'Cargo.toml'}, so rule "
+            "9 compared SOURCES against nothing. Either the manifest moved or "
+            "its `[workspace] members` did — both need a person, not a pass."
+        )
     elif checks == 0:
         problems.append(
             f"no `fingerprint::check` anywhere in {len(files)} file(s). Either "
@@ -688,7 +820,9 @@ def main(argv: list[str] | None = None) -> int:
         f"{authenticators} authenticators all rostered, "
         f"{views} view-registry reads all rostered, "
         f"{missing} missing-table refusals all rostered, "
-        f"{by_name} lookups by name all rostered"
+        f"{by_name} lookups by name all rostered, "
+        f"{len(members(root))} workspace crates and none outside SOURCES "
+        "carrying what these rules guard"
     )
     return 0
 

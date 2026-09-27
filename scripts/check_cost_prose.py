@@ -72,10 +72,22 @@ stale sentence in `latency.rs`, a file eight rounds of sweeping by hand had
 never flagged. A guard aimed at the right tree and the wrong shape reads as
 thorough and is not.
 
-`docs/` is still out of scope, and deliberately: `correctness.md` narrates the
-history of these numbers at length, and a guard that cannot tell "it costs
-three" from "it cost three until #269" would either fire on every paragraph or
-need an exemption per paragraph. `site/check/docs.py` is that tree's guard.
+`site/` came last, and its exclusion was the same mistake as `docs/`'s one
+paragraph up. The stated reason was that `site/check/docs.py` is that tree's
+guard — it is not: it checks the pages hold together, and
+`scripts/check_site_claims.py` checks the counts and the lints, neither of them
+a cost figure. The page a visitor reaches first was the one page where a stale
+`POINT_READ_COST` could sit unchecked. Nothing there states one today; that is
+what the run says, and it is a guard against the next edit rather than a fix
+for a present defect.
+
+`docs/` *was* out of scope for the same reason until #283 — `correctness.md`
+narrates the history of these numbers at length, and a guard that cannot tell
+"it costs three" from "it cost three until #269" fires on every paragraph. What
+changed is not that the problem went away but that `NOT_A_CLAIM` gave the
+narration somewhere to say so, which is why the marker exists at all. This
+paragraph said `docs/` was still excluded until #302 read the code: the
+widening landed in the constants and in the paragraph above, and not here.
 
 A passage that is deliberately historical — a withdrawn figure kept legible
 with a strikethrough, which `ledger/README.md` asks for — is not a claim about
@@ -94,6 +106,8 @@ from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+#: The site, whose pages are the first prose a visitor reaches.
+SITE = ROOT / "site"
 #: Markdown outside `docs/` that talks about the cost model.
 #:
 #: `README.md` is why this exists. It carried "`POINT_READ_COST` is 13-19% low
@@ -375,32 +389,55 @@ def paragraphs(text: str) -> list[Chunk]:
     return chunks
 
 
-def live(text: str) -> str | None:
-    """`text` with withdrawn figures removed, or None if it is all history.
+def live(text: str, inside: bool = False) -> tuple[str | None, bool]:
+    """`text` with withdrawn figures removed, and whether a span is left open.
 
     A struck-through figure is a record of what was believed, not a claim
     about today. Removing the spans rather than skipping the whole chunk is
     what lets one paragraph carry both — `stats.rs` strikes two sentences
     through and then states the current figure in the third.
+
+    `inside` says a span was still open when the previous chunk ended, so this
+    one begins inside it. The returned flag says the same about this chunk, and
+    the caller carries it forward.
+
+    That state is the difference between this and what it replaced. An
+    unbalanced `~~` used to skip the **whole chunk**, which was conservative in
+    the direction that costs coverage: a paragraph opening a struck span in its
+    last clause had its first three sentences skipped along with it, and a
+    skipped claim is one nobody checks. With the flag, an odd `~~` is a
+    boundary rather than a verdict — the live side of it is read and the struck
+    side is not, whichever side that is.
     """
     stripped = STRUCK.sub(" ", text)
-    # An unbalanced `~~` means the span is open across a boundary this cannot
-    # see. Skipping is the conservative read: a missed claim, never a false
-    # accusation against a passage that is marked as history.
-    if "~~" in stripped:
-        return None
+    at = stripped.find("~~")
+    if at != -1:
+        # One unbalanced marker: everything on the struck side goes, the other
+        # side stays. A second one would mean the `STRUCK` pass missed a pair,
+        # which it cannot — it is non-greedy and dot-matches-newline — so this
+        # takes the first and lets the flag flip.
+        stripped = stripped[at + 2 :] if inside else stripped[:at]
+        inside = not inside
+    elif inside:
+        # No marker at all and a span still open: the whole chunk is inside it.
+        return None, True
+    if not stripped.strip():
+        return None, inside
     # Whitespace is collapsed because a joined comment run carries the second
     # line's indent into the middle of the sentence — `costs` and `about` end
     # up three spaces apart, and every pattern here is written with the one
     # space a reader sees. This cost the first two cases of the wrapped-claim
     # test, which is the cheapest place to have found it.
-    return re.sub(r"\s+", " ", stripped)
+    return re.sub(r"\s+", " ", stripped), inside
 
 
 def sources(
-    where: Path = WHERE, docs: Path | None = DOCS, readmes: Path | None = ROOT
+    where: Path = WHERE,
+    docs: Path | None = DOCS,
+    readmes: Path | None = ROOT,
+    site: Path | None = SITE,
 ) -> list[Path]:
-    """Every Rust file under `where` and every doc under `docs`, in order.
+    """Every Rust file under `where`, every doc, README and site page, in order.
 
     `where` is every crate, not the kernel, since #278 — the sentence that
     said "under the kernel" outlived that change by two tasks, in the file
@@ -415,6 +452,13 @@ def sources(
     is the first page a reader reaches and it was in neither tree. Passing
     `None` is how a fixture keeps this from reaching the real repository —
     see the note on `run` in the test file, and #281 for what that costs.
+
+    `site` is the fourth and last tree, and the third time the same widening
+    has been made one directory at a time. Its pages are HTML rather than
+    Markdown, so they go through `prose` like a document: the chunking is by
+    blank line either way, and a figure inside a `<p>` reads the same as one
+    inside a paragraph. Tags are not stripped — an `<em>` inside a sentence
+    would break a pattern — which is a hole this does not close and says so.
     """
     found = [path for path in sorted(where.rglob("*.rs")) if path.is_file()]
     if docs is not None and docs.is_dir():
@@ -422,7 +466,60 @@ def sources(
     if readmes is not None:
         for pattern in README_GLOBS:
             found += [one for one in sorted(readmes.glob(pattern)) if one.is_file()]
+    if site is not None and site.is_dir():
+        found += [
+            one
+            for one in sorted(site.glob("*.html"))
+            if one.is_file()
+        ]
+        found += [
+            one
+            for one in sorted(site.glob("docs/*.html"))
+            if one.is_file()
+        ]
     return found
+
+
+#: Every pattern that can have something to say about a passage.
+#:
+#: Written once here rather than at each `finditer` below, because the
+#: stale-marker rule has to ask "would anything have matched?" and a list that
+#: drifted from the loop would answer for a guard that no longer exists — the
+#: `NOT_A_CLAIM` marker would then read as undeserved on a live claim, or as
+#: deserved on a paragraph nothing reads. `test_check_cost_prose.py` holds this
+#: to the `finditer` calls in `check` so the two cannot separate.
+PATTERNS = (PER_READ, PER_REQUEST, UNVERIFIABLE, CROSSOVER, RESTATED)
+
+
+def claimed(current: str) -> bool:
+    """Would any of this guard's patterns have had something to say?"""
+    return any(pattern.search(current) for pattern in PATTERNS)
+
+
+def undeserved(path: Path, marker: Chunk) -> str:
+    """A `NOT_A_CLAIM` marker excusing a passage with no claim in it.
+
+    The failure this is for is silent and slow: a paragraph is written as
+    history, marked, and then rewritten over a later session into a statement
+    about today. The marker stays, because nothing in a diff makes it obvious
+    that the sentence under it changed kind — and the live figure it now covers
+    is the one figure on the page nobody checks. Recorded as a caveat in
+    `ledger/2026-09-22-the-page-a-reader-actually-reads.md`, which named the
+    roster-style answer and did not write it.
+
+    Reported rather than ignored even though a stale marker is not, by itself,
+    a wrong claim: an exemption nobody has to justify is an exemption that
+    spreads, which is the `EXPECTED_REFUSALS` argument this repository makes
+    everywhere else.
+    """
+    return (
+        f"{named(path)}:{marker.where()} carries `{NOT_A_CLAIM}` over a "
+        "passage stating no cost-model figure, so it excuses nothing.\n"
+        "  Either the passage was rewritten and the marker outlived it — "
+        "delete the marker — or it was meant for\n"
+        "  the paragraph after the next one, which is further than a marker "
+        "reaches."
+    )
 
 
 def check(
@@ -430,6 +527,7 @@ def check(
     stats: Path = STATS,
     docs: Path | None = DOCS,
     readmes: Path | None = ROOT,
+    site: Path | None = SITE,
 ) -> tuple[int, list[str]]:
     """Returns how many claims were read, and which disagree."""
     values = constants(stats)
@@ -446,26 +544,48 @@ def check(
 
     seen = 0
     wrong = []
-    for path in sources(where, docs, readmes):
+    for path in sources(where, docs, readmes, site):
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        markdown = path.suffix == ".md"
+        markdown = path.suffix in (".md", ".html")
         chunks = prose(text) if markdown else paragraphs(text)
         excused = False
+        # Whether a struck span was still open when the last chunk ended. Per
+        # file, because a span cannot cross one.
+        inside = False
+        # A marker on its own line, waiting to see whether the paragraph it
+        # excuses has anything in it to excuse.
+        pending: Chunk | None = None
         for chunk in chunks:
             if markdown:
                 # A marker covers the paragraph it is in, and — when it is a
                 # paragraph of its own, which is how it reads best above a
                 # long passage — the next one.
                 if NOT_A_CLAIM in chunk.text:
+                    if pending is not None:
+                        wrong.append(undeserved(path, pending))
+                        pending = None
                     excused = chunk.text.strip() == NOT_A_CLAIM
+                    if excused:
+                        pending = chunk
+                    else:
+                        # Inline: it excuses the paragraph it sits in, so the
+                        # question is answerable now.
+                        here, inside = live(chunk.text, inside)
+                        if here is None or not claimed(here):
+                            wrong.append(undeserved(path, chunk))
                     continue
                 if excused:
                     excused = False
+                    here, inside = live(chunk.text, inside)
+                    if pending is not None:
+                        if here is None or not claimed(here):
+                            wrong.append(undeserved(path, pending))
+                        pending = None
                     continue
-            current = live(chunk.text)
+            current, inside = live(chunk.text, inside)
             if current is None:
                 continue
             for match in PER_READ.finditer(current):
@@ -536,6 +656,9 @@ def check(
                         f"it is {values[name]:g}. Print it from "
                         f"`slate_kernel::stats` rather than copying it."
                     )
+        # A marker at the end of a file, with nothing after it to excuse.
+        if pending is not None:
+            wrong.append(undeserved(path, pending))
     return seen, wrong
 
 
@@ -544,6 +667,7 @@ def main(
     stats: Path = STATS,
     docs: Path | None = DOCS,
     readmes: Path | None = ROOT,
+    site: Path | None = SITE,
 ) -> int:
     # All four are arguments so the never-fires guard below can be tested. It
     # could not be: the cases call `check` directly, `main` read the two
@@ -562,7 +686,7 @@ def main(
     # repository's own README claim into a fixture that had written none, and
     # the never-fires case passed again. Whatever this function reads, the
     # tests must be able to say "read nothing".
-    seen, wrong = check(where, stats, docs, readmes)
+    seen, wrong = check(where, stats, docs, readmes, site)
     for problem in wrong:
         print(problem, file=sys.stderr)
         print(

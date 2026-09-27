@@ -110,6 +110,31 @@ class Fnv {
 }
 
 /** The position of a named column, or -1. */
+/**
+ * A table's columns and key, under a view's name.
+ *
+ * A view may not narrow columns — `docs/views.md` refuses a projection,
+ * because it would make the caller's ordinals *view* ordinals rather than the
+ * base table's — so a view's declaration is exactly its base table's with the
+ * name changed, and the server checks a claim about a view under the view's
+ * own name against those same columns.
+ *
+ * A free function rather than a method because `TableDef` is an interface: a
+ * generated declaration is an object literal, and giving it a method would
+ * mean every hand-written one had to carry the method too.
+ *
+ * `columns` and `primaryKey` are copied. Both are mutable arrays behind
+ * `readonly` fields, so sharing them would let a push to either be seen by
+ * both declarations.
+ */
+export function asView(table: TableDef, name: string): TableDef {
+  return {
+    name,
+    columns: [...table.columns],
+    primaryKey: [...table.primaryKey],
+  };
+}
+
 export function ordinalOf(table: TableDef, name: string): number {
   return table.columns.findIndex((column) => column.name === name);
 }

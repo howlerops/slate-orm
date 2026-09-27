@@ -52,7 +52,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # `enablement: true` turns Pages on if it is off, rather than failing and
       # waiting for somebody to visit Settings → Pages.
       #

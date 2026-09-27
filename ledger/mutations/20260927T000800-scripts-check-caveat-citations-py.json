@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-27T00:08:00+00:00",
+  "file": "scripts/check_caveat_citations.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_caveat_citations.py"
+  ],
+  "commit": "a15c379",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "citations resolve against the filesystem again",
+      "old": "    known = tracked(root)",
+      "new": "    known = None",
+      "verdict": "caught",
+      "caught_by": [
+        "a cited file on disk that git does not track is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a tracked file is not recognised",
+      "old": "    if cited in known:\n        return True",
+      "new": "    if False:\n        return True",
+      "verdict": "caught",
+      "caught_by": [
+        "a cited file git tracks resolves"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a cited directory no longer resolves",
+      "old": "    prefix = cited.rstrip(\"/\") + \"/\"\n    return any(name.startswith(prefix) for name in known)",
+      "new": "    return False",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "git failing is read as an empty index rather than no answer",
+      "old": "    if found.returncode != 0:\n        return None",
+      "new": "    if found.returncode != 0:\n        return set()",
+      "verdict": "caught",
+      "caught_by": [
+        "a file whose every citation resolves passes",
+        "a by that cites only the caveat itself is not a failure",
+        "a verdict with no by at all does not crash",
+        "a by of null does not crash",
+        "a directory citation resolves"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

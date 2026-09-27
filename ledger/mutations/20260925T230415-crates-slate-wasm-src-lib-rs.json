@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-25T23:04:15+00:00",
+  "file": "crates/slate-wasm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "sql",
+    "--no-fail-fast"
+  ],
+  "commit": "1759ce2",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "resolve_subqueries walks the nested predicate too",
+      "old": "        if let Some(tree) = spec.predicate.as_mut() {\n            collect_conditions(tree, &mut conditions);\n        }",
+      "new": "        if false {\n            if let Some(tree) = spec.predicate.as_mut() {\n                collect_conditions(tree, &mut conditions);\n            }\n        }",
+      "verdict": "caught",
+      "caught_by": [
+        "a_subquery_inside_a_bracket_is_still_resolved"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

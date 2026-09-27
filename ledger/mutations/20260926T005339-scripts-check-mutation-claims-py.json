@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-26T00:53:39+00:00",
+  "file": "scripts/check_mutation_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_mutation_claims.py"
+  ],
+  "commit": "730fbc0",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the number-after-the-noun arm is dropped",
+      "old": "    rf\"|\\bmutations?\\b[^.\\n]{{0,30}}\\b{NUMBER}\\s+(?:run|caught|survived)\\b\"",
+      "new": "    r\"|(?!)\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a count after the noun is a claim"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the evidence-table arm is dropped",
+      "old": "    r\"|^\\|\\s*mutation\\s*\\|\",",
+      "new": "    r\"|(?!)\",",
+      "verdict": "caught",
+      "caught_by": [
+        "an evidence table is a claim even with no count in the prose",
+        "a table alone, with no sentence about mutations at all"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the table arm loses its anchor, so a quoted header counts",
+      "old": "    r\"|^\\|\\s*mutation\\s*\\|\",",
+      "new": "    r\"|\\|\\s*mutation\\s*\\|\",",
+      "verdict": "caught",
+      "caught_by": [
+        "an entry quoting the table header inline is not claiming a run"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "MULTILINE is dropped, so only a table at the very start counts",
+      "old": "    re.IGNORECASE | re.MULTILINE,\n)",
+      "new": "    re.IGNORECASE,\n)",
+      "verdict": "caught",
+      "caught_by": [
+        "an evidence table is a claim even with no count in the prose"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the number-before-the-noun arm is dropped",
+      "old": "    rf\"\\b{NUMBER}\\s+mutations?\\b\"",
+      "new": "    r\"(?!)\"",
+      "verdict": "caught",
+      "caught_by": [
+        "an entry counting mutations with no citation is refused",
+        "one citing a record that exists passes",
+        "a citation to a record that is not there is refused",
+        "and the first day is inside the rule, not outside it",
+        "claiming every mutation was caught beside a survivor is refused",
+        "an expected survivor still contradicts `all caught`",
+        "a malformed record does not crash the guard"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

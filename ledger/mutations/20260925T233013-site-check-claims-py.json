@@ -1,0 +1,100 @@
+{
+  "at": "2026-09-25T23:30:13+00:00",
+  "file": "site/check/claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_claims.py"
+  ],
+  "commit": "91fe68b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a crate with no root at all is counted as unguarded",
+      "old": "        if not crate_root.exists()\n        or \"#![forbid(unsafe_code)]\" not in crate_root.read_text(encoding=\"utf-8\")",
+      "new": "        if crate_root.exists()\n        and \"#![forbid(unsafe_code)]\" not in crate_root.read_text(encoding=\"utf-8\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate with no root at all is reported rather than skipped"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the unsafe scan looks for a use, not the word",
+      "old": "            if re.search(r\"\\bunsafe\\s*(\\{|fn\\b|impl\\b|trait\\b)\", line):",
+      "new": "            if \"unsafe\" in line:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree where every claim holds passes",
+        "a crate root that does not forbid unsafe is reported",
+        "a crate with no root at all is reported rather than skipped",
+        "the word unsafe in prose is not a use",
+        "a trip count that drifted from the generator is reported",
+        "a plan line that disagrees with the prose is reported",
+        "a zone count that drifted from the CSV is reported",
+        "a client the page names and the tree does not have is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the trip count is compared against the generator",
+      "old": "            f\"{trips:,}\" in page,",
+      "new": "            True,",
+      "verdict": "caught",
+      "caught_by": [
+        "a trip count that drifted from the generator is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the plan line's row count is compared too",
+      "old": "            f\"rows={trips}\" in page,",
+      "new": "            True,",
+      "verdict": "caught",
+      "caught_by": [
+        "a trip count that drifted from the generator is reported",
+        "a plan line that disagrees with the prose is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the zone count is compared against the CSV",
+      "old": "            f\"{count}-zone\" in page,",
+      "new": "            True,",
+      "verdict": "caught",
+      "caught_by": [
+        "a zone count that drifted from the CSV is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a named client must be a directory",
+      "old": "        name for name in (\"python\", \"go\", \"typescript\") if not (root / \"clients\" / name).is_dir()",
+      "new": "        name for name in [] if not (root / \"clients\" / name).is_dir()",
+      "verdict": "caught",
+      "caught_by": [
+        "a client the page names and the tree does not have is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the roster's phrases must still be on the page",
+      "old": "    absent = [phrase for phrase in roster if phrase not in page]",
+      "new": "    absent = []",
+      "verdict": "caught",
+      "caught_by": [
+        "a claim the page has stopped making is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

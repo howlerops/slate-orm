@@ -33,7 +33,7 @@ jobs:
             linker: aarch64-linux-gnu-gcc
             packages: gcc-aarch64-linux-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

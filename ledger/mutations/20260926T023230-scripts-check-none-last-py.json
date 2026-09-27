@@ -1,0 +1,116 @@
+{
+  "at": "2026-09-26T02:32:30+00:00",
+  "file": "scripts/check_none_last.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_none_last.py"
+  ],
+  "commit": "b030cc4",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an offender is not reported",
+      "old": "        if any(is_none(part) for part in parts[:-1]) and not _nested(tree, node):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "None first is reported",
+        "None in the middle of a long union is reported",
+        "a chain reports once, not once per link",
+        "a type alias counts, which is where this is stricter than RUF036",
+        "a return annotation counts",
+        "a parameter annotation counts",
+        "a tree with one offender is reported, naming the file and line"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "None in the last position counts as an offence",
+      "old": "parts[:-1]",
+      "new": "parts",
+      "verdict": "caught",
+      "caught_by": [
+        "None last is correct",
+        "a long union with None last is correct",
+        "a tree whose every union is correct passes",
+        "a vendored tree is not read"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the chain is not flattened, so one union reports many times",
+      "old": "        parts = operands(node)",
+      "new": "        parts = [node.left, node.right]",
+      "verdict": "caught",
+      "caught_by": [
+        "None in the middle of a long union is reported",
+        "a chain reports once, not once per link",
+        "a type alias counts, which is where this is stricter than RUF036"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a nested arm is reported as well as the whole chain",
+      "old": " and not _nested(tree, node)",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a chain reports once, not once per link",
+        "a type alias counts, which is where this is stricter than RUF036"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a syntax error is reported as a finding",
+      "old": "    except SyntaxError:\n        # A file this Python cannot parse is not this check's business: the\n        # suite that owns it will say so, and guessing would report a syntax\n        # error as a style finding.\n        return []",
+      "new": "    except SyntaxError:\n        return [(1, \"unparseable\")]",
+      "verdict": "caught",
+      "caught_by": [
+        "a file that will not parse is skipped rather than reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "vendored trees are read",
+      "old": "        if SKIP & set(path.relative_to(root).parts):\n            continue",
+      "new": "        if False:\n            continue",
+      "verdict": "caught",
+      "caught_by": [
+        "a vendored tree is not read",
+        "generated protobuf stubs are not read"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires guard always passes",
+      "old": "read > 0",
+      "new": "True",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree with no Python at all is reported, not passed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a bitwise or between integers is treated as a union",
+      "old": "    return isinstance(node, ast.Constant) and node.value is None",
+      "new": "    return isinstance(node, ast.Constant)",
+      "verdict": "caught",
+      "caught_by": [
+        "a bitwise or between values is not a union"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

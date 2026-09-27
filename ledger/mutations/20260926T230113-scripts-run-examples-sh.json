@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-26T23:01:13+00:00",
+  "file": "scripts/run_examples.sh",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_run_examples.py"
+  ],
+  "commit": "438b4be",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the refusal roster is never consulted",
+      "old": "bad=$(refuses \"$crate\" \"$name\")",
+      "new": "bad=",
+      "verdict": "caught",
+      "caught_by": [
+        "every example refusing a bad section passes, and says so",
+        "an example that runs a bad section instead of refusing fails",
+        "an example that refuses with 1 rather than 2 fails too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "any exit code counts as a refusal",
+      "old": "if [ \"$code\" -eq 2 ]; then",
+      "new": "if [ \"$code\" -ne 77 ]; then",
+      "verdict": "caught",
+      "caught_by": [
+        "an example that runs a bad section instead of refusing fails",
+        "an example that refuses with 1 rather than 2 fails too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a lost refusal is not counted as a failure",
+      "old": "                result=$(printf 'FAIL  %s, exit %s for %s, wanted 2' \"$name\" \"$code\" \"$bad\")\n                failed=$(( failed + 1 ))",
+      "new": "                result=$(printf 'FAIL  %s, exit %s for %s, wanted 2' \"$name\" \"$code\" \"$bad\")",
+      "verdict": "caught",
+      "caught_by": [
+        "an example that runs a bad section instead of refusing fails",
+        "an example that refuses with 1 rather than 2 fails too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "head_report loses its refusal line",
+      "old": "        slate-headbench/head_report) echo \"--not-a-section\" ;;",
+      "new": "",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

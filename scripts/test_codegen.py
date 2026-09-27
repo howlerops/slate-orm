@@ -765,6 +765,88 @@ def test_an_array_of_arrays_and_an_array_with_no_element_type_are_refused() -> N
             raise AssertionError(f"`{expected}` was generated rather than refused")
 
 
+def test_an_element_type_no_table_spells_is_refused_by_every_emitter() -> None:
+    """A scalar column and an array of the same type refuse the same way.
+
+    The element type is a second field on the column, so an unknown spelling
+    reaches the emitters through a different door from an unknown *column*
+    type: `declared` looks the column's own type up with `.get` and raises
+    `Unknown`, while the element used to be a bare subscript. The same catalog
+    — one whose server spells a type these tables do not know — therefore gave
+    a readable refusal naming the column for `u128` and a bare `KeyError` for
+    `array<u128>`, which is the failure
+    `ledger/2026-09-21-generate-an-array-column-in-three-languages.md` recorded
+    as unchecked.
+
+    All three languages, because the tables are deliberately separate: a type
+    added to one client and not the others is the case the separation exists
+    for, and an element of that type must still refuse readably in the two
+    that do not have it.
+
+    Not `web_module`, which was in this list on the first draft and passed an
+    `array<u128>` through without a word. That is correct: it emits column
+    *names* and nothing else, so it never looks a type up and has nothing to
+    refuse. Written down because an emitter silently accepting an unspellable
+    element looks exactly like the defect this test closes.
+    """
+    emitters = {
+        "python_module": lambda spec: codegen.python_module(spec, []),
+        "typescript_module": lambda spec: codegen.typescript_module(spec, []),
+        "go_file": lambda spec: codegen.go_file(spec, [], "demo"),
+    }
+    for name, emit in emitters.items():
+        spec = [
+            table(
+                "posts",
+                [column("id", "u64", 0), array_column("tags", "u128", 1)],
+                [0],
+            )
+        ]
+        try:
+            emit(spec)
+        except codegen.Unknown as why:
+            assert "tags" in str(why), why
+            assert "u128" in str(why), why
+        except KeyError as why:  # pragma: no cover - the defect this closes
+            raise AssertionError(f"{name} raised a bare KeyError: {why}") from None
+        else:
+            raise AssertionError(f"{name} generated an element it cannot spell")
+
+
+def test_every_element_lookup_refuses_readably_on_its_own() -> None:
+    """Each table's element lookup, called directly rather than through a module.
+
+    The emitter test above only reaches the *first* lookup an emitter makes:
+    `declared` refuses before `field_of` is called, and `go_element` refuses
+    before the Go encoder's `GO_ENCODE` lookup on the next line. Mutating those
+    later sites back to a bare subscript therefore survived the emitter test —
+    found by `scripts/mutate.py`, which is the whole reason this second test
+    exists rather than the first being assumed to cover them.
+
+    `GO_ENCODE`'s own site is still not reachable this way, because it is inline
+    in `go_rows` after the `go_element` call that refuses first. It is recorded
+    as an expected survivor in the mutation spec with that reason, which is the
+    honest form of "this code is defensive rather than exercised".
+    """
+    col = array_column("tags", "u128", 1)
+    lookups = {
+        "declared": lambda: codegen.declared(col, codegen.PYTHON_TYPES, "(element="),
+        "field_of": lambda: codegen.field_of(col, codegen.PYTHON_FIELDS, "Sequence[{}]"),
+        "python_encode": lambda: codegen.python_encode(col, "value"),
+        "go_element": lambda: codegen.go_element(col),
+    }
+    for name, call in lookups.items():
+        try:
+            call()
+        except codegen.Unknown as why:
+            assert "tags" in str(why), why
+            assert "u128" in str(why), why
+        except KeyError as why:  # pragma: no cover - the defect this closes
+            raise AssertionError(f"{name} raised a bare KeyError: {why}") from None
+        else:
+            raise AssertionError(f"{name} accepted an element it cannot spell")
+
+
 def test_refuse_unsupported_fires_and_does_not_over_fire() -> None:
     """`UNSUPPORTED` is empty, and the mechanism is still exercised.
 
@@ -929,6 +1011,70 @@ def test_a_catalog_that_publishes_no_views_key_is_read_as_none() -> None:
     """
     books = table("books", [column("id", "u64", 0)], [0])
     assert codegen.declared_views({"tables": [books]}, [books]) == []
+
+
+def test_the_web_module_imports_nothing() -> None:
+    """The point of the fourth target: a browser file with no SDK in it.
+
+    `typescript_module` emits a client declaration and imports
+    `@slate-orm/client`, which is a gRPC client. `examples/explorer/web` needs
+    column *names* to label a table, and pulling the SDK into a browser bundle
+    to get them would be absurd — so this target exists precisely to be
+    importable there, and an `import` line appearing in it would silently undo
+    that.
+    """
+    spec = [table("t", [column("id", "u64", 0), column("note", "string", 1)], [0])]
+    body = codegen.web_module(spec, [])
+    # Per line, and not `"import" not in body`: the header comment explains
+    # that it imports nothing, so the crude check fails on its own
+    # documentation. That was the first version of this test and it is the
+    # `if true { x } else { x }` of assertions — it failed for a reason
+    # unrelated to what it was asserting, which is the same waste as a
+    # mutation that survives for a reason unrelated to the mutation.
+    code = [line for line in body.splitlines() if not line.lstrip().startswith(("//", "*", "/*"))]
+    for line in code:
+        assert not line.startswith(("import ", "export type", "declare ")), line
+        assert "TableDef" not in line, line
+    assert 't: ["id", "note"],' in body, body
+
+
+def test_the_web_module_keeps_a_dropped_column() -> None:
+    """The opposite of a row type, and for the same reason it is dangerous.
+
+    `row_columns` skips a dropped column because a field nobody can read is
+    noise. This module's consumer indexes a row *by position* to put a header
+    over the value, so skipping one would shift every later header onto the
+    wrong column — the exact quiet wrong the generator exists to prevent,
+    arriving through the one target where the row-type instinct is wrong.
+    """
+    gone = column("removed", "string", 1)
+    gone["dropped_in"] = 3
+    spec = [table("t", [column("id", "u64", 0), gone, column("kept", "i64", 2)], [0])]
+    body = codegen.web_module(spec, [])
+    assert 't: ["id", "removed", "kept"],' in body, body
+
+
+def test_a_web_view_shares_its_table_s_array_rather_than_copying_it() -> None:
+    """`CATALOG_TABLES["books"]!`, not a second literal.
+
+    A copy would agree on the day it was written and drift on the first column
+    added to the base table, and nothing downstream could notice: the UI would
+    put the right headers over one and stale headers over the other. Sharing
+    the object makes the drift impossible rather than detectable, and lets the
+    web test assert identity.
+    """
+    spec = [table("books", [column("id", "u64", 0), column("title", "string", 1)], [0])]
+    body = codegen.web_module(spec, [("classics", "books")])
+    assert 'classics: CATALOG_TABLES["books"]!,' in body, body
+    # And not a copy that happens to read the same.
+    assert body.count('["id", "title"]') == 1, body
+
+
+def test_the_web_module_says_it_is_generated() -> None:
+    """The banner every other target carries, on the one a reader will find
+    in a `src/` directory beside hand-written code and assume is editable."""
+    body = codegen.web_module([table("t", [column("id", "u64", 0)], [0])], [])
+    assert body.startswith("// " + codegen.BANNER), body[:120]
 
 
 def main() -> int:

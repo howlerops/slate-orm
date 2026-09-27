@@ -24,6 +24,7 @@ from slate import (
     JoinInput,
     JoinQuery,
     as_scalar,
+    asc,
     concat,
     desc,
     i64,
@@ -223,6 +224,52 @@ def test_grouping_by_a_value_the_join_computes(client: Client) -> None:
         assert decade % 10 == 0, f"{decade} is not a decade"
 
 
+def test_ordering_a_chains_groups_by_its_computed_value(client: Client) -> None:
+    """The third client for the case Go and TypeScript got on 2026-09-26.
+
+    `ledger/2026-09-26-ordering-a-chains-groups-by-what-it-computed.md` closed
+    "`ORDER BY` a chain's computed value is untested from a client" on two of
+    three, and recorded the missing third as its own caveat. This is it.
+
+    A *chain* rather than a two-input join, because the grouped chain path
+    narrows each step's projection (`narrowed_chain` in the kernel) and
+    resolves the grouping in the joined space, where a computed slot sits past
+    every table — the one shape where a sort key could plausibly resolve
+    against the wrong thing.
+
+    Descending, deliberately. The kernel's own group order is ascending by
+    encoded key, so an ascending assertion passes unchanged against a server
+    that dropped the sort; the ascending run beside it is what shows the
+    descending one was the sort talking and not the fixture.
+    """
+
+    def decades(direction: str) -> list[int]:
+        join = JoinQuery()
+        authors = join.add(AUTHORS)
+        books = join.add(BOOKS, on=[(authors.c.id, "author_id")])
+        join.add(SALES, on=[(books.c.id, "book_id")])
+        # The decade a book came out in, which no table stores.
+        join.compute((as_scalar(books.c.year) / i64(10)) * i64(10))
+
+        grouped = GroupedJoinQuery(join)
+        grouped.group_by(join.computed(0))
+        grouped.aggregate(Agg.count())
+        order = desc if direction == "desc" else asc
+        grouped.sort(order(grouped.key(0)))
+
+        out = []
+        for group in client.aggregate(grouped):
+            kind, decade = tag_group(group)["key"][0]
+            assert kind == "i64", f"a decade computed from an i64 year is an i64, got {kind}"
+            out.append(decade)
+        return out
+
+    descending = decades("desc")
+    assert len(descending) >= 2, "this needs at least two decades to order"
+    assert descending == sorted(descending, reverse=True), descending
+    assert decades("asc") == sorted(descending), "the two runs must be reverses"
+
+
 def test_a_joins_computed_value_may_read_both_inputs(client: Client) -> None:
     """The case no input's own `compute` can express, which is why this exists.
 
@@ -300,9 +347,7 @@ def test_both_kinds_of_computed_value_come_back_on_a_join(client: Client) -> Non
 
         # The join's, on the joined row, because they may read every input.
         assert len(row.computed_values) == 1, row
-        assert row.computed(0) == (
-            f"{as_str(left.get('name'))}/{as_str(right.get('title'))}"
-        )
+        assert row.computed(0) == (f"{as_str(left.get('name'))}/{as_str(right.get('title'))}")
 
         # Each input's own, on that input's row, because they read only it.
         assert left.computed_values == (str(left.get("name")).upper(),), left
@@ -337,9 +382,7 @@ def test_a_chains_computed_value_reads_every_input(client: Client) -> None:
     authors = join.add(AUTHORS)
     books = join.add(BOOKS, on=[(authors.c.id, "author_id")])
     sales = join.add(SALES, on=[(books.c.id, "book_id")])
-    join.compute(
-        concat(authors.c.name, lit("/"), books.c.title, lit("/"), sales.c.book_id)
-    )
+    join.compute(concat(authors.c.name, lit("/"), books.c.title, lit("/"), sales.c.book_id))
 
     rows = list(client.join(join))
     assert rows, "the chain fixture should produce rows"

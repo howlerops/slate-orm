@@ -1,0 +1,43 @@
+{
+  "at": "2026-09-27T02:24:39+00:00",
+  "file": "crates/slate-server/src/fingerprint.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-server",
+    "--test",
+    "schema_check",
+    "--",
+    "the_canonical_form"
+  ],
+  "commit": "a1b2256",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a decimal's scale drops out of the canonical form",
+      "old": "                if let Some(scale) = column.scale() {\n                    state.number(scale as usize);\n                }",
+      "new": "                let _ = column.scale();",
+      "verdict": "caught",
+      "caught_by": [
+        "the_canonical_form_is_pinned_against_an_implementation_in_another_language"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an array's element type drops out of the canonical form",
+      "old": "                if let Some(element) = column.element_type() {\n                    state.text(element.name());\n                }",
+      "new": "                let _ = column.element_type();",
+      "verdict": "caught",
+      "caught_by": [
+        "the_canonical_form_is_pinned_against_an_implementation_in_another_language"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

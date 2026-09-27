@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-27T00:44:39+00:00",
+  "file": "scripts/run_examples.sh",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "014a828",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "bucket_layout's refusal line is deleted",
+      "old": "        slate-slatedb/bucket_layout) echo \"--not-an-option\" ;;\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "the real tree's four tables agree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "cost_calibration's refusal argument becomes one it has",
+      "old": "slate-slatedb/cost_calibration) echo \"--not-an-option\" ;;",
+      "new": "slate-slatedb/cost_calibration) echo \"--cold\" ;;",
+      "verdict": "caught",
+      "caught_by": [
+        "the real tree's four tables agree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

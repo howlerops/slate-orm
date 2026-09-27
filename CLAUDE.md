@@ -90,13 +90,19 @@ part of the change.
 ## What runs, and where
 
 `main` is the trunk. `.github/workflows/ci.yml` runs on **every push, to every
-branch** — seventeen jobs covering formatting, the Rust workspace, the Go,
+branch** — twenty-one jobs covering formatting, the Rust workspace, the Go,
 Python and TypeScript clients, the demo frontend, the pre-commit hook's own
 tests, a workspace-layout guard, the repository's *other* Python (every
 harness, script and site check outside `clients/python`), the landing page's
-quickstarts, the three-SDK conformance runner, a browser e2e, MinIO, the whole
-stack deployed against object storage, and the release build for both shipping
-targets.
+quickstarts, the ten documentation pages rendered in a browser, the three-SDK
+conformance runner, a browser e2e, the workbench in a browser, MinIO, the whole
+stack deployed against object storage, four benchmark crates at `--smoke`, and
+the release build for both shipping targets.
+
+That count is a count of `jobs:` keys in `ci.yml` and nothing checks it, which
+is why it said *seventeen* for as long as it did: jobs were added and the
+sentence was not. `python3 -c "…re.findall(r'^  ([a-z][a-z0-9-]*):\s*$', …)"`
+over the file answers it in one line.
 
 That sentence was false until recently in a way worth knowing about: the
 workflow existed, was marked active, and had run **zero times**, because it
@@ -208,6 +214,38 @@ that is set and missing is a hard error, never a silent fall back to building.
   publishing; a `paths:` filter also does not match when a branch is created,
   which would have meant the site never deployed at all. Both are written up in
   the workflow files. Prefer running something cheap unconditionally.
+- **Read the run's conclusion; do not wait to be told.** A push starts
+  twenty-one jobs and nothing in this container reports how they ended. A
+  session once set a watch that matched on the Pages string and expired after
+  thirty minutes, and three red runs went by unnoticed —
+  `ledger/2026-09-14-ci-clippy-is-newer-than-mine.md` recorded that the honest
+  fix is to ask. It is one call:
+
+  ```
+  mcp__github__actions_list, method list_workflow_runs, resource_id ci.yml,
+      workflow_runs_filter {"branch": "<your branch>"}
+  mcp__github__get_job_logs, run_id <the run>, failed_only true,
+      return_content true
+  ```
+
+  Doing it after a batch of pushes found three failures in one run: a guard
+  that resolved a citation against the *filesystem* and passed here while the
+  file was absent from the checkout, a browser check whose expectation had gone
+  stale, and a registry refusing an anonymous pull. None was visible from this
+  container, and the first two were a session's own work.
+- **An action's defaults are part of your toolchain.** `actions/setup-go` sets
+  `GOTOOLCHAIN=local` for a pinned `go-version`, so bumping it to `@v6` turned
+  the Go client job red with no Go changed: `protoc-gen-go-grpc@v1.6.2` is
+  pinned because it generates committed code, and it declares `go >= 1.25.0`
+  against the 1.24 the workflow installs. `GOTOOLCHAIN` had been `auto` and
+  had been quietly downloading a newer compiler for two weeks. When an action
+  bump turns a job red, read what the action's new major changed about the
+  *environment* before looking at the diff — there may not be one.
+  `clients/go/scripts/generate_proto.py` now sets `GOTOOLCHAIN` itself, which
+  is also what makes the failure reproducible here:
+  `GOTOOLCHAIN=local go test ./slate -run TestStubsAreFresh -count=1` is CI's
+  condition, and it is the only way to meet it locally.
+
 - **CI's clippy is newer than yours, and `-D warnings` makes that fatal.**
   `dtolnay/rust-toolchain@stable` tracks the current release; this container
   has whatever it was built with. That gap is not theoretical: three commits

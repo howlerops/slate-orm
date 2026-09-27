@@ -237,6 +237,42 @@ hear that somebody got there first. `NotFound` and not `Conflict`: a row that
 moved can be re-read and the decision remade, and a row that is gone cannot, so
 a retry loop on a conflict would spin.
 
+## Windows, arrays, full-text, views and soft delete
+
+Five features shipped after this client did. All five are reachable; none has
+a section above, which is why they are listed here.
+
+```python
+# A window value, and a sort key naming it. `windowed(i)` is on the query,
+# because a window belongs to the query rather than to a table.
+q = Query(docs)
+ranked = q.window(Window.row_number().over(partition=[q.c.kind], order=[asc(q.c.id)]))
+for row in client.query(ranked.sort(desc(q.windowed(0)))):
+    rank = row.windowed(0)
+
+# An array column, and a value for one.
+Column("tags", ValueType.ARRAY, element=ValueType.STR)
+client.insert(posts, [(u64(1), Array(["a", "b"]))])
+
+# Full text, over a column with a text index.
+q.where(q.c.title.contains("slate"))
+
+# A view: the same declaration under the catalog's name for it.
+docs.as_view("recent")
+
+# Soft delete: reading retired rows, and erasing them.
+q.include_deleted()                              # needs `read_deleted`
+client.purge_deleted(docs, before=cutoff)        # needs `delete`, `read` and `read_deleted`
+```
+
+`include_deleted` without `read_deleted` is **refused**, not ignored: a read that
+asked to see retired rows and silently did not is worse than one that failed.
+
+There is no `restore`. A soft delete stamps a column, so undoing one is an
+ordinary `update` writing null into that column — which works today, given
+`read_deleted`. A dedicated call would be a second way to write one column,
+with its own authorization to keep in step.
+
 ## Layout
 
 ```

@@ -241,10 +241,48 @@ that said what it expected to find wants to hear that somebody got there first.
 `NOT_FOUND` and not `ABORTED`: a row that moved can be re-read and the decision
 remade, and a row that is gone cannot, so a retry loop would spin.
 
+## Windows, arrays, full-text, views and soft delete
+
+Five features shipped after this client did. All five are reachable; none has
+a section above, which is why they are listed here.
+
+```ts
+// A window value, named in a sort key by its index.
+const q = { table: "docs", window: [over(rowNumber(), { partition: [kind] })] };
+const sorted = { ...q, sort: [{ column: windowed(0), descending: false }] };
+
+// An array column, and a value for one.
+const tags: ColumnDef = { name: "tags", type: "array", element: "string" };
+array([str("a"), str("b")]);
+
+// Full text, over a column with a text index.
+contains(body, "slate");
+
+// A view: the same declaration under the catalog's name for it.
+asView(docs, "recent");
+
+// Soft delete: reading retired rows, and erasing them.
+({ table: "docs", includeDeleted: true });        // needs `read_deleted`
+session.purgeDeleted("docs", before);             // needs `delete`, `read`, `read_deleted`
+```
+
+`includeDeleted` without `read_deleted` is **refused**, not ignored: a read that
+asked to see retired rows and silently did not is worse than one that failed.
+
+There is no `restore`. A soft delete stamps a column, so undoing one is an
+ordinary update writing null into that column — which works today, given
+`read_deleted`.
+
 ## What is not here
 
-No vector similarity search, and no computed values in a query or a join
-input.
+No index-backed nearest-neighbour operator: `distance(a, b, metric)` is a
+scalar, so a similarity search here is computed per row and sorted, which is a
+full scan.
+
+This used to say there were no computed values in a query or a join input, and
+no vector surface at all. Both stopped being true — `compute?: Scalar[]` is on
+a query, a join input and a join — and nothing noticed until somebody read this
+file against the code.
 
 The proto is loaded at runtime by `@grpc/proto-loader` rather than compiled
 ahead of time, so there is no codegen step and no `protoc` needed to build

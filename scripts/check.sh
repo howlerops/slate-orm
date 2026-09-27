@@ -93,6 +93,22 @@ cited-tests|.|python3 scripts/check_cited_tests.py
 cited-tests-guard|.|python3 scripts/test_check_cited_tests.py
 cited-docs|.|python3 scripts/check_cited_docs.py
 cited-docs-guard|.|python3 scripts/test_check_cited_docs.py
+site-claims|.|python3 scripts/check_site_claims.py
+site-claims-guard|.|python3 scripts/test_check_site_claims.py
+site-css|.|python3 scripts/check_site_css.py
+site-css-guard|.|python3 scripts/test_check_site_css.py
+build-output|.|python3 scripts/check_build_output.py
+build-output-guard|.|python3 scripts/test_check_build_output.py
+caveat-citations|.|python3 scripts/check_caveat_citations.py
+caveat-citations-guard|.|python3 scripts/test_check_caveat_citations.py
+closed-caveats|.|python3 scripts/check_closed_caveats.py
+closed-caveats-guard|.|python3 scripts/test_check_closed_caveats.py
+none-last|.|python3 scripts/check_none_last.py
+none-last-guard|.|python3 scripts/test_check_none_last.py
+guard-scope|.|python3 scripts/check_guard_scope.py
+guard-scope-guard|.|python3 scripts/test_check_guard_scope.py
+secret-types|.|python3 scripts/check_secret_types.py
+secret-types-guard|.|python3 scripts/test_check_secret_types.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py
@@ -101,6 +117,8 @@ demo-surface-guard|.|python3 scripts/test_check_demo_surface.py
 example-runner-guard|.|python3 scripts/test_run_examples.py
 example-roster|.|python3 scripts/check_examples_roster.py
 example-roster-guard|.|python3 scripts/test_check_examples_roster.py
+toolchain-pins|.|python3 scripts/check_toolchain_pins.py
+toolchain-pins-guard|.|python3 scripts/test_check_toolchain_pins.py
 cost-prose|.|python3 scripts/check_cost_prose.py
 cost-prose-guard|.|python3 scripts/test_check_cost_prose.py
 build-stamp|.|python3 scripts/check_build_stamp.py
@@ -109,6 +127,8 @@ table-provenance|.|python3 scripts/check_table_provenance.py
 table-provenance-guard|.|python3 scripts/test_check_table_provenance.py
 mutation-claims|.|python3 scripts/check_mutation_claims.py
 mutation-claims-guard|.|python3 scripts/test_check_mutation_claims.py
+caveats|.|python3 scripts/caveats.py
+caveats-guard|.|python3 scripts/test_caveats.py
 retired-claims|.|python3 scripts/check_retired_claims.py
 retired-claims-guard|.|python3 scripts/test_check_retired_claims.py
 reclaim-guard|.|python3 scripts/test_reclaim.py
@@ -229,13 +249,29 @@ if [ -n "$FAILED" ]; then
 else
     printf '%d passed, all of them\n' "$PASSED"
 fi
+# How much of the caveat backlog has gone unread. Reported, never failed:
+# `caveats.py --unread`'s own docstring says why — turning it red would mean
+# stamping the whole list to get a green build, which is the pressure that
+# produces a rubber stamp. A line here is the nudge at the moment somebody is
+# already about to commit, which is the only moment it can be acted on.
+#
+# `ledger/2026-09-26-the-backlog-is-read.md` recorded "nothing schedules the
+# next pass" as a caveat. This is the answer to it, and deliberately the weak
+# form: a calendar cannot make a CI job red on a day nobody touched the code.
+UNREAD=$(python3 "$(dirname "$0")/caveats.py" --unread 30 2>/dev/null | tail -1)
+case "$UNREAD" in
+    0\ *) ;;
+    *[0-9]*) printf '\n%s — `python3 scripts/caveats.py --unread 30` lists them.\n' "$UNREAD" ;;
+esac
+
 cat <<'CAVEAT'
 
 Not covered here, and each has found a real defect: the Go, Python and
 TypeScript client suites, the three-SDK conformance runner, the browser e2e,
-the workbench, the MinIO integration, the deployed harness, the site's
-quickstarts, and `cargo test --workspace`. They need a built binary, a browser
-or a container. Run the ones your change touches.
+the workbench, the ten docs pages in a browser, the MinIO integration, the
+deployed harness, the site's quickstarts, and `cargo test --workspace`. They
+need a built binary, a browser or a container. Run the ones your change
+touches.
 CAVEAT
 
 [ -z "$FAILED" ]

@@ -1,0 +1,47 @@
+{
+  "at": "2026-09-27T02:15:18+00:00",
+  "file": "scripts/codegen.py",
+  "dialect": "pytest",
+  "command": [
+    "python3",
+    "-m",
+    "pytest",
+    "scripts/test_codegen.py",
+    "-q"
+  ],
+  "commit": "9a76c3e",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the element lookup goes back to a bare subscript",
+      "old": "    element = element_of(column)\n    try:\n        return table[element]\n    except KeyError:",
+      "new": "    element = element_of(column)\n    if True:\n        return table[element]\n    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "scripts/test_codegen.py::test_an_element_type_no_table_spells_is_refused_by_every_emitter"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "field_of's element lookup is unguarded again",
+      "old": "    native, runtime = element_spelling(fields, column, \"this language's field table\")",
+      "new": "    native, runtime = fields[element_of(column)]",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the Go encoder's element lookup is unguarded again",
+      "old": "                inner = element_spelling(GO_ENCODE, column, \"GO_ENCODE\")",
+      "new": "                inner = GO_ENCODE[element_of(column)]",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

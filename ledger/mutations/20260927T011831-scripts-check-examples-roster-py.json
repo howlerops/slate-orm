@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-27T01:18:31+00:00",
+  "file": "scripts/check_examples_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "4f4941e",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "rule 5 never reports a loop that reaches the probe",
+      "old": "    elif \"continue\" not in script[opens.end() : closes.start()]:",
+      "new": "    elif \"continue\" not in script[opens.end() : closes.start()] and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a loop that reaches the refusal probe for a server is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the order of the two calls is not checked",
+      "old": "    elif closes.start() < opens.start():",
+      "new": "    elif closes.start() < opens.start() and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a loop that asks for a refusal before a handshake is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "rule 5's never-fires half never fires",
+      "old": "    if opens is None or closes is None:",
+      "new": "    if (opens is None or closes is None) and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a loop with neither call is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the window searched is the whole script, not between the calls",
+      "old": "script[opens.end() : closes.start()]",
+      "new": "script",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-26T23:06:04+00:00",
+  "file": "scripts/check_examples_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_examples_roster.py"
+  ],
+  "commit": "438b4be",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the function body slice stops at any brace",
+      "old": "rf\"^{re.escape(function)}\\(\\) \\{{\\n(.*?)^\\}}\", script, re.MULTILINE | re.DOTALL",
+      "new": "rf\"^{re.escape(function)}\\(\\) \\{{\\n(.*?)\\}}\", script, re.MULTILINE | re.DOTALL",
+      "verdict": "caught",
+      "caught_by": [
+        "an arm containing a brace does not truncate the table"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the body slice ignores which function was asked for",
+      "old": "rf\"^{re.escape(function)}\\(\\) \\{{\\n(.*?)^\\}}\", script, re.MULTILINE | re.DOTALL",
+      "new": "r\"^\\w+\\(\\) \\{\\n(.*?)^\\}\", script, re.MULTILINE | re.DOTALL",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate whose floor matches, with no servers, is clean",
+        "examples in a directory that is not a member are not demanded",
+        "an example that takes sections and has a refusal line is clean",
+        "a refusal for an example that is gone is reported",
+        "a refusal for an example that takes no sections is reported",
+        "a refusal argument the example's own source carries is reported",
+        "an arm containing a brace does not truncate the table",
+        "no refusals at all is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

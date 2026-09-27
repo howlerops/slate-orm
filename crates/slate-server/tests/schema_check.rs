@@ -505,12 +505,26 @@ async fn an_insert_whose_declaration_disagrees_is_refused_over_grpc() {
 ///
 /// def fingerprint(name, columns, key_ordinals):
 ///     out = b"slate.v1.schema/1" + s(name)
-///     for i, (cname, ctype) in enumerate(columns):
+///     for i, (cname, ctype, extra) in enumerate(columns):
 ///         out += d(i) + s(cname) + s(ctype)
+///         if ctype == "decimal": out += d(extra)    # the scale
+///         if ctype == "array":   out += s(extra)    # the element type
 ///     out += b"key" + d(len(key_ordinals))
 ///     for k in key_ordinals: out += d(k)
 ///     return out + b"columns" + d(len(columns))
 /// ```
+///
+/// The two conditional lines are the whole reason this docstring was wrong for
+/// a while and the pinned values did not notice: the three tables pinned
+/// originally have neither a decimal nor an array, so a reference
+/// implementation missing both reproduced all three. Every type a column can
+/// carry extra state in is now pinned, which is what makes the transcript
+/// above a specification rather than a summary of the cases that happened to
+/// be covered.
+///
+/// A column is never both, so the order of the two arms is unobservable;
+/// `fingerprint.rs` writes the scale first and the Python client writes the
+/// element first, and they agree on every table that exists.
 ///
 /// The values below were produced by running exactly that against the fixture
 /// tables, so this asserts agreement with a second implementation rather than
@@ -528,6 +542,31 @@ fn the_canonical_form_is_pinned_against_an_implementation_in_another_language() 
     );
     // A prefix is its own value, and it is what an older client sends.
     assert_eq!(fingerprint::of(&common::docs(), 2), 0x4fde_f413_2267_2bf0);
+
+    // A decimal, whose scale is hashed and whose scale is the thing no other
+    // layer can catch a client being wrong about.
+    assert_eq!(
+        fingerprint::of_table(&common::prices()),
+        0xdab8_8564_81bc_4a6d,
+        "a decimal's scale is part of the canonical form"
+    );
+
+    // An array and a decimal in one table. Built here rather than in
+    // `common/` because it is never written to: the two extra-state types
+    // together are what this pins, and a fixture the rest of the crate can
+    // reach would invite a row into it and then a width assertion.
+    let shelves = TableDef::builder("shelves", TableId(90))
+        .column("id", ValueType::U64)
+        .array_column("tags", ValueType::Str)
+        .decimal_column("price", 2)
+        .primary_key(["id"])
+        .build()
+        .expect("valid schema");
+    assert_eq!(
+        fingerprint::of_table(&shelves),
+        0xdf01_3a5c_cb68_08c0,
+        "an array's element type is part of the canonical form"
+    );
 }
 
 /// Length-prefixing rather than delimiting is what stops one declaration being

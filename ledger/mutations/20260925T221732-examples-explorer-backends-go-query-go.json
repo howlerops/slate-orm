@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-25T22:17:32+00:00",
+  "file": "examples/explorer/backends/go/query.go",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer && SLATE_SERVERD=/home/user/slate-orm/target/debug/slate-serverd ./run.sh --conformance"
+  ],
+  "commit": "e425e1c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the go adapter's or arm really builds a disjunction",
+      "old": "\t\treturn slate.Or(parts...), nil",
+      "new": "\t\treturn slate.And(parts...), nil",
+      "verdict": "caught",
+      "caught_by": [
+        "a disjunction (app): the adapters disagree",
+        "a negated disjunction (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

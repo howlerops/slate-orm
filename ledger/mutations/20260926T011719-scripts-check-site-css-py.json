@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-26T01:17:19+00:00",
+  "file": "scripts/check_site_css.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_site_css.py"
+  ],
+  "commit": "01803e0",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the sheets share one pooled corpus, after ruff format",
+      "old": "        files = sources(root, globs)",
+      "new": "        files = [f for _, g in SHEETS for f in sources(root, g)]",
+      "verdict": "caught",
+      "caught_by": [
+        "a demo class named only by a site page is still dead",
+        "a stylesheet with no sources at all is reported, not passed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a sheet with no sources is not reported, after ruff format",
+      "old": "        record(f\"{sheet} has sources to check against\", bool(files), str(globs))",
+      "new": "        record(f\"{sheet} has sources to check against\", True, str(globs))",
+      "verdict": "caught",
+      "caught_by": [
+        "a stylesheet with no sources at all is reported, not passed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

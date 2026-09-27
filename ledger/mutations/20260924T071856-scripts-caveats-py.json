@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-24T07:18:56+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "54d9681",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the key is the whole claim, so a late edit orphans it",
+      "old": "KEY = 60",
+      "new": "KEY = 10000",
+      "verdict": "caught",
+      "caught_by": [
+        "a verdict survives an edit past the key's cut: open: wanted 1, got 0; untriaged: wanted 0, got 1; problems: wanted 0, got 1 ['a.md::It does not cover the case where a sentence runs on well past sixty characters before it reaches the detail that later gets corrected.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the key is so short that two bullets collide",
+      "old": "KEY = 60",
+      "new": "KEY = 3",
+      "verdict": "caught",
+      "caught_by": [
+        "a verdict is read by the opening of its bullet: open: wanted 1, got 0; untriaged: wanted 1, got 2; problems: wanted 0, got 1 ['a.md::It does not do the first thing.']",
+        "closed without naming what closed it is refused: closed: wanted 1, got 0",
+        "deliberate without naming the reasoning is refused: deliberate: wanted 1, got 0",
+        "an edit before the cut still orphans it: untriaged: wanted 1, got 0; open: wanted 0, got 1; problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unknown verdict is not reported",
+      "old": "            problems.append(f\"{c['entry']}: unknown verdict {verdict!r}\")",
+      "new": "            pass",
+      "verdict": "caught",
+      "caught_by": [
+        "an unknown verdict is refused and counted untriaged: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

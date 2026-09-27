@@ -1,0 +1,105 @@
+{
+  "at": "2026-09-27T02:41:29+00:00",
+  "file": "site/docs/nav.js",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "-c",
+    "python3 site/check/pages.py && echo '1 passed, 0 failed' || echo '0 passed, 1 failed'"
+  ],
+  "commit": "d9600a2",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "nav.js throws before it renders anything",
+      "old": "const here = currentPage();",
+      "new": "const here = currentPage(); nope.renderEverything();",
+      "verdict": "caught",
+      "caught_by": [
+        "index.html: page error: ReferenceError: nope is not defined",
+        "index.html: the sidebar has 0 links and nav.js lists 10 pages",
+        "index.html: the sidebar marks [] as the current page, not ['index.html']",
+        "index.html: the contents has 0 entries and the article has 3 h2",
+        "index.html: the pager has 0 links, expected 1",
+        "quickstart.html: page error: ReferenceError: nope is not defined",
+        "quickstart.html: the sidebar has 0 links and nav.js lists 10 pages",
+        "quickstart.html: the sidebar marks [] as the current page, not ['quickstart.html']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the sidebar drops a section",
+      "old": "  for (const section of SECTIONS) {\n    host.append(element(\"h2\", \"nav-section\", section.title));",
+      "new": "  for (const section of SECTIONS.slice(1)) {\n    host.append(element(\"h2\", \"nav-section\", section.title));",
+      "verdict": "caught",
+      "caught_by": [
+        "index.html: the sidebar has 7 links and nav.js lists 10 pages",
+        "index.html: the sidebar marks [] as the current page, not ['index.html']",
+        "quickstart.html: the sidebar has 7 links and nav.js lists 10 pages",
+        "quickstart.html: the sidebar marks [] as the current page, not ['quickstart.html']",
+        "concepts.html: the sidebar has 7 links and nav.js lists 10 pages",
+        "concepts.html: the sidebar marks [] as the current page, not ['concepts.html']",
+        "features.html: the sidebar has 7 links and nav.js lists 10 pages",
+        "storage.html: the sidebar has 7 links and nav.js lists 10 pages"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "no link is marked as the current page",
+      "old": "      if (href === here) {\n        link.setAttribute(\"aria-current\", \"page\");\n      }",
+      "new": "      if (false) {\n        link.setAttribute(\"aria-current\", \"page\");\n      }",
+      "verdict": "caught",
+      "caught_by": [
+        "index.html: the sidebar marks [] as the current page, not ['index.html']",
+        "quickstart.html: the sidebar marks [] as the current page, not ['quickstart.html']",
+        "concepts.html: the sidebar marks [] as the current page, not ['concepts.html']",
+        "features.html: the sidebar marks [] as the current page, not ['features.html']",
+        "storage.html: the sidebar marks [] as the current page, not ['storage.html']",
+        "security.html: the sidebar marks [] as the current page, not ['security.html']",
+        "deployment.html: the sidebar marks [] as the current page, not ['deployment.html']",
+        "clients.html: the sidebar marks [] as the current page, not ['clients.html']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the contents skips a heading",
+      "old": "  for (const heading of headings) {\n    if (!heading.id) {",
+      "new": "  for (const heading of headings.slice(1)) {\n    if (!heading.id) {",
+      "verdict": "caught",
+      "caught_by": [
+        "index.html: the contents has 2 entries and the article has 3 h2",
+        "concepts.html: the contents has 4 entries and the article has 5 h2",
+        "features.html: the contents has 2 entries and the article has 3 h2",
+        "storage.html: the contents has 2 entries and the article has 3 h2",
+        "deployment.html: the contents has 3 entries and the article has 4 h2",
+        "clients.html: the contents has 3 entries and the article has 4 h2",
+        "roadmap.html: the contents has 7 entries and the article has 8 h2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the pager stops emitting a next link",
+      "old": "    next ? link(\"next\", next, \"\u2192\") : element(\"span\"),",
+      "new": "    element(\"span\"),",
+      "verdict": "caught",
+      "caught_by": [
+        "index.html: the pager has 0 links, expected 1",
+        "quickstart.html: the pager has 1 links, expected 2",
+        "concepts.html: the pager has 1 links, expected 2",
+        "features.html: the pager has 1 links, expected 2",
+        "storage.html: the pager has 1 links, expected 2",
+        "security.html: the pager has 1 links, expected 2",
+        "deployment.html: the pager has 1 links, expected 2",
+        "clients.html: the pager has 1 links, expected 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

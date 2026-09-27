@@ -1,0 +1,81 @@
+{
+  "at": "2026-09-25T23:13:58+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "1759ce2",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a bare conjunction inside a disjunction is refused",
+      "old": "            if bare.iter().any(|b| *b) || bare_and {\n                return Err(Self::mixed_connectives(at));\n            }",
+      "new": "            if false {\n                return Err(Self::mixed_connectives(at));\n            }",
+      "verdict": "caught",
+      "caught_by": [
+        "and_and_or_cannot_be_mixed_in_one_where",
+        "mixing_without_brackets_is_still_refused_and_the_message_says_to_write_them",
+        "the_other_order_of_mixing_is_refused_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a conjunction that combined nothing is not bare",
+      "old": "        if parts.len() == 1 {\n            return Ok((parts.remove(0), false));\n        }",
+      "new": "        if parts.len() == 1 {\n            return Ok((parts.remove(0), true));\n        }",
+      "verdict": "caught",
+      "caught_by": [
+        "a_disjunction_admits_a_row_either_arm_admits",
+        "a_bracketed_disjunction_is_anded_with_what_follows_it",
+        "a_flat_where_never_lands_in_the_nested_field",
+        "a_nested_predicate_survives_the_json_round_trip",
+        "or_lowers_to_a_disjunction_the_kernel_understands",
+        "the_other_nesting_works_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a closing bracket is required",
+      "old": "            self.expect_symbol(\")\").map_err(|mut e| {",
+      "new": "            let _ = self.eat_symbol(\")\");\n            #[allow(unreachable_code)]\n            Ok::<(), SqlError>(()).map_err(|mut e: SqlError| {",
+      "verdict": "caught",
+      "caught_by": [
+        "an_unclosed_bracket_is_refused_at_the_bracket_and_not_swallowed"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the flattener keeps a nested All nested",
+      "old": "            PredicateSpec::All(ref parts) => match leaves(parts) {\n                Some(flat) => Where::All(flat),\n                None => Where::Nested(tree),\n            },",
+      "new": "            PredicateSpec::All(ref parts) => match leaves(parts) {\n                Some(flat) => Where::All(flat),\n                None => Where::All(Vec::new()),\n            },",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_is_anded_with_what_follows_it",
+        "a_flat_where_never_lands_in_the_nested_field",
+        "a_nested_predicate_survives_the_json_round_trip",
+        "the_other_nesting_works_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the flattener keeps a nested Any nested",
+      "old": "            PredicateSpec::Any(ref parts) => match leaves(parts) {\n                Some(flat) => Where::Any(flat),\n                None => Where::Nested(tree),\n            },",
+      "new": "            PredicateSpec::Any(ref parts) => match leaves(parts) {\n                Some(flat) => Where::Any(flat),\n                None => Where::Any(Vec::new()),\n            },",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

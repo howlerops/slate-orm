@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-27T03:43:33+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && go test ./slate -count=1 -run 'ComputedValue'"
+  ],
+  "commit": "057a86c",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": []
+}

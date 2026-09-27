@@ -27,11 +27,25 @@ def tree(root: Path, files: dict[str, str]) -> None:
         path.write_text(body, encoding="utf-8")
 
 
-def case(name: str, files: dict[str, str], seen: int, broken: int) -> bool:
+def case(
+    name: str,
+    files: dict[str, str],
+    seen: int,
+    broken: int,
+    roster: dict[tuple[str, str], str] | None = None,
+    fixtures: dict[str, str] | None = None,
+) -> bool:
+    """One tree, one expectation. `roster` defaults to empty, not to the real one.
+
+    `guard.NOT_A_FILE` names files in `slate-orm`, none of which a fixture
+    tree has, so passing it here would make every case fail on nine stale-row
+    reports about the repository. Empty is the fixture's own answer; the cases
+    that are about the roster pass the rows they mean.
+    """
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         tree(root, files)
-        got_seen, got_broken = guard.check(root)
+        got_seen, got_broken = guard.check(root, roster or {}, fixtures or {})
         problems = []
         if got_seen != seen:
             problems.append(f"saw {got_seen} citations, expected {seen}")
@@ -145,24 +159,75 @@ def main() -> int:
             broken=1,
         ),
         case(
-            # Unchanged, and now the sharper statement of it: a ledger *file*
-            # is still not searched, even though a ledger *path* is now a
-            # citation when source names one. A dated record cites what was
-            # true on its day, and rewriting that destroys what a ledger is.
-            "a ledger entry's own citations are still out of scope",
+            # Reversed. This said "a ledger entry's own citations are still out
+            # of scope" and passed for as long as the exemption stood; the
+            # exemption is what let two fabricated filenames sit in committed
+            # entries with every guard printing `ok`.
+            "a ledger entry citing an entry that is gone is reported",
             {
-                "ledger/2026-01-01-a.py": (
-                    "# docs/gone.md and ledger/2026-01-01-also-gone.md\n"
+                "ledger/2026-01-01-a.md": (
+                    "# a\n\ndocs/gone.md and ledger/2026-01-01-also-gone.md\n"
                 )
             },
+            seen=2,
+            broken=2,
+        ),
+        case(
+            "a document citing a document that is gone is reported",
+            {"docs/a.md": "# a\n\ndocs/gone.md and ledger/2026-01-01-gone.md\n"},
+            seen=2,
+            broken=2,
+        ),
+        case(
+            # The hole the two passes leave between them, stated rather than
+            # hidden: `source_files` skips anything under `docs/` or `ledger/`
+            # and `prose_files` reads only `.md`, so a script living in either
+            # tree is read by neither. There is none today — scripts live in
+            # `scripts/` — and the case exists so that the day one appears,
+            # this line is what a reader finds.
+            "a non-Markdown file under ledger/ is read by neither pass",
+            {"ledger/2026-01-01-a.py": "# docs/gone.md\n"},
             seen=0,
             broken=0,
         ),
         case(
-            "a document's own cross-links are out of scope",
-            {"docs/a.py": "# docs/gone.md and ledger/2026-01-01-gone.md\n"},
+            "a rostered citation is neither counted nor reported",
+            {"ledger/2026-01-01-a.md": "# a\n\ndocs/illustrative.md\n"},
             seen=0,
             broken=0,
+            roster={("ledger/2026-01-01-a.md", "docs/illustrative.md"): "a worked example"},
+        ),
+        case(
+            # Why the roster is keyed on the pair rather than on the file. An
+            # entry with one illustrative path still has real citations, and a
+            # whole-file exemption would stop checking them — which is how the
+            # `docs/` and `ledger/` exemption this widening removed came to
+            # hide two fabricated filenames.
+            "the same citation in another file is still checked",
+            {
+                "ledger/2026-01-01-a.md": "# a\n\ndocs/illustrative.md\n",
+                "ledger/2026-01-02-b.md": "# b\n\ndocs/illustrative.md\n",
+            },
+            seen=1,
+            broken=1,
+            roster={("ledger/2026-01-01-a.md", "docs/illustrative.md"): "a worked example"},
+        ),
+        case(
+            "a rostered file's other citations are still checked",
+            {"ledger/2026-01-01-a.md": "# a\n\ndocs/illustrative.md and docs/gone.md\n"},
+            seen=1,
+            broken=1,
+            roster={("ledger/2026-01-01-a.md", "docs/illustrative.md"): "a worked example"},
+        ),
+        case(
+            # The roster's never-fires half. Without it a row outlives the
+            # sentence it was written for, and an exemption nobody reads is
+            # the only way a fabricated citation gets through this guard.
+            "a roster row whose citation is gone is reported",
+            {"ledger/2026-01-01-a.md": "# a\n\ndocs/x.md\n", "docs/x.md": "# x\n"},
+            seen=1,
+            broken=1,
+            roster={("ledger/2026-01-01-a.md", "docs/moved-on.md"): "was illustrative"},
         ),
         case(
             "vendored trees are skipped, because their docs are not ours",
@@ -192,6 +257,36 @@ def main() -> int:
             },
             seen=1,
             broken=1,
+            fixtures={"scripts/test_check_cited_tests.py": "a fixture tree"},
+        ),
+        case(
+            # `FIXTURES`' never-fires half. A whole-file exemption hides more
+            # than a single-path one, so a row outliving its file is worse
+            # here than in `NOT_A_FILE`.
+            "a FIXTURES row for a file that is gone is reported",
+            {"src/a.rs": "// docs/x.md\n", "docs/x.md": "# x\n"},
+            seen=1,
+            broken=1,
+            fixtures={"scripts/vanished.py": "wrote a fixture tree once"},
+        ),
+        case(
+            # The quieter half: the file is still there, still readable, and
+            # has stopped containing anything this guard would have checked.
+            # The reason still sounds right, which is what makes it dead.
+            "a FIXTURES row for a file with no citation left is reported",
+            {"scripts/quiet.py": "# nothing cited here\n", "src/a.rs": "// docs/x.md\n",
+             "docs/x.md": "# x\n"},
+            seen=1,
+            broken=1,
+            fixtures={"scripts/quiet.py": "used to write `docs/d.md`"},
+        ),
+        case(
+            "a FIXTURES row for a file that still has one is clean",
+            {"scripts/loud.py": "# docs/d.md\n", "src/a.rs": "// docs/x.md\n",
+             "docs/x.md": "# x\n"},
+            seen=1,
+            broken=0,
+            fixtures={"scripts/loud.py": "writes a tree containing `docs/d.md`"},
         ),
         case(
             "a path that is not a .md is not a citation",

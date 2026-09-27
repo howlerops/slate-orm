@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-27T03:31:16+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "acab1aa",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "rule 7's roster check is vacuous, so a fourth producer passes",
+      "old": "                if owner not in NAMES_A_MISSING_TABLE:",
+      "new": "                if owner not in NAMES_A_MISSING_TABLE and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a function building a missing-table refusal itself is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "rule 7 stops looking for the refusal at all",
+      "old": "MISSING_TABLE = re.compile(r'\"no table named')",
+      "new": "MISSING_TABLE = re.compile(r'\"no table named which nothing says')",
+      "verdict": "caught",
+      "caught_by": [
+        "a handler that authorises before fingerprinting passes",
+        "a fingerprint whose table arrives already authorised passes",
+        "a tree with no authenticators needs no roster",
+        "a handler that authorises its inputs first passes",
+        "a function taking a catalog but no request is not a converter",
+        "a converter holding a context can check for itself",
+        "one converter delegating to another is not a handler",
+        "a handler that authenticates passes, even with no table to authorise"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

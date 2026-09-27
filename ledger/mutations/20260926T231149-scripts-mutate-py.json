@@ -1,0 +1,68 @@
+{
+  "at": "2026-09-26T23:11:49+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "438b4be",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the rust failure pattern also matches a passing test",
+      "old": "re.compile(r\"^test (.+?)(?: - should panic)? \\.\\.\\. FAILED\\s*$\", re.MULTILINE),",
+      "new": "re.compile(r\"^test (.+?)(?: - should panic)? \\.\\.\\. \\w+\\s*$\", re.MULTILINE),",
+      "verdict": "caught",
+      "caught_by": [
+        "the rust failure pattern reads no failure in a clean rust run (it found ['a_unit_test', 'b_unit_test'])",
+        "the rust dialect names the failing test"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the node failure pattern also matches a passing case",
+      "old": "re.compile(r\"^not ok \\d+ - (?!.*\\.ts$)(.+?)\\s*$\", re.MULTILINE),",
+      "new": "re.compile(r\"^(?:not )?ok \\d+ - (?!.*\\.ts$)(.+?)\\s*$\", re.MULTILINE),",
+      "verdict": "caught",
+      "caught_by": [
+        "a node --test failure is read through the node dialect",
+        "the node dialect does not count the per-file wrapper as a test",
+        "the node failure pattern reads no failure in a clean node run (it found ['a named case'])"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the pytest failure pattern matches nothing at all",
+      "old": "re.compile(r\"^(?:FAILED|ERROR) (\\S+)\", re.MULTILINE),",
+      "new": "re.compile(r\"^(?:FAILEDX|ERRORX) (\\S+)\", re.MULTILINE),",
+      "verdict": "caught",
+      "caught_by": [
+        "a pytest failure is read through the pytest dialect",
+        "a pytest ERROR counts as a catch, not as a clean run",
+        "the pytest dialect names the failing test"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the go report pattern stops seeing a clean package line",
+      "old": "            r\"^(?:ok|FAIL)[ \\t]+\\S+\"",
+      "new": "            r\"^(?:FAIL)[ \\t]+\\S+\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a go test failure is read through the go dialect",
+        "a cached go result is not a suite that reported",
+        "a go build failure with a package name is not a suite that reported",
+        "a go build error is not read as a suite that reported",
+        "the go dialect sees the clean run report"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

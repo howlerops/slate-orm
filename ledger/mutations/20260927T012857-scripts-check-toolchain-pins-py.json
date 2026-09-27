@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-27T01:28:57+00:00",
+  "file": "scripts/check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "c52a969",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": [
+    {
+      "name": "an installer that inherits is not reported",
+      "old": "        if DECIDES.search(text):\n            continue",
+      "new": "        if DECIDES.search(text) or True:\n            continue",
+      "verdict": "caught",
+      "caught_by": [
+        "a pinned workflow and an installer that inherits is reported",
+        "a shell `go install` is read, not only a Python argument list"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the pinned-workflow never-fires half never fires",
+      "old": "    if not pinned_workflows:",
+      "new": "    if pinned_workflows and not pinned_workflows:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree whose workflows take Go from go.mod is reported, not passed over",
+        "an empty tree names both halves"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the no-installer never-fires half never fires",
+      "old": "    if not running:",
+      "new": "    if running and not running:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree with no pinned `go install` at all is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ]
+}

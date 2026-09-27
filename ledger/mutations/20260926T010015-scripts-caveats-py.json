@@ -1,0 +1,62 @@
+{
+  "at": "2026-09-26T01:00:15+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "7070c31",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "narrowed is dropped from the verdicts",
+      "old": "VERDICTS = (\"open\", \"closed\", \"narrowed\", \"deliberate\", \"moment\", \"untriaged\")",
+      "new": "VERDICTS = (\"open\", \"closed\", \"deliberate\", \"moment\", \"untriaged\")",
+      "verdict": "caught",
+      "caught_by": [
+        "narrowed without naming what closed and what is left is refused: narrowed: wanted 1, got None",
+        "narrowed with a `by` is accepted and counted as its own thing: narrowed: wanted 1, got None; problems: wanted 0, got 1 [\"a.md: unknown verdict 'narrowed'\"]"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "narrowed is not held to naming a by",
+      "old": "        if verdict in (\"closed\", \"narrowed\", \"deliberate\") and not status.get(",
+      "new": "        if verdict in (\"closed\", \"deliberate\") and not status.get(",
+      "verdict": "caught",
+      "caught_by": [
+        "narrowed without naming what closed and what is left is refused: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "narrowed is not re-read, so its residual falls off the list",
+      "old": "        if entry.get(\"verdict\") not in (\"open\", \"narrowed\"):",
+      "new": "        if entry.get(\"verdict\") != \"open\":",
+      "verdict": "caught",
+      "caught_by": [
+        "a narrowed caveat is re-read like an open one: wanted 2 listed, got 1: ['a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every verdict is re-read, not just the unsettled ones",
+      "old": "        if entry.get(\"verdict\") not in (\"open\", \"narrowed\"):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "closed and deliberate are not re-read: wanted 0 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']",
+        "a closed caveat is not re-triage work: wanted 1 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']",
+        "a deliberate one is not either: wanted 1 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -154,6 +154,35 @@ def element_of(column: dict) -> str:
     return element
 
 
+def element_spelling(table: dict, column: dict, what: str):
+    """One spelling table, looked up by an array column's element type.
+
+    A scalar column's type goes through `types.get(...)` and raises `Unknown`
+    when the table has no spelling for it. An array's *element* type used to go
+    through a bare `table[element_of(column)]` in five places, so the same
+    catalog — one carrying a type name these tables do not know — produced a
+    readable refusal for a scalar column and a bare `KeyError` for an array of
+    the same type. The name comes from `ValueType::name()` on the server and
+    the tables here have to agree with it; when they do not, the two halves
+    should say so the same way.
+
+    Not folded into `element_of`, which would need every table passed to it and
+    would make the array-of-arrays refusal depend on which language is being
+    generated. `what` names the table for the message, because "no spelling
+    for `u128`" is only actionable if you know which of the nine tables is
+    missing it.
+    """
+    element = element_of(column)
+    try:
+        return table[element]
+    except KeyError:
+        raise Unknown(
+            f"column `{column['name']}` is an array of `{element}`, which "
+            f"{what} has no spelling for; the catalog spells a type the way "
+            f"`ValueType::name()` does and this table has to agree with it"
+        ) from None
+
+
 def declared(column: dict, types: dict[str, str], element_keyword: str) -> str:
     """The declaration a client's `Column` takes: the type, plus what it needs.
 
@@ -166,7 +195,8 @@ def declared(column: dict, types: dict[str, str], element_keyword: str) -> str:
         raise Unknown(f"no spelling for `{column['type']}`")
     if column["type"] != "array":
         return kind
-    return f"{kind}{element_keyword}{types[element_of(column)]}"
+    element = element_spelling(types, column, "this language's type table")
+    return f"{kind}{element_keyword}{element}"
 
 
 def field_of(column: dict, fields: dict[str, tuple[str, str]], shape: str) -> tuple[str, str]:
@@ -179,7 +209,7 @@ def field_of(column: dict, fields: dict[str, tuple[str, str]], shape: str) -> tu
     """
     if column["type"] != "array":
         return fields[column["type"]]
-    native, runtime = fields[element_of(column)]
+    native, runtime = element_spelling(fields, column, "this language's field table")
     return shape.format(native), runtime
 
 
@@ -194,7 +224,7 @@ def python_encode(column: dict, expression: str) -> str:
     """
     if column["type"] != "array":
         return PYTHON_ENCODE[column["type"]].format(expression)
-    inner = PYTHON_ENCODE[element_of(column)]
+    inner = element_spelling(PYTHON_ENCODE, column, "PYTHON_ENCODE")
     if inner == "{}":
         return f"Array({expression})"
     # A list comprehension rather than a generator expression: `Array.__new__`
@@ -216,7 +246,7 @@ class GoElement(typing.NamedTuple):
 
 
 def go_element(column: dict) -> GoElement:
-    native, _ = GO_FIELDS[element_of(column)]
+    native, _ = element_spelling(GO_FIELDS, column, "GO_FIELDS")
     lowered = go_field(column["name"])
     return GoElement(var=lowered[:1].lower() + lowered[1:] + "Elements", native=native)
 
@@ -1014,7 +1044,7 @@ def go_rows(tables: list[dict]) -> list[str]:
                 # need a type parameter for no gain, and `gofmt` is happy with
                 # either.
                 element = go_element(column)
-                inner = GO_ENCODE[element_of(column)]
+                inner = element_spelling(GO_ENCODE, column, "GO_ENCODE")
                 source = f"*r.{field}" if column["nullable"] else f"r.{field}"
                 body = [
                     f"\t{element.var} := make(slate.Array, 0, len({source}))",
@@ -1603,6 +1633,71 @@ def typescript_module(tables: list[dict], views: list[tuple[str, str]]) -> str:
     return "\n".join(out)
 
 
+def web_module(tables: list[dict], views: list[tuple[str, str]]) -> str:
+    """A browser module: table and view names, mapped to their column names.
+
+    # Why this is not the TypeScript target above
+
+    `typescript_module` emits a *client declaration* — `TableDef`s that a
+    `Client` sends, importing `@slate-orm/client`. A browser app that only
+    labels columns cannot have that: the SDK is a gRPC client, and pulling it
+    into a bundle to read a list of strings would be absurd. So this emits
+    plain data and imports nothing.
+
+    # Why it is generated rather than written
+
+    `examples/explorer/web/src/api.ts` held these two maps by hand, guarded by
+    a test that re-parsed `head.toml` with a regex. That guard worked, and it
+    was the *second implementation of resolution* this generator's own
+    docstring warns about four paragraphs in: ordinals come from declaration
+    order, a primary key is named and resolved, a decimal's scale is validated,
+    and a regex over the TOML knows none of it. It happened to agree because
+    the demo's schema is simple.
+
+    Reading the resolved catalog removes the second implementation. What stays
+    hand-written in the app is which tables the UI *shows*, which is a UI
+    decision with reasons and not a copy of anything.
+
+    # Dropped columns
+
+    Included, unlike a row type's fields. A dropped column still occupies its
+    ordinal, and this module's consumer indexes a row by position to put a
+    header over it — so skipping one would shift every later label by one,
+    which is precisely the quiet wrong this generator exists to prevent.
+    """
+    out = [
+        "// " + BANNER,
+        "//",
+        "// Names only: no import, no `TableDef`, nothing from the SDK. A browser",
+        "// app uses this to label columns, and the SDK is a gRPC client.",
+        "//",
+        "// Every column the catalog carries, in ordinal order, dropped ones",
+        "// included — a dropped column keeps its slot in the row, so leaving it",
+        "// out would shift every later header onto the wrong value.",
+        "",
+        "/** Every table the catalog declares, as name -> column names in ordinal order. */",
+        "export const CATALOG_TABLES: Record<string, string[]> = {",
+    ]
+    for table in tables:
+        names = ", ".join(f'"{column["name"]}"' for column in live_columns(table))
+        out.append(f'  {table["name"]}: [{names}],')
+    out.extend([
+        "};",
+        "",
+        "/** Every view, as name -> its base table's column names.",
+        " *",
+        " * The same array object as the base table's, not a copy: a view may not",
+        " * narrow columns, so its ordinals *are* the table's and a second list is",
+        " * a second thing to get wrong.",
+        " */",
+        "export const CATALOG_VIEWS: Record<string, string[]> = {",
+    ])
+    for name, base in views:
+        out.append(f'  {name}: CATALOG_TABLES[\"{base}\"]!,')
+    out.append("};")
+    return "\n".join(out) + "\n"
+
+
 def emit(path: Path, body: str, check: bool) -> bool:
     """Write `body` to `path`, or compare and report. True means agreement."""
     if check:
@@ -1628,6 +1723,11 @@ def main() -> int:
     parser.add_argument("--go-package", default="schema")
     parser.add_argument("--typescript", type=Path)
     parser.add_argument(
+        "--web",
+        type=Path,
+        help="a plain-data TypeScript module of names, importing nothing",
+    )
+    parser.add_argument(
         "--serverd",
         # The same variable the client harnesses use, so a run with a prebuilt
         # binary needs no second thing to set. A path that is set and missing is
@@ -1641,8 +1741,10 @@ def main() -> int:
     )
     arguments = parser.parse_args()
 
-    if not (arguments.python or arguments.go or arguments.typescript):
-        parser.error("name at least one of --python, --go, --typescript")
+    if not (
+        arguments.python or arguments.go or arguments.typescript or arguments.web
+    ):
+        parser.error("name at least one of --python, --go, --typescript, --web")
 
     printed = catalog(arguments.config, arguments.serverd)
     tables = printed["tables"]
@@ -1658,6 +1760,8 @@ def main() -> int:
         agreed &= emit(
             arguments.typescript, typescript_module(tables, views), arguments.check
         )
+    if arguments.web:
+        agreed &= emit(arguments.web, web_module(tables, views), arguments.check)
 
     if not agreed:
         print(

@@ -1,0 +1,82 @@
+{
+  "at": "2026-09-26T00:43:14+00:00",
+  "file": "scripts/check_build_output.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_build_output.py"
+  ],
+  "commit": "312a76f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the last path segment is included, so a file named build counts",
+      "old": "if any(part in BUILD_DIRS for part in path.split(\"/\")[:-1])",
+      "new": "if any(part in BUILD_DIRS for part in path.split(\"/\"))",
+      "verdict": "caught",
+      "caught_by": [
+        "a file whose own name is a build directory's name is not one"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "check-ignore's exit code is read backwards",
+      "old": "        == 0\n    )",
+      "new": "        != 0\n    )",
+      "verdict": "caught",
+      "caught_by": [
+        "a clean repository passes, with untracked build output on disk",
+        "a tracked file under dist/ is reported",
+        "a tracked file under node_modules/ is reported",
+        "a tracked file under target/ is reported",
+        "a package.json inside node_modules is not treated as a package root",
+        "a file whose own name is a build directory's name is not one"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "target is dropped from BUILD_DIRS",
+      "old": "BUILD_DIRS = (\"node_modules\", \"dist\", \"dist-test\", \"build\", \"target\")",
+      "new": "BUILD_DIRS = (\"node_modules\", \"dist\", \"dist-test\", \"build\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a tracked file under target/ is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "dist is dropped from PACKAGE_OUTPUT",
+      "old": "PACKAGE_OUTPUT = (\"node_modules\", \"dist\")",
+      "new": "PACKAGE_OUTPUT = (\"node_modules\",)",
+      "verdict": "caught",
+      "caught_by": [
+        "a package root with node_modules ignored but not dist is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "package roots are read from disk, so vendored packages count",
+      "old": "        elif path.endswith(\"/package.json\"):",
+      "new": "        elif path.endswith(\"package.json\") and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a clean repository passes, with untracked build output on disk",
+        "a tracked file under dist/ is reported",
+        "a tracked file under node_modules/ is reported",
+        "a tracked file under target/ is reported",
+        "a package root whose output is not ignored is reported",
+        "a package root with node_modules ignored but not dist is reported",
+        "a package.json inside node_modules is not treated as a package root",
+        "a file whose own name is a build directory's name is not one"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

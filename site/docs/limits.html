@@ -78,11 +78,44 @@
         parser and no plan for one. The <a href="../workbench.html">workbench</a>
         does have a SQL front end, and it runs in the browser, compiling a
         subset to that same spec — joins, chains, grouping,
-        <code>HAVING</code>, <code>DISTINCT</code> and
+        <code>HAVING</code>, <code>DISTINCT</code>, <code>OR</code> and
         <code>IN (SELECT …)</code>, stopping at <code>UNION</code>,
         <code>EXISTS</code> and anything correlated. Every stop is refused by
         name with the reason, which is the whole difference between a subset
         and a dialect.
+      </p>
+      <p>
+        <strong><code>AND</code> and <code>OR</code> need brackets to
+        mix.</strong> <code>WHERE a = 1 OR b = 2</code> works on a
+        single-table read, and so does
+        <code>WHERE (a = 1 OR b = 2) AND c = 3</code>; both lower to the
+        kernel's own tree. What is refused is an <em>unbracketed</em>
+        mixture: <code>a AND b OR c</code> means <code>(a AND b) OR c</code>
+        in SQL and reads as <code>a AND (b OR c)</code> to about half of
+        everyone, so it is refused by name and the refusal says to write the
+        brackets you mean.
+      </p>
+      <p>
+        Two clauses take no brackets. A <em>join's</em> <code>WHERE</code>
+        is <code>AND</code> only: its conditions are split by side so each
+        scan is narrowed before the hash join runs, and neither a disjunction
+        nor a tree spanning both sides can be split that way. A
+        <code>HAVING</code> is all <code>AND</code> or all <code>OR</code>
+        — on a single table, a join and a chain alike — because the group
+        conditions have no nested form to lower onto. A disjunction is also a
+        filter rather than an access path: it cannot become a scan bound,
+        because <code>a = 1 OR b = 2</code> has no single key range.
+      </p>
+      <p>
+        <strong>The newest features stop where they stop.</strong> A window
+        function is single-table — there is none over a join or a chain, and
+        <code>COUNT(DISTINCT …)</code> over a moving frame is refused rather
+        than approximated. An array column cannot be a primary key and cannot
+        be indexed. Full-text search has no ranking, no stemming and no stop
+        words: a match is a match. A view is read-only, cannot be defined over
+        another view, and — unlike <code>SECURITY DEFINER</code> — cannot
+        widen what a caller may see, because row-level security composes on
+        top of it rather than under it.
       </p>
       <p>
         <strong>No in-place promotion</strong> of a read replica to writer —

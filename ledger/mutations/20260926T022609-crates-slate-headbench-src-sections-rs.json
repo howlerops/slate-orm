@@ -1,0 +1,102 @@
+{
+  "at": "2026-09-26T02:26:09+00:00",
+  "file": "crates/slate-headbench/src/sections.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-headbench",
+    "--lib",
+    "--no-fail-fast"
+  ],
+  "commit": "94d66d7",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an unknown section is accepted",
+      "old": "        if !unknown.is_empty() {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "sections::tests::a_mistyped_section_is_refused_rather_than_running_nothing",
+        "sections::tests::every_unknown_name_is_reported_not_only_the_first",
+        "sections::tests::the_refusal_lists_the_sections_there_are"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only the first unknown name is reported",
+      "old": "let unknown: Vec<&String> = requested.iter().filter(|a| !known.contains(a)).collect();",
+      "new": "let unknown: Vec<&String> = requested.iter().filter(|a| !known.contains(a)).take(1).collect();",
+      "verdict": "caught",
+      "caught_by": [
+        "sections::tests::every_unknown_name_is_reported_not_only_the_first"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refusal does not list the sections there are",
+      "old": "                known.join(\", \"),",
+      "new": "                String::new(),",
+      "verdict": "caught",
+      "caught_by": [
+        "sections::tests::the_refusal_lists_the_sections_there_are"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty argument list selects nothing instead of everything",
+      "old": "        self.requested.is_empty() || self.requested.iter().any(|one| one == name)",
+      "new": "        self.requested.iter().any(|one| one == name)",
+      "verdict": "caught",
+      "caught_by": [
+        "sections::tests::no_arguments_means_every_section"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a named section does not exclude the others",
+      "old": "        self.requested.is_empty() || self.requested.iter().any(|one| one == name)",
+      "new": "        true",
+      "verdict": "caught",
+      "caught_by": [
+        "sections::tests::a_named_section_runs_and_the_others_do_not"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the roster drift check never fires",
+      "old": "            known == asked,",
+      "new": "            true,",
+      "verdict": "caught",
+      "caught_by": [
+        "sections::tests::a_section_in_the_roster_that_never_runs_is_refused",
+        "sections::tests::a_section_run_that_is_not_in_the_roster_is_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "wants does not record the name it was asked about",
+      "old": "        self.asked.insert(name.to_owned());",
+      "new": "        let _ = name;",
+      "verdict": "caught",
+      "caught_by": [
+        "sections::tests::a_section_in_the_roster_that_never_runs_is_refused",
+        "sections::tests::a_roster_matching_the_body_confirms",
+        "sections::tests::asking_twice_about_one_section_is_not_drift",
+        "sections::tests::a_section_run_that_is_not_in_the_roster_is_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

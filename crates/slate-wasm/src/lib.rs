@@ -37,6 +37,10 @@
 //! there is no concurrency to express and it would put a `.await` in the
 //! caller's way for a value that is already computed.
 
+// The landing page says "No `unsafe`", and `site/check/claims.py` checks that
+// every crate root says so too. The claim was true here before this line and
+// unenforced: nothing stopped the next edit.
+#![forbid(unsafe_code)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 pub mod fixture;
@@ -51,7 +55,7 @@ pub mod taxi;
 pub use slate_sql::sql;
 pub use slate_sql::{
     AggregateSpec, ChainInputSpec, ChainOnSpec, ChainSpec, ComputeSpec, FilterSpec, JoinSpec,
-    QuerySpec, SortSpec, WindowSpec,
+    PredicateSpec, QuerySpec, SortSpec, WindowSpec,
 };
 
 // The lowering — a spec onto the kernel's own types — went with them. What is
@@ -59,7 +63,7 @@ pub use slate_sql::{
 // the split was made on: see `slate_sql::lower`.
 use slate_sql::lower::{
     aggregate_of, aggregates, build, chained_computes, chained_ordinal, conditions,
-    group_value_type, having, joined_computes, joined_ordinal, literal,
+    group_predicate, group_value_type, joined_computes, joined_ordinal, literal,
 };
 
 use futures::executor::block_on;
@@ -800,13 +804,20 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() {
+                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
                     // Over the group, and its stored keys resolved through the
                     // *joined* ordinal -- which is what `group_value_type` now
                     // walks, and the reason the joined path had no HAVING
                     // before: everything downstream of it took one `TableDef`.
-                    grouping = grouping.having(having(
+                    //
+                    // `group_predicate` rather than `having` so that an ORed
+                    // HAVING reaches the kernel as a disjunction here too. The
+                    // three call sites went through one function before and
+                    // still do; a second spelling on one of them is how the
+                    // joined path came to differ from the single-table one.
+                    grouping = grouping.having(group_predicate(
                         &spec.having,
+                        &spec.having_any_of,
                         &keys,
                         &aggregates,
                         &[&authors, &books],
@@ -1057,8 +1068,14 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() {
-                    grouping = grouping.having(having(&spec.having, &keys, &aggregates, &refs)?);
+                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+                    grouping = grouping.having(group_predicate(
+                        &spec.having,
+                        &spec.having_any_of,
+                        &keys,
+                        &aggregates,
+                        &refs,
+                    )?);
                 }
                 if let Some(limit) = spec.limit {
                     grouping.limit = Some(usize::try_from(limit).unwrap_or(usize::MAX));
@@ -1540,8 +1557,14 @@ impl Playground {
         // the sort only decides what order they come back in. The kernel
         // applies them in that order regardless; setting them in the same
         // order here is so that reading this says what happens.
-        if !spec.having.is_empty() {
-            grouping = grouping.having(having(&spec.having, &keys, &aggregates, &[table])?);
+        if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+            grouping = grouping.having(group_predicate(
+                &spec.having,
+                &spec.having_any_of,
+                &keys,
+                &aggregates,
+                &[table],
+            )?);
         }
 
         // ORDER BY, LIMIT and OFFSET belong to the *groups* when there is a
@@ -1749,7 +1772,21 @@ impl Playground {
     /// `Unknown` where this answers `False`, and both exclude. It would matter
     /// under a `NOT IN`, which is refused for exactly this reason.
     fn resolve_subqueries(&self, spec: &mut QuerySpec) -> Result<(), String> {
-        for filter in &mut spec.filters {
+        // Every condition of the `WHERE`, flat or nested. `spec.filters` was
+        // the whole of it until parentheses arrived; a subquery inside a
+        // bracket lands in `spec.predicate` instead, and missing it here is
+        // silent — `build` turns an unresolved subquery into an `IN` over an
+        // empty list, which matches nothing and reports nothing. The `any_of`
+        // list is included for the same reason even though the parser cannot
+        // put a subquery there today: a list this walks and a list it does not
+        // is exactly the asymmetry that made this a bug once.
+        let mut conditions: Vec<&mut FilterSpec> = Vec::new();
+        conditions.extend(spec.filters.iter_mut());
+        conditions.extend(spec.any_of.iter_mut());
+        if let Some(tree) = spec.predicate.as_mut() {
+            collect_conditions(tree, &mut conditions);
+        }
+        for filter in conditions {
             let Some(inner) = filter.subquery.clone() else {
                 continue;
             };
@@ -2385,4 +2422,21 @@ fn group_scales(
                 .and_then(|(_, scale)| scale)
         })
         .collect()
+}
+
+/// Every leaf condition of a nested predicate, borrowed mutably.
+///
+/// Free rather than a method on `PredicateSpec`: it exists for exactly one
+/// caller — [`Playground::resolve_subqueries`] — and putting a mutable walker
+/// on the spec type would make "hand me every condition so I can rewrite it"
+/// part of `slate-sql`'s surface for one consumer in another crate.
+fn collect_conditions<'a>(spec: &'a mut PredicateSpec, out: &mut Vec<&'a mut FilterSpec>) {
+    match spec {
+        PredicateSpec::Of(filter) => out.push(filter),
+        PredicateSpec::All(parts) | PredicateSpec::Any(parts) => {
+            for part in parts {
+                collect_conditions(part, out);
+            }
+        }
+    }
 }

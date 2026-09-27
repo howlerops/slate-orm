@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-25T20:49:24+00:00",
+  "file": "crates/slate-sql/src/lower.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "16fb49d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a disjunction lowers as a conjunction",
+      "old": "query = query.filter(existing.and(Expr::Or(parts)));",
+      "new": "query = query.filter(existing.and(Expr::all(parts)));",
+      "verdict": "caught",
+      "caught_by": [
+        "a_disjunction_admits_a_row_either_arm_admits",
+        "or_lowers_to_a_disjunction_the_kernel_understands"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the ORed conditions are dropped entirely",
+      "old": "    if !spec.any_of.is_empty() {\n        let mut parts = Vec::with_capacity(spec.any_of.len());",
+      "new": "    if false {\n        let mut parts = Vec::with_capacity(spec.any_of.len());",
+      "verdict": "caught",
+      "caught_by": [
+        "a_disjunction_admits_a_row_either_arm_admits",
+        "or_lowers_to_a_disjunction_the_kernel_understands"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Every crate's examples are run by something, and `run_examples.sh` is honest.
 
-`scripts/run_examples.sh` holds three hand-maintained facts about this tree: a
-floor per crate, a handshake line per server example, and — by omission — the
-list of crates whose examples anything runs at all. None of the three was
+`scripts/run_examples.sh` holds four hand-maintained facts about this tree: a
+floor per crate, a handshake line per server example, a refusal line per
+example that reads its own command line, and — by omission — the list of
+crates whose examples anything runs at all. None of the three was
 checked, and the third was wrong when this was written: **four** crates carry
 an `examples/` directory and the script named two. `slate-kernel`'s four and
 `slate-orm`'s one were in precisely the state `slate-headbench`'s five were in
@@ -13,7 +14,7 @@ That is the same defect three times now (#265, #271, here), which is what makes
 it worth a guard rather than a fourth fix. A benchmark nobody runs is a
 constant nobody re-measures.
 
-The three rules, each in both directions:
+The six rules, each in both directions:
 
 1. **A crate with examples has a floor.** This is the one that found the
    defect. A fifth crate gaining a benchmark directory fails here rather than
@@ -30,6 +31,40 @@ The three rules, each in both directions:
    also occur in that example's source, or the budget is spent and the run
    fails with `no LISTENING in 30s` against a binary that prints something
    else.
+4. **An example that reads its command line is handed a bad argument, and
+   only such an example is.** `head_report --typo` printed its header, ran
+   nothing and exited 0; `slate_headbench::sections` fixed that by exiting 2,
+   and nothing ran a built binary to see it. A line in `refuses()` is what
+   does, so an example that starts reading arguments without one is back where
+   the defect was found. The argument must also not be a string in that
+   example's source: one that is a real section or flag makes the example run,
+   exit 0, and the run report a refusal as lost. Server examples are excluded
+   in both directions — the runner returns to the next example as soon as a
+   handshake lands, so a `refuses()` line for one is never reached.
+5. **The runner really does skip a server's refusal probe.** Rule 4 excludes
+   server examples in both directions, and that exclusion is a property of
+   `run_examples.sh` — its handshake branch `continue`s to the next example
+   before reaching the `refuses()` call — written down in *this* file.
+   `ledger/2026-09-27-two-more-examples-ignored-a-mistyped-flag.md` recorded
+   the gap: "if the runner ever grew a refusal probe for servers, this guard
+   would keep demanding that their lines be deleted and nothing would connect
+   the two files." This is the connection. It reads the run loop between the
+   `handshake` call and the `refuses` call and requires a `continue` in it.
+6. **An example that reads its command line refuses an argument it does not
+   understand.** The rule the other four rest on, and the one that was
+   missing: rules 1-4 keyed the roster on `sections::from_args`, so an example
+   parsing `std::env::args()` by hand — which is what all three headbench ones
+   did before that module existed — was invisible to every one of them.
+   `ledger/2026-09-26-the-refusal-nothing-ran.md` recorded it as "a fourth kind
+   of silent pass".
+
+   Widening the key from `sections::from_args` to `std::env::args` found two
+   more of the defect immediately, both in `slate-slatedb`: `bucket_layout`
+   read `--json` with `.any(|a| a == "--json")` and `cost_calibration` read
+   `--cold` the same way, so `--jsonn` printed the human listing and `--codl`
+   ran the warm suite, each exiting 0 with nothing to say the flag had not
+   been understood. Both are fixed; the shape is now what `s3_server` already
+   did — match every argument, exit 2 on one you do not know.
 
 Run directly: `python3 scripts/check_examples_roster.py`.
 """
@@ -49,7 +84,85 @@ MANIFEST = ROOT / "Cargo.toml"
 #: `    slate-headbench) least=5 ;;`
 FLOOR = re.compile(r"^\s*([a-z0-9-]+)\)\s*least=(\d+)\s*;;", re.MULTILINE)
 #: `        slate-slatedb/s3_server) echo "LISTENING" ;;`
-HANDSHAKE = re.compile(r'^\s*([a-z0-9-]+)/(\w+)\)\s*echo\s*"([^"]+)"\s*;;', re.MULTILINE)
+#:
+#: Both per-example tables in the runner are spelled exactly this way, so this
+#: pattern alone cannot tell a handshake line from a refusal line. `arm()`
+#: below slices the named function's body out first and applies it to that,
+#: which is why the pattern is shared rather than duplicated with a
+#: distinguishing prefix nobody would keep true.
+ARM = re.compile(r'^\s*([a-z0-9-]+)/(\w+)\)\s*echo\s*"([^"]+)"\s*;;', re.MULTILINE)
+
+def body(script: str, function: str) -> str:
+    """The text between `<function>() {` and the next **unindented** `}`.
+
+    The anchor on the closing brace is load-bearing and its absence is
+    invisible in this tree today: neither table's arms contain a brace, so a
+    lazy match to the first `}` anywhere slices exactly the same text and every
+    case here still passes. A `${…}` in one arm — a variable, a default, a
+    substitution, all ordinary things to write in a `case` — would then end the
+    body at that line and silently drop every arm after it. That is a guard
+    reading half a table and reporting `ok`, so `test_check_examples_roster.py`
+    has a case with a brace in an arm rather than trusting the comment.
+
+    Empty when the function is not there, which reads the same as a table with
+    no arms. Deliberately not distinguished: the callers' message names both
+    causes already — "either it moved, or the last one went away" — and a
+    distinction nothing acts on is one more branch to keep true. A mutation
+    collapsing the two was caught by nothing, which is what said so.
+    """
+    found = re.search(
+        rf"^{re.escape(function)}\(\) \{{\n(.*?)^\}}", script, re.MULTILINE | re.DOTALL
+    )
+    return "" if found is None else found.group(1)
+
+
+def arm(script: str, function: str) -> dict[tuple[str, str], str]:
+    """`{(crate, example): echoed}` for one of the runner's two tables."""
+    return {(crate, name): line for crate, name, line in ARM.findall(body(script, function))}
+
+
+#: An example that reads its own command line at all.
+#:
+#: A property of the source, like `FOREVER` below, and for the same reason: an
+#: example that starts taking arguments is caught by taking them rather than by
+#: somebody remembering the roster exists.
+#:
+#: This was `sections::from_args` and that was the hole. Keying on the shared
+#: parser meant an example that read `std::env::args()` by hand had no roster
+#: line, no refusal run, and no rule anywhere that noticed — the state all
+#: three headbench examples were in when `head_report --typo` exited 0. Two
+#: `slate-slatedb` examples were still in it when this was widened.
+#: Both spellings, because `sections::from_args` reads the command line inside
+#: `slate-headbench` and the example that calls it never writes `env::args`
+#: itself. The first draft of this pattern had only `std::env::args` and
+#: reported all three headbench examples as rostered for nothing — the reverse
+#: direction of rule 4 catching the widening's own bug, which is the best
+#: available evidence that direction works.
+READS_ARGS = re.compile(r"std::env::args|sections::from_args")
+
+#: What refusing an argument the example does not understand looks like.
+#:
+#: Two spellings, because there are two: `sections::from_args` prints the
+#: refusal and exits 2 itself, and a hand-written `match` with a catch-all arm
+#: calls `std::process::exit` directly — which is what `s3_server` has always
+#: done and what the two examples fixed alongside this now do.
+#:
+#: Deliberately not a check that the code exits **2** specifically. The number
+#: matters and `run_examples.sh` asserts it against a built binary, which is a
+#: stronger check than a regular expression over a literal; what this catches
+#: is the example with no refusing path at all, which that run cannot catch
+#: because such an example exits 0 and looks like a benchmark that worked.
+REFUSES_UNKNOWN = re.compile(r"sections::from_args|process::exit")
+
+#: The two calls that bracket the run loop's server branch.
+#:
+#: Rule 5 asks whether a `continue` sits between them. Matched as the literal
+#: calls rather than as a `case` or a variable name, because what the rule is
+#: about is the *control flow* between one and the other: a run that reaches
+#: `refuses` for a server is a run whose refusal line would fire, which is the
+#: day rule 4's exclusion becomes wrong.
+ASKS_HANDSHAKE = re.compile(r'handshake "\$crate" "\$name"')
+ASKS_REFUSAL = re.compile(r'refuses "\$crate" "\$name"')
 
 #: What an example that never returns looks like.
 #:
@@ -75,7 +188,8 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
     """Every rule above, against a tree."""
     script = runner.read_text(encoding="utf-8")
     floors = {name: int(least) for name, least in FLOOR.findall(script)}
-    shakes = {(crate, name): line for crate, name, line in HANDSHAKE.findall(script)}
+    shakes = arm(script, "handshake")
+    refusals = arm(script, "refuses")
 
     # Where the examples actually are. A member with no `examples/` is not a
     # problem — most have none.
@@ -92,11 +206,11 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
 
     said = []
 
-    # The never-fires halves, and there are three because this reads three
-    # different files with three different patterns. Each would match nothing
-    # after an ordinary edit — the `case` rewritten as an `if`, the manifest's
-    # members moved, `examples/` renamed — and leave this printing `ok` over a
-    # tree it did not read.
+    # The never-fires halves, and there are four because this reads three
+    # different files with four different patterns. Each would match nothing
+    # after an ordinary edit — a `case` rewritten as an `if`, a function
+    # renamed, the manifest's members moved, `examples/` renamed — and leave
+    # this printing `ok` over a tree it did not read.
     if not floors:
         said.append(
             f"no `<crate>) least=N ;;` lines in {runner.name}, so the floors "
@@ -105,9 +219,10 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
         )
     if not shakes:
         said.append(
-            f"no `<crate>/<example>) echo \"...\" ;;` lines in {runner.name}. "
-            "Either the handshake table moved, or the last server example "
-            "went away — and if it went away, delete this guard deliberately."
+            f"no `<crate>/<example>) echo \"...\" ;;` lines in a `handshake()` "
+            f"in {runner.name}. Either the handshake table moved, or the last "
+            "server example went away — and if it went away, delete this guard "
+            "deliberately."
         )
     if not found:
         said.append(
@@ -187,6 +302,133 @@ def problems(runner: Path = RUNNER, root: Path = ROOT, manifest: Path = MANIFEST
                 "against a binary that is up. Say what it really prints."
             )
 
+    # Rule 5. Before rule 4 uses `servers` to narrow `takers`, because it is
+    # the assumption that narrowing rests on.
+    opens = ASKS_HANDSHAKE.search(script)
+    closes = ASKS_REFUSAL.search(script)
+    if opens is None or closes is None:
+        said.append(
+            f"{runner.name} no longer calls both `handshake \"$crate\" "
+            "\"$name\"` and `refuses \"$crate\" \"$name\"` in its run loop, "
+            "so rule 5 read nothing. Rule 4 excludes server examples from the "
+            "refusal roster on the strength of what happens between those two "
+            "calls; if the loop was restructured, re-derive the exclusion "
+            "before moving this pattern."
+        )
+    elif closes.start() < opens.start():
+        said.append(
+            f"{runner.name} asks `refuses` before `handshake`, so a server's "
+            "refusal line would now be reached.\n"
+            "  Rule 4 excludes servers from the roster on the opposite "
+            "assumption. Add their lines and delete the exclusion, or put the "
+            "calls back in order."
+        )
+    elif "continue" not in script[opens.end() : closes.start()]:
+        said.append(
+            f"{runner.name}'s server branch no longer `continue`s before the "
+            "refusal probe, so a server example *is* handed a bad argument "
+            "now.\n"
+            "  Rule 4 excludes servers from `refuses()` because it was not. "
+            "Give them roster lines and delete the exclusion in this file — "
+            "the two have to move together."
+        )
+
+    # Rule 4, both ways, plus the argument itself.
+    #
+    # `head_report --typo` printed its header, ran nothing and exited 0. The
+    # fix — `slate_headbench::sections` — is unit-tested six ways, and the
+    # `exit(2)` under it was reached by nothing until `refuses()` existed. An
+    # example that gains sections and no refusal line goes back to the state
+    # the defect was found in, silently, because a benchmark that has stopped
+    # refusing still benchmarks.
+    readers = {
+        (crate, name)
+        for crate, sources in found.items()
+        for name, source in sources.items()
+        if READS_ARGS.search(source)
+    }
+    # Rule 5, before rule 4's roster, because it is the one rule 4 rests on: an
+    # example with no refusing path cannot pass a refusal run, and reporting
+    # "no line in `refuses()`" for it would send the reader to the runner
+    # rather than to the example.
+    for crate, name in sorted(readers):
+        if not REFUSES_UNKNOWN.search(found[crate][name]):
+            said.append(
+                f"`{crate}/{name}` reads its command line and has no path that "
+                "refuses an argument it does not understand, so a mistyped one "
+                "is ignored and it exits 0.\n"
+                "  That is the `head_report --typo` defect: the caller gets a "
+                "run they did not ask for and nothing says so. Match every "
+                "argument and `std::process::exit(2)` on a catch-all arm, as "
+                "`slate-slatedb/s3_server` does, or take the sections parser."
+            )
+    # A server's refusal line would never be reached: `run_examples.sh` moves
+    # to the next example as soon as the handshake lands. Excluded from rule 4
+    # in both directions rather than left to fail as "takes no arguments",
+    # which would be a true message about the wrong thing.
+    takers = readers - servers
+    # Not in the early-return block above, unlike the other three never-fires
+    # halves: an empty floor table makes every crate "missing a floor" and
+    # buries the real message, while an empty refusal table cascades only into
+    # rule 4's own forward loop — which this skips instead.
+    if not refusals:
+        said.append(
+            f"no `<crate>/<example>) echo \"...\" ;;` lines in a `refuses()` "
+            f"in {runner.name}, so nothing hands a built example a section "
+            "name it does not have. That is the state `head_report --typo` was "
+            "in when it printed a header, ran nothing and exited 0."
+        )
+        return said
+    if not readers:
+        said.append(
+            "no example anywhere reads its command line, so the refusal table "
+            "and rule 5 are both checking nothing. If `std::env::args` is "
+            "reached some new way, teach `READS_ARGS` about it; if the last "
+            "example that took an argument went away, delete the table and "
+            "both rules together."
+        )
+    for crate, name in sorted(takers):
+        if (crate, name) not in refusals:
+            said.append(
+                f"`{crate}/{name}` reads its command line and has no line in "
+                "`refuses()`, so no run ever hands it an argument it does not "
+                "understand.\n"
+                f"  Add `{crate}/{name}) echo \"--not-an-argument\" ;;` — the "
+                "refusal is the only thing standing between a mistyped "
+                "argument and an empty report that exits 0."
+            )
+    for (crate, name), bad in sorted(refusals.items()):
+        source = found.get(crate, {}).get(name)
+        if source is None:
+            said.append(
+                f"`refuses()` names `{crate}/{name}`, which is not an example "
+                "here any more. Delete the line."
+            )
+        elif (crate, name) in servers:
+            said.append(
+                f"`refuses()` names `{crate}/{name}`, which never returns and "
+                "is run for its handshake instead. The refusal branch is not "
+                "reached for it, so the line checks nothing. Delete it."
+            )
+        elif (crate, name) not in takers:
+            said.append(
+                f"`refuses()` names `{crate}/{name}`, which reads no "
+                "arguments. It will exit 0 for any of them and the run will "
+                "read that as a lost refusal. Delete the line."
+            )
+        elif f'"{bad}"' in source:
+            # The failure this rule is for reads as the opposite of what it is.
+            # A "bad" argument that the example's own roster lists makes it run
+            # normally and exit 0 — and the runner reports `wanted 2`, which
+            # sends the next reader to look for a refusal that is still there.
+            said.append(
+                f"`refuses()` hands `{crate}/{name}` the argument `{bad}`, "
+                "which is a string in its own source and may well be a section "
+                "or a flag it has.\n"
+                "  Then it runs, exits 0, and the run reports the refusal as "
+                "lost. Pick an argument no section could be named."
+            )
+
     return said
 
 
@@ -202,8 +444,10 @@ def main() -> int:
     floors = {name: int(least) for name, least in FLOOR.findall(script)}
     print(
         f"ok    {sum(floors.values())} examples across {len(floors)} crates, "
-        f"every floor exact, {len(HANDSHAKE.findall(script))} handshake(s) "
-        "rostered"
+        f"every floor exact, {len(arm(script, 'handshake'))} handshake(s) "
+        f"and {len(arm(script, 'refuses'))} refusal(s) rostered, "
+        "every example that reads a command line refusing an argument it "
+        "does not understand, and the runner still skipping a server's probe"
     )
     return 0
 

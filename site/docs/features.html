@@ -210,6 +210,60 @@
         a compile error on both sides rather than a panic on first use.
       </p>
 
+    <h3>Windows, a value per row</h3>
+      <p>
+        <code>row_number()</code>, <code>rank()</code>,
+        <code>dense_rank()</code>, <code>lag()</code>, <code>lead()</code> and
+        the aggregates, over a <code>PARTITION BY</code> and an order:
+        <code>SELECT title, rank() OVER (PARTITION BY author ORDER BY sales
+        DESC) FROM books</code>. A window is <em>row-preserving</em> &mdash;
+        every input row comes back with a value attached &mdash; which is what
+        separates it from <code>GROUP BY</code>, where rows collapse.
+      </p>
+      <p>
+        It crosses the wire in its own list and all three clients can build
+        one. <strong>A window is single-table.</strong> There is no window over
+        a join or a chain, in the kernel or on the wire, and asking for one is
+        refused rather than silently dropped. <code>COUNT(DISTINCT &hellip;)
+        OVER (&hellip; ORDER BY &hellip;)</code> is refused too: a distinct
+        count over a moving frame is a different algorithm, and guessing it
+        would be worse than saying no.
+      </p>
+
+    <h3>Full-text, one entry per term</h3>
+      <p>
+        <code>WHERE title CONTAINS 'the heaven'</code>, backed by an index
+        declared <code>text = true</code>. This is a new index <em>shape</em>
+        rather than a new expression: every other index here writes one entry
+        per row, and an inverted index writes one per term per row &mdash; so
+        the write path, the unique-slot check, the delete path and the planner
+        all had to stop assuming that cardinality.
+      </p>
+      <p>
+        The planner ranges the inverted index on <em>one</em> term and filters
+        the rest, so a two-word phrase narrows by its first word and checks the
+        second per row. No ranking, no stemming and no stop words: a match is a
+        match, in the order the index walks.
+      </p>
+
+    <h3>Views, named and read-only</h3>
+      <p>
+        A view is a named query, declared as <code>[[views]]</code> in the
+        server's TOML and validated when it loads &mdash; not a
+        <code>CREATE VIEW</code> over the wire, because the wire carries no
+        SQL. A read naming a view gets the view's filter <code>AND</code> its
+        own, and the order does not matter.
+      </p>
+      <p>
+        <strong>A view is sugar, not a grant.</strong> It cannot widen what a
+        caller may see: row-level security still composes on top, so a view
+        over a table the caller cannot read returns nothing rather than
+        leaking it. That is the opposite of what most SQL databases do with
+        <code>SECURITY DEFINER</code>, and it is worth knowing before you
+        design around it. Writes through a view are refused by construction,
+        as is a view whose own <code>FROM</code> names another view.
+      </p>
+
     <h3>Pages that do not shift</h3>
       <p>
         <code>OFFSET</code> reads and discards every row it skips, and counts
@@ -247,6 +301,24 @@
         is detected, and an edit is silently lost.
         <code>replace_record(&amp;previous, &amp;next)</code> writes only if
         the stored row still equals what was read.
+      </p>
+
+    <h3>Soft delete, and a real purge</h3>
+      <p>
+        A table marked <code>soft_delete</code> retires a row instead of
+        erasing it: reads skip it, the primary key stays taken, and every write
+        path treats it consistently rather than one of them forgetting.
+        Reading retired rows needs <code>include_deleted</code>, which is a
+        <em>privileged</em> read rather than a flag anyone can set, and a
+        retired row can be restored.
+      </p>
+      <p>
+        Retired rows are not immortal: <code>purge_deleted</code> erases them
+        past a retention window, and the purge is counted in
+        <code>/metrics</code> like any other write. A <code>RESTRICT</code>
+        foreign key still blocks on a retired child &mdash; the row is hidden,
+        not gone, and pretending otherwise would let a delete orphan a
+        reference.
       </p>
 
     <h3>Migrations, before the socket opens</h3>
@@ -316,6 +388,29 @@
         1999 units exactly, and <code>19.830</code> finds the same row as
         <code>19.83</code>. You can type that into the
         <a href="../workbench.html">workbench</a>.
+      </p>
+
+    <h3>Arrays, ordered by prefix</h3>
+      <p>
+        A column can hold a list, with the element type on the
+        <em>column</em> rather than in the type: <code>tags</code> is an array
+        of strings, not a distinct <code>ArrayOfString</code>. Arrays compare
+        lexicographically with shorter-is-less, so <code>[1]</code> sorts
+        before <code>[1, 2]</code> before <code>[2]</code> &mdash; prefix
+        order, the way a word list sorts.
+      </p>
+      <p>
+        That ordering is why the encoding <em>terminates</em> an array rather
+        than prefixing its length. A length prefix would sort
+        <code>[2]</code> before <code>[1, 2]</code>, because one is less than
+        two before any element is compared, and the tuple codec's whole
+        contract is that byte order is value order.
+      </p>
+      <p>
+        <strong>An array cannot be a key or be indexed.</strong> Both are
+        refused rather than half-supported: indexing a list is the inverted
+        index above, which is a different shape with a different cost, and
+        conflating the two would make one of them quietly wrong.
       </p>
 
     <h3>Timestamps the store writes</h3>

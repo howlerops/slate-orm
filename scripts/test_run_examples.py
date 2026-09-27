@@ -72,12 +72,17 @@ def run(
     seconds: str = "3",
     budget: str = "60",
     smoke: bool = False,
+    crate: str = "slate-slatedb",
 ) -> tuple[int, str]:
+    """`crate` picks which floor the fixture is sized against, and — for the
+    refusal cases below — which arm of `refuses()` the runner will consult.
+    `slate-slatedb` has no refusal lines, which is what makes it the right
+    default for every case that is about something else."""
     with tempfile.TemporaryDirectory() as directory:
         sources, binaries = fixture(pathlib.Path(directory), scripts)
         try:
             finished = subprocess.run(
-                ["sh", str(RUNNER), "slate-slatedb", *(["--smoke"] if smoke else [])],
+                ["sh", str(RUNNER), crate, *(["--smoke"] if smoke else [])],
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
@@ -332,6 +337,88 @@ CASES: list[tuple[str, dict[str, str], str, str, bool, int, str]] = [
 ]
 
 
+#: The crate whose examples take section names, and the three that do.
+#:
+#: Read off `run_examples.sh` rather than restated, for the reason `_least()`
+#: gives: a fourth example gaining a refusal line should not turn these red.
+REFUSING = "slate-headbench"
+REFUSALS = dict(
+    re.findall(
+        rf"^\s*{re.escape(REFUSING)}/(\w+)\)\s*echo\s*\"([^\"]+)\"",
+        RUNNER.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+)
+if not REFUSALS:
+    raise SystemExit(
+        f"no `{REFUSING}/<example>) echo ...` lines in {RUNNER.name}; these "
+        "cases cannot know which examples are supposed to refuse a bad "
+        "section. If the table moved, move this with it."
+    )
+
+#: Filled out to that crate's floor, so the run does not fail on the count.
+REFUSING_LEAST = _least(REFUSING)
+
+#: An example that refuses any argument with 2, which is what
+#: `slate_headbench::sections::from_args` does.
+REFUSES = '#!/bin/sh\n[ $# -eq 0 ] || exit 2\nexit 0\n'
+
+#: The defect: runs whatever it is handed and exits 0. `head_report --typo`
+#: printed a header, ran nothing, and reported success.
+IGNORES = "#!/bin/sh\nexit 0\n"
+
+#: Refuses, but with 1 — which `run_examples.sh` cannot tell from "the
+#: benchmark failed". The distinction is the whole reason `from_args` picked 2.
+REFUSES_WRONGLY = '#!/bin/sh\n[ $# -eq 0 ] || exit 1\nexit 0\n'
+
+
+def refusing(broken: dict[str, str] | None = None) -> dict[str, str]:
+    """`slate-headbench`'s examples, each refusing, with `broken` overriding."""
+    names = [*REFUSALS, *(f"filler{n}" for n in range(REFUSING_LEAST - len(REFUSALS)))]
+    return {name: REFUSES for name in names} | (broken or {})
+
+
+#: name, the crate, the fixture, the exit code, and the text the report must
+#: carry.
+REFUSAL_CASES: list[tuple[str, str, dict[str, str], int, str]] = [
+    (
+        "every example refusing a bad section passes, and says so",
+        REFUSING,
+        refusing(),
+        0,
+        "refused --not-a-section",
+    ),
+    (
+        "an example that runs a bad section instead of refusing fails",
+        REFUSING,
+        refusing({next(iter(REFUSALS)): IGNORES}),
+        1,
+        f"FAIL  {next(iter(REFUSALS))}, exit 0 for --not-a-section, wanted 2",
+    ),
+    (
+        # 2 rather than any non-zero: `run_examples.sh` reads non-zero as "the
+        # benchmark failed", and `from_args` chose 2 so that something could
+        # tell "you asked for the wrong thing" apart from it. A refusal that
+        # drifted to 1 would be indistinguishable from a broken benchmark.
+        "an example that refuses with 1 rather than 2 fails too",
+        REFUSING,
+        refusing({next(iter(REFUSALS)): REFUSES_WRONGLY}),
+        1,
+        "exit 1 for --not-a-section, wanted 2",
+    ),
+    (
+        # The never-fires half, in the direction this file can see: a crate
+        # with no refusal lines must not have the check applied to it, or
+        # every other case above is passing for the wrong reason.
+        "a crate with no refusal lines runs no negative case",
+        "slate-slatedb",
+        passing(LEAST),
+        0,
+        f"{LEAST} passed, 0 failed",
+    ),
+]
+
+
 def main() -> int:
     failed = 0
     for name, scripts, seconds, budget, smoke, expected, wanted in CASES:
@@ -343,8 +430,18 @@ def main() -> int:
             print(f"        expected exit {expected} and {wanted!r}, got {code}")
             for line in said.splitlines()[-12:]:
                 print(f"      {line}")
+    for name, crate, scripts, expected, wanted in REFUSAL_CASES:
+        code, said = run(scripts, crate=crate)
+        ok = code == expected and wanted in said
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        expected exit {expected} and {wanted!r}, got {code}")
+            for line in said.splitlines()[-12:]:
+                print(f"      {line}")
+
     print()
-    print(f"{len(CASES) - failed} passed, {failed} failed")
+    print(f"{len(CASES) + len(REFUSAL_CASES) - failed} passed, {failed} failed")
     return 1 if failed else 0
 
 

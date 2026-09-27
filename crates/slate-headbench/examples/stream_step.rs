@@ -138,10 +138,23 @@ const BASE: Arm = Arm {
     nagle: false,
 };
 
+/// The arms this example offers. Spelled here as well as in `arms` below
+/// because the roster is what refuses a mistyped argument and `arms` is built
+/// from `BASE`; `Selection::confirm` refuses the two drifting apart.
+const SECTIONS: &[&str] = &[
+    "nagle",
+    "base",
+    "width",
+    "widenagle",
+    "memory",
+    "split",
+    "single",
+    "short",
+];
+
 fn main() {
     slate_slatedb::announce();
-    let requested: Vec<String> = std::env::args().skip(1).collect();
-    let wanted = |name: &str| requested.is_empty() || requested.iter().any(|s| s == name);
+    let mut wanted = slate_headbench::sections::from_args(SECTIONS);
 
     let arms = [
         Arm {
@@ -199,11 +212,12 @@ fn main() {
     );
 
     for arm in arms {
-        if !wanted(arm.name) {
+        if !wanted.wants(arm.name) {
             continue;
         }
         run_arm(arm);
     }
+    wanted.confirm();
 }
 
 fn run_arm(arm: Arm) {

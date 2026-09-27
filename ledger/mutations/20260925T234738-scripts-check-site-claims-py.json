@@ -1,0 +1,89 @@
+{
+  "at": "2026-09-25T23:47:38+00:00",
+  "file": "scripts/check_site_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_site_claims.py"
+  ],
+  "commit": "c28ffa9",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the widened trip check compares every page",
+      "old": "                if int(stated.replace(\",\", \"\")) != trips:",
+      "new": "                if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a second page with a stale trip count is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the widened zone check compares every page",
+      "old": "                if int(stated) != count:",
+      "new": "                if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a second page with a stale zone count is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a pattern that matches nothing is a failure, not a pass",
+      "old": "        seen > 1,",
+      "new": "        seen >= 0,",
+      "verdict": "caught",
+      "caught_by": [
+        "a pattern that has stopped matching is reported, not passed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "code blocks are stripped before a page is read for claims",
+      "old": "    without_code = re.sub(r\"<pre\\b.*?</pre>|<code\\b.*?</code>|```.*?```\", \" \", text, flags=re.S)",
+      "new": "    without_code = text",
+      "verdict": "caught",
+      "caught_by": [
+        "a trip count in a code block is not a claim"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refused keywords come from the parser's own sentence",
+      "old": "        unsaid = [name for name in refused if name not in docs]",
+      "new": "        unsaid = []",
+      "verdict": "caught",
+      "caught_by": [
+        "a keyword the parser refuses and the docs never name is reported",
+        "the refused keywords are read from the parser, not from a list here"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "claim_pages reaches past the landing page",
+      "old": "    pages = sorted((root / \"site\").rglob(\"*.html\"))",
+      "new": "    pages = [root / \"site\" / \"index.html\"]",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree where every claim holds passes",
+        "an unsafe block is reported",
+        "a crate root that does not forbid unsafe is reported",
+        "a crate with no root at all is reported rather than skipped",
+        "the word unsafe in prose is not a use",
+        "a trip count that drifted from the generator is reported",
+        "a plan line that disagrees with the prose is reported",
+        "a zone count that drifted from the CSV is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

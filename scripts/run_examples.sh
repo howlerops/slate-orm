@@ -151,6 +151,38 @@ handshake() {
     esac
 }
 
+# Examples that take section names, and an argument that is not one of them.
+#
+# The negative case. `head_report --typo` printed its header, ran nothing and
+# exited 0 — a skip reading as a pass, recorded in
+# `ledger/2026-09-21-the-benchmarks-run-now-and-a-fourth-was-broken.md` and
+# fixed by `slate_headbench::sections`, whose `from_args` prints the section
+# list and exits 2. That fix's own entry recorded the hole this closes: no
+# automated run passed a bad section to a *built binary* and asserted the exit.
+# `Selection::new` is unit-tested six ways; the `exit(2)` beneath it, which is
+# the part a reader at a terminal actually meets, was reached by nothing.
+#
+# Which is the same shape as the defect, one level up: a refusal nothing
+# exercises can be deleted by an edit nobody notices, and the run stays green,
+# because a benchmark that has stopped refusing still benchmarks.
+#
+# One argument per example rather than one shared constant, because
+# `scripts/check_examples_roster.py` reads these lines and checks each against
+# that example's own source. An argument that was accidentally a real section
+# name would make the example run normally and exit 0, and the failure would
+# read as "the refusal is gone" rather than "this roster is wrong" — the
+# second-worst outcome for a guard, after not firing.
+refuses() {
+    case "$1/$2" in
+        slate-headbench/head_report) echo "--not-a-section" ;;
+        slate-headbench/head_concurrency) echo "--not-a-section" ;;
+        slate-headbench/stream_step) echo "--not-a-section" ;;
+        slate-slatedb/bucket_layout) echo "--not-an-option" ;;
+        slate-slatedb/cost_calibration) echo "--not-an-option" ;;
+        *) echo "" ;;
+    esac
+}
+
 # How long to wait for a server's handshake before calling it broken.
 HANDSHAKE_SECONDS=${HANDSHAKE_SECONDS:-30}
 
@@ -209,7 +241,34 @@ for name in $examples; do
     # *test's* status, so every non-timeout failure would report exit 1. It
     # did, for one edit.
     if timeout "$EXAMPLE_SECONDS" "$binaries_dir/$name"; then
-        result=$(printf 'ok    %s, %ss' "$name" "$(( $(date +%s) - started ))")
+        elapsed=$(( $(date +%s) - started ))
+        bad=$(refuses "$crate" "$name")
+        if [ -z "$bad" ]; then
+            result=$(printf 'ok    %s, %ss' "$name" "$elapsed")
+        else
+            # Folded into this example's own result line rather than counted as
+            # a check of its own: the closing `N passed, M failed` is read
+            # against the number of examples, and a run reporting more results
+            # than there are examples would be a third number to keep true.
+            #
+            # `code` is captured the same way the timeout branch below captures
+            # it, and for the same reason — `$?` read one command later is the
+            # status of that command.
+            refusal=$(mktemp)
+            if "$binaries_dir/$name" "$bad" >"$refusal" 2>&1; then
+                code=0
+            else
+                code=$?
+            fi
+            if [ "$code" -eq 2 ]; then
+                result=$(printf 'ok    %s, %ss, refused %s' "$name" "$elapsed" "$bad")
+            else
+                result=$(printf 'FAIL  %s, exit %s for %s, wanted 2' "$name" "$code" "$bad")
+                failed=$(( failed + 1 ))
+                sed 's/^/    /' "$refusal"
+            fi
+            rm -f "$refusal"
+        fi
     else
         code=$?
         if [ "$code" -eq 124 ]; then

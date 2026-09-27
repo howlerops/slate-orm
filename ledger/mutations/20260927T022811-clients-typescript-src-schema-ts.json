@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-27T02:28:11+00:00",
+  "file": "clients/typescript/src/schema.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsx --test test/schema.test.ts"
+  ],
+  "commit": "a1b2256",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the TypeScript port drops an array's element type",
+      "old": "    if (column.type === \"array\" && column.element !== undefined) {\n      hash.text(column.element);\n    }",
+      "new": "    if (false && column.element !== undefined) {\n      hash.text(column.element);\n    }",
+      "verdict": "caught",
+      "caught_by": [
+        "the scale and the element type are pinned too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the TypeScript port drops a decimal's scale",
+      "old": "    if (column.type === \"decimal\") {\n      hash.number(column.scale ?? 0);\n    }",
+      "new": "    if (false) {\n      hash.number(column.scale ?? 0);\n    }",
+      "verdict": "caught",
+      "caught_by": [
+        "the scale and the element type are pinned too",
+        "a decimal's scale is part of the fingerprint"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

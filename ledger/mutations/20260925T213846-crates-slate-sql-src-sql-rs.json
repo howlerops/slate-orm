@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-25T21:38:46+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "having",
+    "--test",
+    "taxi",
+    "--no-fail-fast"
+  ],
+  "commit": "b910041",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a mixed HAVING is accepted, OR after AND",
+      "old": "                if self.eat(\"or\") {\n                    if terms.len() > 1 && !any {\n                        return Err(Self::mixed_connectives_in(\"HAVING\", at));\n                    }",
+      "new": "                if self.eat(\"or\") {\n                    if false {\n                        return Err(Self::mixed_connectives_in(\"HAVING\", at));\n                    }",
+      "verdict": "caught",
+      "caught_by": [
+        "it_refuses_what_it_cannot_answer"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "a grouped join's ORed HAVING is stored as ANDed",
+      "old": "                having: if having_any { Vec::new() } else { having.clone() },\n                having_any_of: if having_any { having.clone() } else { Vec::new() },",
+      "new": "                having: having.clone(),\n                having_any_of: Vec::new(),",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

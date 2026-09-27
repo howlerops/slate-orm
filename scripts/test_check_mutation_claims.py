@@ -21,12 +21,21 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import check_mutation_claims as guard
 
 #: A record with every case caught.
+#:
+#: Four cases rather than one, because the fixtures below say "Four mutations"
+#: and the arithmetic rule compares that number with the cases the cited run
+#: scored. A one-case record under a four-mutation claim is the defect that
+#: rule is for, and a fixture should not be an instance of a rule it is not
+#: about.
 CLEAN = {
     "at": "2026-09-23T10:00:00+00:00",
     "file": "scripts/x.py",
     "command": ["python3", "scripts/test_x.py"],
     "outcome": "clean",
-    "cases": [{"name": "a case", "verdict": "caught", "caught_by": ["a test"]}],
+    "cases": [
+        {"name": f"case {n}", "verdict": "caught", "caught_by": ["a test"]}
+        for n in range(4)
+    ],
 }
 #: The same run with one survivor, which is the discrepancy that matters.
 WITH_SURVIVOR = {
@@ -46,9 +55,7 @@ EXPECTED_SURVIVOR = {
 }
 
 
-def run(
-    name: str, body: str, records: dict[str, dict] | None = None
-) -> tuple[int, list[str]]:
+def run(name: str, body: str, records: dict[str, dict] | None = None) -> tuple[int, list[str]]:
     """The guard over one entry and a records directory of its own."""
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
@@ -106,14 +113,68 @@ CASES: list[tuple[str, str, str, dict[str, dict] | None, int, int]] = [
         1,
         1,
     ),
+    # The three phrasings that slipped past the first version of `COUNT`, on
+    # 2026-09-26, in one session. Each had run real mutations, each had a
+    # record waiting in `ledger/mutations/`, and none cited one — the exact
+    # failure this guard exists to catch, uncaught because the number sat on
+    # the wrong side of the noun or there was no number in the sentence at all.
+    (
+        "a count after the noun is a claim",
+        "2026-09-23-a-slug.md",
+        "**Mutations**, six run, six caught.\n",
+        None,
+        1,
+        1,
+    ),
+    (
+        "an evidence table is a claim even with no count in the prose",
+        "2026-09-23-a-slug.md",
+        "A mutation, run twice, caught both times:\n\n"
+        "| mutation | caught by |\n|---|---|\n| the sort is dropped | a test |\n",
+        None,
+        1,
+        1,
+    ),
+    (
+        "a table alone, with no sentence about mutations at all",
+        "2026-09-23-a-slug.md",
+        "| mutation | dialect | caught by |\n|---|---|---|\n| x | rust | y |\n",
+        None,
+        1,
+        1,
+    ),
+    # And the other side of the widening: a table whose first column happens
+    # to be about something else must not be read as a mutation table.
+    (
+        "a table about something else is not a mutation table",
+        "2026-09-23-a-slug.md",
+        "| caveat | verdict |\n|---|---|\n| a mutation would be nice | open |\n",
+        None,
+        0,
+        0,
+    ),
+    # The `^` on the table arm, which is the only thing this case can tell.
+    # An entry *describing* this guard quotes the header inline — as the entry
+    # that widened the pattern does, in the sentence you are reading about.
+    # Without the anchor that quotation is read as a claim to have run
+    # mutations, and the entry is told to cite a run it never made. Written
+    # after a mutation dropping the anchor survived every other case.
+    (
+        "an entry quoting the table header inline is not claiming a run",
+        "2026-09-23-a-slug.md",
+        "The evidence table this repository uses has the header "
+        "`| mutation | caught by |`, which is the shape the guard looks for.\n",
+        None,
+        0,
+        0,
+    ),
     # A count is required. Without one, the ambient prose in every entry here
     # — policy statements about what a surviving mutation means — would each
     # demand a citation.
     (
         "prose about mutation without a count is not a claim",
         "2026-09-23-a-slug.md",
-        "A surviving mutation is a missing test, which is why mutation "
-        "testing matters.\n",
+        "A surviving mutation is a missing test, which is why mutation testing matters.\n",
         None,
         0,
         0,
@@ -122,7 +183,7 @@ CASES: list[tuple[str, str, str, dict[str, dict] | None, int, int]] = [
     (
         "claiming every mutation was caught beside a survivor is refused",
         "2026-09-23-a-slug.md",
-        "Five mutations, all caught. See `ledger/mutations/r.json`.\n",
+        "Two mutations, all caught. See `ledger/mutations/r.json`.\n",
         {"r.json": WITH_SURVIVOR},
         1,
         1,
@@ -130,16 +191,68 @@ CASES: list[tuple[str, str, str, dict[str, dict] | None, int, int]] = [
     (
         "an expected survivor still contradicts `all caught`",
         "2026-09-23-a-slug.md",
-        "Five mutations, all caught. See `ledger/mutations/r.json`.\n",
+        "One mutation, all caught. See `ledger/mutations/r.json`.\n",
         {"r.json": EXPECTED_SURVIVOR},
         1,
         1,
     ),
+    # The arithmetic rule. An entry claiming more than the cited runs scored is
+    # describing a run it did not name, which is the residual the previous
+    # entry left: *"An entry claiming 'six caught' over a record with four
+    # cases passes."* It did, and one entry in this ledger was doing exactly
+    # that.
+    (
+        "a count larger than the cited run's cases is refused",
+        "2026-09-23-a-slug.md",
+        "Nine mutations. See `ledger/mutations/r.json`.\n",
+        {"r.json": CLEAN},
+        1,
+        1,
+    ),
+    (
+        "and it is refused when the number follows the noun, too",
+        "2026-09-23-a-slug.md",
+        "Mutations, nine run. See `ledger/mutations/r.json`.\n",
+        {"r.json": CLEAN},
+        1,
+        1,
+    ),
+    (
+        # One-sided on purpose: a session may run twelve and write up three,
+        # and often should.
+        "a count smaller than the cited run's cases is fine",
+        "2026-09-23-a-slug.md",
+        "Two mutations. See `ledger/mutations/r.json`.\n",
+        {"r.json": CLEAN},
+        1,
+        0,
+    ),
+    (
+        "two cited runs are added together before the comparison",
+        "2026-09-23-a-slug.md",
+        "Eight mutations. See `ledger/mutations/r.json` and "
+        "`ledger/mutations/s.json`.\n",
+        {"r.json": CLEAN, "s.json": CLEAN},
+        1,
+        0,
+    ),
+    (
+        # Measured: applied to the whole entry this shape reported nine
+        # entries here and five were test-suite counts — "131 cases, the
+        # three SDKs agree", "`test_caveats.py` 29 → 35 cases". "Case" means
+        # both things in this ledger, and only the sentence tells them apart.
+        "a test-suite case count on its own line is not a mutation count",
+        "2026-09-23-a-slug.md",
+        "Four mutations. See `ledger/mutations/r.json`.\n\n"
+        "**Suites:** `test_x.py` 29 cases, all passing.\n",
+        {"r.json": CLEAN},
+        1,
+        0,
+    ),
     (
         "an entry that does not claim a clean sweep is fine beside a survivor",
         "2026-09-23-a-slug.md",
-        "Five mutations; one survived, and is recorded as such. "
-        "See `ledger/mutations/r.json`.\n",
+        "Two mutations; one survived, and is recorded as such. See `ledger/mutations/r.json`.\n",
         {"r.json": WITH_SURVIVOR},
         1,
         0,
@@ -170,7 +283,7 @@ def main() -> int:
         ledger = root / "ledger"
         ledger.mkdir()
         (ledger / "2026-09-23-a.md").write_text(
-            "Four mutations, all caught. See `ledger/mutations/r.json`.\n"
+            "Two mutations, all caught. See `ledger/mutations/r.json`.\n"
         )
         held = root / "mutations"
         held.mkdir()
@@ -184,6 +297,36 @@ def main() -> int:
     ran += 1
     failed += not ok
     print(f"{'ok  ' if ok else 'FAIL'}  a malformed record does not crash the guard")
+    if not ok:
+        print(f"        got {wrong}")
+
+    # And it adds nothing to the total. A mutation making an unreadable record
+    # count as many cases survived until this case existed, because with a
+    # malformed record as the *only* citation the arithmetic is skipped either
+    # way — `ran` is zero and the rule does not run. It takes a second, valid
+    # record for the difference to be observable, which is the shape of every
+    # equivalent-looking mutation that turns out not to be one.
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        ledger = root / "ledger"
+        ledger.mkdir()
+        (ledger / "2026-09-23-a.md").write_text(
+            "Nine mutations. See `ledger/mutations/r.json` and "
+            "`ledger/mutations/broken.json`.\n"
+        )
+        held = root / "mutations"
+        held.mkdir()
+        (held / "r.json").write_text(json.dumps(CLEAN))
+        (held / "broken.json").write_text("{not json at all")
+        try:
+            _, wrong = guard.check(ledger, held)
+            ok = any("says `Nine` of something" in one for one in wrong)
+        except Exception as raised:  # noqa: BLE001 - a crash is this case failing
+            ok = False
+            wrong = [f"raised {raised!r}"]
+    ran += 1
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  an unreadable record adds nothing to the total")
     if not ok:
         print(f"        got {wrong}")
 

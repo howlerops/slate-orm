@@ -188,7 +188,7 @@ class Array(tuple["PyValue", ...]):
 #: Everything this client will encode. `int` is here and is refused without a
 #: hint; see the module docstring. `Units` is an `int` subclass, so it needs no
 #: arm of its own.
-PyValue = None | Null | bool | int | float | str | bytes | _uuid.UUID | Vector | Array
+PyValue = Null | bool | int | float | str | bytes | _uuid.UUID | Vector | Array | None
 
 
 class ValueTypeError(TypeError):

@@ -3,7 +3,9 @@ import { after, test } from "node:test";
 
 import { start, type Serving } from "./harness.js";
 import {
+  asView,
   fingerprint,
+  ordinalOf,
   int,
   isKind,
   SlateError,
@@ -123,6 +125,36 @@ test("the fingerprint matches the canonical form", () => {
   //	>>> hex(fingerprint_of(DOCS))
   //	'0x97c3c1256af4cfdb'
   assert.equal(fingerprint(DOCS), 0x97c3c1256af4cfdbn);
+});
+
+/**
+ * The two properties a column can carry beyond its name and type, pinned.
+ *
+ * `DOCS` above has neither a decimal nor an array, so this port could drop
+ * `scale` and `element` from its hash and the test above would still pass —
+ * the gap `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md`
+ * recorded: four implementations each computing the element type's
+ * contribution separately, compared only by the live suites and only for the
+ * tables those suites exercise.
+ *
+ * One table with both, because a column is never both at once and the two
+ * arms are independent: dropping either changes this number and neither
+ * changes `DOCS`.
+ */
+test("the scale and the element type are pinned too", () => {
+  const SHELVES: TableDef = {
+    name: "shelves",
+    columns: [
+      { name: "id", type: "u64" },
+      { name: "tags", type: "array", element: "string" },
+      { name: "price", type: "decimal", scale: 2 },
+    ],
+    primaryKey: ["id"],
+  };
+  //	>>> from slate.schema import fingerprint_of
+  //	>>> hex(fingerprint_of(SHELVES))
+  //	'0xdf013a5ccb6808c0'
+  assert.equal(fingerprint(SHELVES), 0xdf013a5ccb6808c0n);
 });
 
 /**
@@ -304,4 +336,35 @@ test("a decimal's scale is part of the fingerprint", () => {
   assert.equal(fingerprint(priced(2)), 0xdab8856481bc4a6dn);
   assert.equal(fingerprint(priced(4)), 0xdaba08fbb666133fn);
   assert.notEqual(fingerprint(priced(2)), fingerprint(priced(4)));
+});
+
+// `asView` — a view's declaration is its base table's, renamed.
+//
+// A free function because `TableDef` is an interface. The copies are the
+// point: both arrays are mutable behind `readonly` fields, so a view built by
+// reference would let a push to either be seen by both, which produces a wrong
+// ordinal and a silently mis-decoded row rather than an error.
+test("asView renames a declaration and copies what it shares", () => {
+  const base: TableDef = {
+    name: "books",
+    columns: [
+      { name: "id", type: "u64" },
+      { name: "title", type: "string" },
+    ],
+    primaryKey: ["id"],
+  };
+
+  const view = asView(base, "recent_books");
+  assert.equal(view.name, "recent_books");
+  assert.deepEqual(view.columns, base.columns);
+  assert.deepEqual(view.primaryKey, base.primaryKey);
+  for (const column of base.columns) {
+    assert.equal(ordinalOf(view, column.name), ordinalOf(base, column.name));
+  }
+
+  view.columns.push({ name: "added", type: "string" });
+  assert.equal(base.columns.length, 2, "the base table shares the view's array");
+
+  view.primaryKey.push("title");
+  assert.deepEqual(base.primaryKey, ["id"], "the base table shares the view's key");
 });

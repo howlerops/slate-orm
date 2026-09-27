@@ -1,0 +1,74 @@
+{
+  "at": "2026-09-26T01:12:23+00:00",
+  "file": "scripts/check_site_css.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_site_css.py"
+  ],
+  "commit": "01803e0",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the demo's stylesheet is dropped from SHEETS",
+      "old": "    (\n        \"examples/explorer/web/src/styles.css\",",
+      "new": "    (\n        \"examples/explorer/web/src/NOPE.css\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a stylesheet whose every selector is used passes",
+        "a class no page or script names is reported",
+        "an id no page or script names is reported",
+        "a class named only inside a CSS comment is not treated as defined",
+        "a class only ever built dynamically still counts as used",
+        "the docs pages count as sources",
+        "the generated wasm glue is not a source",
+        "a dead class in the demo's own stylesheet is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the sheets share one pooled corpus instead of their own sources",
+      "old": "        files = sources(root, globs)",
+      "new": "        files = [f for _, g in SHEETS for f in sources(root, g)]",
+      "verdict": "caught",
+      "caught_by": [
+        "a demo class named only by a site page is still dead",
+        "a stylesheet with no sources at all is reported, not passed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a sheet with no sources is not reported",
+      "old": "        record(f\"{sheet} has sources to check against\", bool(files), str(globs))",
+      "new": "        record(f\"{sheet} has sources to check against\", True, str(globs))",
+      "verdict": "caught",
+      "caught_by": [
+        "a stylesheet with no sources at all is reported, not passed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the .tsx sources are dropped, so the demo's classes all read dead",
+      "old": "            \"examples/explorer/web/src/*.tsx\",",
+      "new": "            \"examples/explorer/web/src/*.nope\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a stylesheet whose every selector is used passes",
+        "a class no page or script names is reported",
+        "an id no page or script names is reported",
+        "a class named only inside a CSS comment is not treated as defined",
+        "a class only ever built dynamically still counts as used",
+        "the docs pages count as sources",
+        "the generated wasm glue is not a source",
+        "a dead class in the demo's own stylesheet is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

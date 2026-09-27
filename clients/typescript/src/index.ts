@@ -172,6 +172,7 @@ export {
 } from "./join.js";
 export {
   answers,
+  asView,
   fingerprint,
   ordinalOf,
   type CheckRule,

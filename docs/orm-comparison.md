@@ -601,7 +601,12 @@ three divergences on its first run and is the right place for this. Plus a
 test that asserts the read count — the whole claim is "one read, not N", and a
 claim nothing measures is a claim nothing keeps.
 
-*Stops at.* One level, one relationship per request, to start. Nesting is P5.
+~~*Stops at.* One level, one relationship per request, to start. Nesting is
+P5.~~ **Superseded by N1.** `RelatedRequest` carries a `path` of relationships
+resolved level by level in one round trip, so a request is no longer one level
+— `article → article_tags → tags` is two steps and two reads. Exactly one of
+`relation` and `path` may be set. What N1 *did* stop at is below: no predicate,
+ordering or limit per level.
 
 ### P3 — Chains, keyset pagination and `RETURNING` on the wire — **built**
 
@@ -921,10 +926,15 @@ the way `Query` streams is the general answer and is a different RPC shape.
 > *Stops at* what the note says: no per-level predicate or ordering, and the
 > page's *fan-out* is unbounded even though its depth in driving rows is not.
 
-`Query` has `after` and `paged`; `JoinQuery` has `offset = 3` and no cursor.
-Paging a join is therefore offset paging, which is the thing P3's cursor exists
-to replace — a row inserted between pages shifts every later page by one, and a
-caller walking a join sees a row twice or not at all.
+~~`Query` has `after` and `paged`; `JoinQuery` has `offset = 3` and no
+cursor. Paging a join is therefore offset paging, which is the thing P3's
+cursor exists to replace — a row inserted between pages shifts every later page
+by one, and a caller walking a join sees a row twice or not at all.~~
+**Superseded**, and this paragraph is the *problem statement* rather than a
+boundary: N3 built the cursor it asks for. `JoinQuery` resumes after a primary
+key in the first input's table, because a page of a join is a page of its
+driving table; `docs/paging-a-join.md` is the note this item required, and it
+rejected the refusal N3 said it might end as.
 
 *Build.* The design question is what a join's cursor *is*, and it has no obvious
 answer: the driving side's key is not unique after a fan-out, so a cursor over

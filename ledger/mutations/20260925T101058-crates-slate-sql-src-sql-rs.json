@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-25T10:10:58+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "e51ad99",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a join's GROUP BY stops after the first key",
+      "old": "                if !group_by.contains(&key) {\n                    group_by.push(key);\n                }\n                if !self.eat_symbol(\",\") {\n                    break;\n                }",
+      "new": "                if !group_by.contains(&key) {\n                    group_by.push(key);\n                }\n                if true {\n                    break;\n                }",
+      "verdict": "caught",
+      "caught_by": [
+        "a_join_groups_by_more_than_one_key"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

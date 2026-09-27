@@ -8,9 +8,6 @@
  * milliseconds with nothing started, which is the point of splitting them.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -19,10 +16,12 @@ import {
   DEFAULT_ADAPTERS,
   kindOf,
   render,
+  NOT_IN_THE_UI,
   TABLES,
   type Tagged,
   VIEWS,
 } from "../src/api.js";
+import { CATALOG_TABLES, CATALOG_VIEWS } from "../src/catalog.js";
 
 test("with nothing in the environment, the adapters are the demo's ports", () => {
   assert.deepEqual(adaptersFrom({}), DEFAULT_ADAPTERS);
@@ -136,117 +135,61 @@ test("meta is a GET with no body; a query is a POST", async () => {
 
 // --- the schema the UI holds -----------------------------------------------
 
+
 /**
- * Walk up from this module until a directory holds `what`.
+ * What the UI shows against what the catalog holds.
  *
- * Not `new URL("../../" + what, import.meta.url)`, because this file runs from
- * `dist-test/test/` and lives in `test/` — one segment apart — so a counted
- * path is right in the editor and wrong when run. That exact bug has now been
- * written four times across three packages in this repository; `clients/typescript`
- * has a shared `paths.ts` for it, and this package does not depend on that one.
- */
-function findUp(what: string): string {
-  let directory = path.dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    const candidate = path.join(directory, what);
-    if (existsSync(candidate)) return candidate;
-    const parent = path.dirname(directory);
-    if (parent === directory) throw new Error(`no ${what} above ${import.meta.url}`);
-    directory = parent;
-  }
-}
-
-/** The `[[tables]]` blocks of head.toml, as name -> column names.
+ * This used to parse `head.toml` with thirty lines of regex and compare the
+ * hand-written `TABLES` against it. That guard worked and was itself a second
+ * implementation of catalog resolution — `scripts/codegen.py`'s docstring
+ * spends a paragraph on why re-interpreting the TOML is the thing not to do,
+ * and this file was doing it. `src/catalog.ts` is generated from
+ * `slate-serverd --print-schema` and re-checked by CI with `--check`, so the
+ * comparison against the config now happens there, against the *resolved*
+ * catalog rather than against a regex over its source.
  *
- * Thirty lines of regex rather than a TOML dependency, and deliberately strict:
- * it throws if it finds no tables, so a parser that stops matching fails the
- * test instead of silently agreeing with an empty expectation. That failure
- * mode is the reason this exists at all — the assertion it replaced compared
- * `TABLES` against a second copy of the same literal, which no drift can break.
+ * What is left here is the part generation cannot decide: which of the
+ * catalog's tables the UI shows. `NOT_IN_THE_UI` is the roster for that, and
+ * these tests keep it honest in both directions.
  */
-function tablesInConfig(): Record<string, string[]> {
-  const toml = readFileSync(findUp("head.toml"), "utf8");
-  const found: Record<string, string[]> = {};
-  for (const block of toml.split(/^\[\[tables\]\]$/m).slice(1)) {
-    const name = /^name = "([^"]+)"/m.exec(block)?.[1];
-    const columns = /^columns = \[([\s\S]*?)^\]$/m.exec(block)?.[1];
-    if (!name || !columns) continue;
-    found[name] = [...columns.matchAll(/\{\s*name = "([^"]+)"/g)].map((m) => m[1]!);
+test("the UI shows every table the catalog has, minus the ones it names", () => {
+  for (const [name, reason] of Object.entries(NOT_IN_THE_UI)) {
+    assert.ok(
+      name in CATALOG_TABLES,
+      `NOT_IN_THE_UI names ${name}, which the catalog no longer has`,
+    );
+    assert.ok(!(name in TABLES), `${name} is in the UI, so it is not ${reason}`);
   }
-  if (Object.keys(found).length === 0) {
-    throw new Error("parsed no tables out of head.toml; the parser, not the config, is wrong");
-  }
-  return found;
-}
-
-/** Tables in `head.toml` that the UI deliberately does not show, and why.
- *
- * The `EXPECTED_REFUSALS` idiom this repository uses elsewhere: a list you are
- * forced to edit is a list that stays true. A table added to the catalog fails
- * the test below until somebody either puts it in the UI or says here why it
- * is not there — which is the decision, made once, rather than never.
- */
-const NOT_IN_THE_UI: Record<string, string> = {
-  posts: "it exists so the generated array decoders have something to decode; \
-nothing seeds it and the UI has no way to render a list cell",
-};
-
-/** The `[[views]]` blocks of head.toml, as view name -> base table name.
- *
- * The base table is read out of the `FROM` rather than out of a second field,
- * because that is where the config says it — a view is a `SELECT` and the
- * server resolves its table by parsing one. Strict in the same way
- * `tablesInConfig` is: no blocks at all throws, so a parser that stops
- * matching fails this test instead of agreeing with an empty expectation.
- */
-function viewsInConfig(): Record<string, string> {
-  const toml = readFileSync(findUp("head.toml"), "utf8");
-  const found: Record<string, string> = {};
-  for (const block of toml.split(/^\[\[views\]\]$/m).slice(1)) {
-    const name = /^name = "([^"]+)"/m.exec(block)?.[1];
-    const base = /^query = "[^"]*\bFROM\s+(\w+)/m.exec(block)?.[1];
-    if (!name || !base) continue;
-    found[name] = base;
-  }
-  if (Object.keys(found).length === 0) {
-    throw new Error("parsed no views out of head.toml; the parser, not the config, is wrong");
-  }
-  return found;
-}
+  const expected = Object.fromEntries(
+    Object.entries(CATALOG_TABLES).filter(([name]) => !(name in NOT_IN_THE_UI)),
+  );
+  assert.deepEqual(TABLES, expected);
+  assert.ok(Object.keys(TABLES).length > 0, "a UI showing no tables would pass everything above");
+});
 
 test("every view the UI offers reads a table, with that table's columns", () => {
   // Not a column list of its own, which is the point: `docs/views.md` refuses
   // a projection in a view, so a view's ordinals are its base table's and the
-  // UI has nothing separate to get wrong. This asserts that `VIEWS` really is
-  // built that way rather than out of a copied literal that happens to agree
-  // today — an identity check on the array, so a copy fails it.
-  const config = viewsInConfig();
-  assert.deepEqual(Object.keys(VIEWS).sort(), Object.keys(config).sort());
-  for (const [name, base] of Object.entries(config)) {
-    assert.ok(base in TABLES, `view ${name} reads ${base}, which the UI does not know`);
-    assert.strictEqual(
-      VIEWS[name],
-      TABLES[base],
-      `view ${name} should be ${base}'s column list, not a copy of it`,
-    );
+  // UI has nothing separate to get wrong. An identity check on the array, so a
+  // generator that emitted a copy — which would agree today and drift on the
+  // first column added — fails here.
+  assert.ok(Object.keys(VIEWS).length > 0, "no views is not a passing state for this test");
+  for (const [name, columns] of Object.entries(VIEWS)) {
+    const base = Object.entries(CATALOG_TABLES).find(([, theirs]) => theirs === columns);
+    assert.ok(base, `view ${name} carries a column list that is no table's`);
+    assert.strictEqual(columns, CATALOG_TABLES[base[0]], `view ${name} should be ${base[0]}'s own list`);
   }
 });
 
-test("the UI's column names match head.toml, in order", () => {
-  // A copy of the schema like every client holds. The server's fingerprint
-  // check catches a disagreement at query time; this catches it at test time,
-  // and names the table rather than printing two hashes.
-  //
-  // Subset rather than equality, with the difference named above. Equality was
-  // the first version and was right while the UI showed everything; it stopped
-  // being right the moment the catalog gained a table for a reason that has
-  // nothing to do with the UI, and the choice then is to show an empty table
-  // nobody can do anything with or to say so. This says so.
-  const config = tablesInConfig();
-  for (const [name, reason] of Object.entries(NOT_IN_THE_UI)) {
-    assert.ok(name in config, `NOT_IN_THE_UI names ${name}, which head.toml no longer has`);
-    assert.ok(!(name in TABLES), `${name} is in the UI, so it is not ${reason}`);
-    delete config[name];
+test("a view the UI hides is hidden by the same roster its table is", () => {
+  // `shown` filters views by table name, not by base table. That is right —
+  // a view has its own name and its own reason to be hidden — and it is worth
+  // a case, because the filter reads as if it were about tables.
+  for (const name of Object.keys(CATALOG_VIEWS)) {
+    assert.equal(
+      name in VIEWS,
+      !(name in NOT_IN_THE_UI),
+      `view ${name} is shown iff NOT_IN_THE_UI does not name it`,
+    );
   }
-  assert.deepEqual(TABLES, config);
 });

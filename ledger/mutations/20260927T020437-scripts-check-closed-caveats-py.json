@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-27T02:04:37+00:00",
+  "file": "scripts/check_closed_caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_closed_caveats.py"
+  ],
+  "commit": "2f5e18b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the headbench witness points at a job that is not in ci.yml",
+      "old": " \"headbench-smoke\": (\"crates/slate-headbench/run.sh --smoke\", \".github/workflows/ci.yml\"),",
+      "new": " \"headbench-smoke\": (\"crates/slate-headbench/run.sh --not-a-flag\", \".github/workflows/ci.yml\"),",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refusal closure loses its witness row",
+      "old": "    ('2026-09-26-the-refusal-nothing-ran.md',\n     'Nothing has run the negative case end to end.'):\n        'headbench-smoke',\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every closed verdict names a witness or an exemption"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

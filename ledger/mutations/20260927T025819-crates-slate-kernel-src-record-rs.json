@@ -1,0 +1,32 @@
+{
+  "at": "2026-09-27T02:58:19+00:00",
+  "file": "crates/slate-kernel/src/record.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "soft_delete",
+    "--",
+    "a_purge"
+  ],
+  "commit": "18afa73",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a purge stops authorizing Delete",
+      "old": "        self.security.authorize(context, table, Action::Delete)?;\n\n        // `include_deleted`, which is the only reason that flag exists outside",
+      "new": "        let _ = Action::Delete;\n\n        // `include_deleted`, which is the only reason that flag exists outside",
+      "verdict": "caught",
+      "caught_by": [
+        "a_purge_needs_all_three_grants_and_says_which_is_missing"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

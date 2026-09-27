@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-26T23:48:09+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "006e49c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a crate already covered is reported anyway",
+      "old": "        if any(where == one or one in where.parents or where in one.parents for one in covered):\n            continue",
+      "new": "        if False:\n            continue",
+      "verdict": "caught",
+      "caught_by": [
+        "a crate that IS the scanned tree is not reported against itself"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

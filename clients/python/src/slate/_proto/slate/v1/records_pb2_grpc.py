@@ -187,10 +187,17 @@ class RecordsServicer:
     def PurgeDeleted(self, request, context):
         """Erase rows a soft delete retired. `WriteResponse.affected` is how many.
 
-        Needs `delete` *and* `read_deleted` on the table: erasing a retired row
-        means reading it first, and `read_deleted` is what says a caller may see
-        one. A caller holding only `delete` can remove rows it can see and not
-        ones the convention hid from it.
+        Needs `delete`, `read` *and* `read_deleted` on the table: erasing a
+        retired row means reading it first, `read` is what says a caller may read
+        at all, and `read_deleted` is what says it may see a retired one. A caller
+        holding only `delete` can remove rows it can see and not ones the
+        convention hid from it.
+
+        This said `delete` and `read_deleted` until a test granted exactly those
+        two and was refused naming `read` — the scan is an ordinary read and
+        authorises as one. Written out because an operator granting what a
+        comment lists and being refused has no way to tell an incomplete list
+        from a bug.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

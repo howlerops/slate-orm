@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-25T07:48:13+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "bbe045c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "moment is dropped from the verdicts",
+      "old": "\"deliberate\", \"moment\", \"untriaged\"",
+      "new": "\"deliberate\", \"untriaged\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a moment is counted as its own verdict, not as open: moment: wanted 1, got None; untriaged: wanted 1, got 2; problems: wanted 0, got 1 [\"a.md: unknown verdict 'moment'\"]",
+        "a moment needs no `by`, where closed and deliberate do: moment: wanted 1, got None; problems: wanted 1, got 2 [\"a.md: unknown verdict 'moment'\", 'a.md: `It does not do the second thing.` is closed and names nothing that closed or decided it']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the withdrawal pattern matches anywhere, not at the lead",
+      "old": "WITHDRAWN.match(bullet.strip())",
+      "new": "WITHDRAWN.search(bullet.strip())",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "equivalent: the pattern is anchored with ^ and re.MULTILINE is not set, so search can only match at position 0, which is what match does"
+    }
+  ],
+  "restored_clean": true
+}

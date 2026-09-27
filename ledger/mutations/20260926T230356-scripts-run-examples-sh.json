@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-26T23:03:56+00:00",
+  "file": "scripts/run_examples.sh",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "/tmp/claude-0/both.sh"
+  ],
+  "commit": "438b4be",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a refusal argument that is a real section of that example",
+      "old": "        slate-headbench/stream_step) echo \"--not-a-section\" ;;",
+      "new": "        slate-headbench/stream_step) echo \"nagle\" ;;",
+      "verdict": "caught",
+      "caught_by": [
+        "the real tree's four tables agree"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -687,3 +687,84 @@ async fn the_planner_picks_a_loop_when_the_accumulated_side_is_small() {
         plan.steps[0].algorithm
     );
 }
+
+// --- a chain's computed value over a step that contributed nothing ---------
+
+/// A chain's computed value on an outer step's unmatched row reads nulls.
+///
+/// The twin of `a_joins_computed_value_over_an_unmatched_outer_row_is_computed
+/// _from_nulls` in `join.rs`, one dimension further out: a chain's `compute`
+/// runs over the *accumulated* row, and an outer step leaves a slot empty
+/// rather than dropping the row. Every chain elsewhere in this file is inner
+/// throughout, so nothing exercised an expression over a hole.
+///
+/// The fixture gives three shapes in one read, which is why this is one test
+/// and not three:
+///
+/// - Ursula's books have publishers — every table present.
+/// - Iain has a book whose publisher does not exist — table 2 absent.
+/// - Nobody wrote nothing — tables 1 *and* 2 absent, and the row still has
+///   three slots, so an expression naming table 2 is naming a real ordinal
+///   over an absent row rather than running off the end.
+///
+/// Two computed values again: one reading the first table, which is present on
+/// every row and must therefore never be null; one reading the last, which
+/// must be null exactly where the step matched nothing. Nulling the whole
+/// computed tail when any slot is empty would pass the second and fail the
+/// first.
+#[tokio::test]
+async fn a_chains_computed_value_over_an_unmatched_step_reads_nulls() {
+    let (store, _) = store(open()).await;
+    let defs = tables();
+    let txn = store.begin().await.unwrap();
+    let at = schema();
+
+    let chain = Chain::start()
+        .join(JoinStep::equating(at.at(0, a("id")), b("author_id")).left_outer())
+        .join(JoinStep::equating(at.at(1, b("publisher_id")), p("id")).left_outer())
+        .computing([
+            slate_kernel::Scalar::Upper(Box::new(slate_kernel::Scalar::Column(
+                at.at(0, a("name")),
+            ))),
+            slate_kernel::Scalar::Column(at.at(2, p("house"))),
+        ]);
+
+    let rows = txn
+        .chain(&reader(1), &refs(&defs), &chain)
+        .await
+        .unwrap()
+        .collect()
+        .await
+        .unwrap();
+
+    let mut seen: Vec<(Value, Value)> = rows
+        .iter()
+        .map(|r| (r.computed()[0].clone(), r.computed()[1].clone()))
+        .collect();
+    seen.sort_by_key(|(author, publisher)| (format!("{author:?}"), format!("{publisher:?}")));
+
+    // The first table is present on every row, so the first computed value is
+    // never null — including on the two rows where a later step matched
+    // nothing.
+    assert!(
+        seen.iter()
+            .all(|(author, _)| !matches!(author, Value::Null)),
+        "an expression over a present table went null because a later step \
+         did not match: {seen:?}"
+    );
+    // And the second is null exactly where the publisher step matched nothing.
+    let absent: Vec<&Value> = seen
+        .iter()
+        .filter(|(_, publisher)| matches!(publisher, Value::Null))
+        .map(|(author, _)| author)
+        .collect();
+    assert_eq!(
+        absent,
+        vec![
+            &Value::Str("IAIN".to_owned()),
+            &Value::Str("NOBODY".to_owned())
+        ],
+        "exactly the two rows with no publisher should compute null for one, \
+         and both should still name their author: {seen:?}"
+    );
+}

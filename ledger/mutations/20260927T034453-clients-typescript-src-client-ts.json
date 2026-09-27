@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-27T03:44:53+00:00",
+  "file": "clients/typescript/src/client.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npm test"
+  ],
+  "commit": "057a86c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an unmatched input's computed values become an empty array, not undefined",
+      "old": "    inputComputed: inputs.map((input) => {\n      const row = (input as { row?: unknown }).row;\n      return row ? computedFromWire(row) : undefined;\n    }),",
+      "new": "    inputComputed: inputs.map((input) => {\n      const row = (input as { row?: unknown }).row;\n      return row ? computedFromWire(row) : [];\n    }),",
+      "verdict": "caught",
+      "caught_by": [
+        "an input's own computed value is undefined on an unmatched outer side"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

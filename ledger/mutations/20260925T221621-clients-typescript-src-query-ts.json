@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-25T22:16:21+00:00",
+  "file": "clients/typescript/src/query.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; SLATE_SERVERD=/home/user/slate-orm/target/debug/slate-serverd node --test dist-test/test/disjunction.test.js"
+  ],
+  "commit": "e425e1c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "or builds a disjunction, not a conjunction",
+      "old": "    : { wire: { disjunction: { exprs: parts.map((p) => p.wire) } } };",
+      "new": "    : { wire: { conjunction: { exprs: parts.map((p) => p.wire) } } };",
+      "verdict": "caught",
+      "caught_by": [
+        "a client sends a disjunction in a filter",
+        "a client sends a disjunction in a having"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty or is alwaysFalse, not alwaysTrue",
+      "old": "    ? alwaysFalse()\n    : { wire: { disjunction:",
+      "new": "    ? alwaysTrue()\n    : { wire: { disjunction:",
+      "verdict": "caught",
+      "caught_by": [
+        "an empty or is false and an empty and is true"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

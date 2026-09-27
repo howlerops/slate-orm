@@ -586,3 +586,84 @@ func TestBothKindsOfComputedValueComeBackOnAJoin(t *testing.T) {
 		t.Fatalf("got %d joined rows, want 4", seen)
 	}
 }
+
+// An input's own computed value on the unmatched side of an outer join is nil.
+//
+// `InputComputed`'s doc says so and nothing demonstrated it —
+// `ledger/2026-09-15-the-values-that-arrived-and-vanished.md` recorded the gap
+// as "reasoned about rather than demonstrated", because both fixtures above are
+// inner joins and an inner join has no unmatched side.
+//
+// The distinction being pinned is between *nil* and *a slice of nulls*. The
+// server pads an unmatched side's columns with nothing at all — the input
+// produced no row, so there is no row to compute over — and the decoder has to
+// carry that through as the absence of a slice. A decoder that built an empty
+// slice, or one holding a null per declared expression, would satisfy every
+// assertion about lengths and none about meaning, so this checks `== nil`
+// rather than `len(...) == 0`: an empty non-nil slice fails here and is
+// supposed to.
+//
+// The matched rows are checked in the same loop on purpose. A bug that returned
+// nil for *every* row would pass an unmatched-only assertion, which is how a
+// test for an absence talks itself into passing.
+func TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide(t *testing.T) {
+	session := library(t)
+
+	b := slate.NewJoin()
+	authors := b.Add(slate.JoinInput{Table: "authors"})
+	const booksAt = 1
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		Type:  slate.Left,
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+		// The decade of the book's year. Author 3 has no books, so this is the
+		// expression with no row to evaluate over.
+		Compute: []slate.Scalar{
+			slate.Mul(
+				slate.Div(slate.Ref(slate.At(booksAt, 3)), slate.Lit(slate.Int(10))),
+				slate.Lit(slate.Int(10)),
+			),
+		},
+	})
+	if books != booksAt {
+		t.Fatalf("the second input is %d, and its compute names %d", books, booksAt)
+	}
+
+	stream, err := session.Join(testContext(t), b.Query())
+	if err != nil {
+		t.Fatalf("joining: %v", err)
+	}
+	defer stream.Close()
+
+	matched, unmatched := 0, 0
+	for stream.Next() {
+		ownBooks := stream.InputComputed(books)
+		row := stream.Row()
+
+		if row[1] == nil {
+			unmatched++
+			if ownBooks != nil {
+				t.Errorf("an unmatched book side computed %v, want nil", ownBooks)
+			}
+			continue
+		}
+		matched++
+		if len(ownBooks) != 1 {
+			t.Fatalf("a matched book computed %d values, want 1", len(ownBooks))
+		}
+		year, ok := row[1][3].(slate.Int)
+		if !ok {
+			t.Fatalf("the book's year is %v", row[1][3])
+		}
+		if want := slate.Int(int64(year) / 10 * 10); ownBooks[0] != want {
+			t.Errorf("the book's computed value is %v, want %v", ownBooks[0], want)
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("draining: %v", err)
+	}
+	if matched != 4 || unmatched != 1 {
+		t.Fatalf("got %d matched and %d unmatched rows, want 4 and 1 (author 3 has no books)",
+			matched, unmatched)
+	}
+}

@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-26T01:02:15+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "7070c31",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "narrowed is dropped from the verdicts, after ruff format",
+      "old": "VERDICTS = (\"open\", \"closed\", \"narrowed\", \"deliberate\", \"moment\", \"untriaged\")",
+      "new": "VERDICTS = (\"open\", \"closed\", \"deliberate\", \"moment\", \"untriaged\")",
+      "verdict": "caught",
+      "caught_by": [
+        "narrowed without naming what closed and what is left is refused: narrowed: wanted 1, got None",
+        "narrowed with a `by` is accepted and counted as its own thing: narrowed: wanted 1, got None; problems: wanted 0, got 1 [\"a.md: unknown verdict 'narrowed'\"]"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "narrowed is dropped from --unread, after ruff format",
+      "old": "        if entry.get(\"verdict\") not in (\"open\", \"narrowed\"):",
+      "new": "        if entry.get(\"verdict\") != \"open\":",
+      "verdict": "caught",
+      "caught_by": [
+        "a narrowed caveat is re-read like an open one: wanted 2 listed, got 1: ['a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

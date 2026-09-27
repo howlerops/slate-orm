@@ -23,23 +23,73 @@
 //! # The grammar, in full
 //!
 //! ```text
-//! SELECT  <* | item-list> FROM <table>
-//!         [ JOIN <table> ON <col> = <col> ]
-//!         [ WHERE <cond> (AND <cond>)* ]
-//!         [ GROUP BY <col> (, ...)* ]
-//!         [ HAVING <group-cond> (AND <group-cond>)* ]
-//!         [ ORDER BY <col | aggregate> [ASC|DESC] (, ...)* ]
+//! SELECT  [DISTINCT] <* | item-list> FROM <table> [AS <alias>]
+//!         ( JOIN <table> [AS <alias>] ON <ref> = <ref> )*
+//!         [ WHERE <predicate> ]
+//!         [ GROUP BY <item> (, <item>)* ]
+//!         [ HAVING <group-cond> ((AND <group-cond>)* | (OR <group-cond>)*) ]
+//!         [ ORDER BY <item | aggregate> [ASC|DESC] (, ...)* ]
 //!         [ LIMIT <int> ] [ OFFSET <int> ]
 //!
-//!         -- on a join: one GROUP BY key, and ORDER BY needs it
+//!         -- <predicate> := <cond> | '(' <predicate> ')'
+//!         --                | <predicate> ((AND <predicate>)* | (OR <predicate>)*)
+//!         -- an ungrouped JOIN takes SELECT * and nothing else
+//!         -- on a join: ORDER BY needs a GROUP BY
+//!         -- a join's WHERE takes AND only, and no brackets
+//!         -- a HAVING takes no brackets either
+//!         -- AS only where a table is read more than once
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
 //! DELETE  FROM <table> WHERE <pk> = <literal>
 //! ```
 //!
+//! **This block is checked.** `the_grammar_block_names_every_computed_call`
+//! and its neighbours below read this module's own source and compare the
+//! names in the prose against the parser's tables, because every list here
+//! had gone stale at least once: the `AND`-only `WHERE` and `HAVING` lines
+//! outlived the `OR` work by one commit, and the call list below outlived
+//! `month_start` and `year_start` by ten days. What a test cannot check is
+//! the *shape* of the productions above, so each one has a case in
+//! `tests/front_end.rs` that parses the thing it describes.
+//!
 //! `<cond>` is `col <op> literal`, with `op` one of `= != <> < <= > >=`,
-//! `LIKE`, `ILIKE` or `~` (a regular expression). Statements may be separated
-//! by `;`.
+//! `LIKE`, `ILIKE`, `~` (a regular expression), `IN (<literal>, ...)`,
+//! `NOT IN (...)` or `CONTAINS <literal>` (a full-text search).
+//!
+//! A buffer may hold several statements separated by `;`, and [`split`] is
+//! what separates them — [`parse`] takes one statement and refuses a `;`. The
+//! distinction matters to a caller: the workbench splits and then parses each
+//! piece, so an error can be reported against the buffer the editor holds,
+//! and `slate-serverd` resolving a view parses one statement directly.
+//!
+//! A `<ref>` in a `JOIN ... ON` is `col` or `alias.col`; an alias is what lets
+//! a chain reach one table twice, and without one the second mention of a
+//! table is ambiguous and refused. More than one `JOIN` is a **chain**, which
+//! joins each input to an earlier one rather than all of them to the first.
+//!
+//! `AS` on a table nothing else names is **refused**, not ignored: an alias
+//! exists to tell two readings of one table apart, and a single-table read has
+//! nothing to tell apart. Accepting it would let `SELECT b.title FROM books AS
+//! b` mean something in one statement and nothing in another.
+//!
+//! An **ungrouped join** returns whole rows and takes `SELECT *`. A projection
+//! there would be a projection in the joined row's ordinal space, which is not
+//! what a reader writing `books.title` means; the refusal says so. `GROUP BY`
+//! changes that, because a grouped answer is keys and aggregates and the
+//! select list *is* the shape.
+//!
+//! `DISTINCT` is a grouping with keys and no aggregates, which is what it is:
+//! the distinct combinations of the selected columns. It may not be combined
+//! with an aggregate in the same statement.
+//!
+//! An item may also be a **window**: `rank() OVER (PARTITION BY <col> ORDER BY
+//! <col>)`, which computes per row rather than per group and so does not make
+//! the statement a grouping.
+//!
+//! `UNION`, `INTERSECT`, `EXCEPT`, `EXISTS` and `NOT EXISTS` are refused by
+//! name, each with the reason: a statement compiles to one query spec, which
+//! has no set operator, and `EXISTS` is correlated. The refusals are the
+//! feature — see `ledger/2026-09-16-a-subquery-is-two-reads-not-an-operator.md`.
 //!
 //! An `<item>` is a column, an aggregate, or a **call**: `hour(pickup_time)`,
 //! `round(distance)`. A call is a value computed per row and appended after
@@ -48,7 +98,16 @@
 //! select list, once in `GROUP BY` — names one computed column, not two.
 //!
 //! The calls are `hour`, `minute`, `second`, `year`, `month`, `day`,
-//! `day_of_week`, `date` and `round`. There is no date *type*: a timestamp is
+//! `day_of_week`, `date`, `month_start`, `year_start` and `round`.
+//!
+//! The aggregates are `count`, `min`, `max`, `sum` and `avg`.
+//!
+//! Both sentences end at their first full stop and hold nothing but backticked
+//! names, because `grammar::the_grammar_block_names_every_computed_call` reads
+//! them that way. Write prose about a call in the next paragraph, not in the
+//! list.
+//!
+//! There is no date *type*: a timestamp is
 //! seconds since the epoch in an integer column, `day` is the day of the month
 //! as `EXTRACT(DAY FROM t)` is in SQL, and `date` returns midnight of the day
 //! as epoch seconds so that grouping by it orders chronologically.
@@ -94,9 +153,35 @@
 //! refused rather than treated as a `WHERE`.
 //!
 //! Everything outside that grammar is refused with the position and what was
-//! expected. There is no silent subset: `SELECT ... WHERE a = 1 OR b = 2`
-//! does not quietly become an `AND`, it is rejected, because the spec has no
-//! disjunction to lower it onto and a wrong answer is worse than a refusal.
+//! expected. There is no silent subset: what is not supported is rejected
+//! rather than quietly approximated, because a wrong answer is worse than a
+//! refusal.
+//!
+//! `WHERE a = 1 OR b = 2` **is** supported on a single-table read, and so is
+//! `HAVING count(*) > 5 OR count(*) < 2` — on a single table, a join and a
+//! chain alike. Both lower to `Expr::Or`.
+//!
+//! **Parentheses nest a `WHERE`** on a single table:
+//! `WHERE (a = 1 OR b = 2) AND c = 3` is a tree, and it lands in
+//! `QuerySpec::predicate` rather than in either flat list. A bracket that
+//! nests nothing — `WHERE (a = 1)` — produces the spec the unbracketed form
+//! does, byte for byte, because the parser flattens rather than switching on
+//! having seen a `(`.
+//!
+//! An **unbracketed mixture is still refused**. `a AND b OR c` means
+//! `(a AND b) OR c` in SQL and reads as `a AND (b OR c)` to about half of
+//! everyone, and that has not changed; what has changed is that the reader can
+//! now write the brackets they mean, so the refusal names the fix instead of
+//! being the end of the road.
+//!
+//! A **`HAVING` takes no brackets.** It is all `AND` or all `OR`, and a
+//! mixture is refused bracketed or not: the group-condition lists have no
+//! nested form to lower, and nobody has written a query that wanted one.
+//!
+//! A **join's `WHERE`** takes `AND` only, brackets or no brackets. Its
+//! conditions are split by side so each scan is narrowed before the hash
+//! join runs, and neither a disjunction nor a tree spanning both sides can be
+//! split that way.
 //!
 //! # Why hand-written
 //!
@@ -109,7 +194,7 @@
 
 use crate::{
     AggregateSpec, ChainInputSpec, ChainOnSpec, ChainSpec, ComputeSpec, FilterSpec, JoinSpec,
-    QuerySpec, SortSpec, WindowSpec,
+    PredicateSpec, QuerySpec, SortSpec, WindowSpec,
 };
 use slate_schema::TableDef;
 use slate_tuple::ValueType;
@@ -284,6 +369,19 @@ fn resolve_window_slots(spec: &mut QuerySpec, table: &TableDef) {
     for key in &mut spec.sort {
         fix(&mut key.column);
     }
+}
+
+/// A parsed `WHERE`, in whichever of the spec's three shapes holds it.
+///
+/// Flat by preference: `filters` for an all-`AND` clause, `any_of` for an
+/// all-`OR` one, and `predicate` only for a tree neither can hold. The parser
+/// always builds the tree and then flattens, rather than taking a mode from
+/// whether it saw a `(`, because `WHERE (year >= 1970)` is a flat clause with
+/// a redundant bracket and must produce the spec `WHERE year >= 1970` does.
+enum Where {
+    All(Vec<FilterSpec>),
+    Any(Vec<FilterSpec>),
+    Nested(PredicateSpec),
 }
 
 #[derive(Debug)]
@@ -1131,7 +1229,11 @@ impl Parser<'_> {
         // `SELECT title, count(*) ... GROUP BY author_id` and quietly drop the
         // title.
         if self.eat("where") {
-            spec.filters = self.conditions(&table)?;
+            match self.where_clause(&table)? {
+                Where::All(conditions) => spec.filters = conditions,
+                Where::Any(conditions) => spec.any_of = conditions,
+                Where::Nested(tree) => spec.predicate = Some(tree),
+            }
         }
         if distinct {
             if self.peek_word().as_deref() == Some("group") {
@@ -1296,20 +1398,30 @@ impl Parser<'_> {
             // `HAVING count(*) > 100` names an aggregate by what the query
             // *computes* — the same rule ORDER BY follows — and `spec.aggregates`
             // is not populated until the loop above has run.
+            let mut any = false;
+            let mut terms = Vec::new();
             loop {
-                spec.having.push(self.having_condition(&spec, &table)?);
+                terms.push(self.having_condition(&spec, &table)?);
+                let at = self.at();
                 if self.eat("and") {
+                    if any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
                     continue;
                 }
-                if self.peek_word().as_deref() == Some("or") {
-                    return Err(SqlError {
-                        message: "OR is not supported in HAVING, for the reason it is not \
-                                  supported in WHERE"
-                            .to_owned(),
-                        at: self.at(),
-                    });
+                if self.eat("or") {
+                    if terms.len() > 1 && !any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
+                    any = true;
+                    continue;
                 }
                 break;
+            }
+            if any {
+                spec.having_any_of = terms;
+            } else {
+                spec.having = terms;
             }
         }
         if self.eat("order") {
@@ -2200,21 +2312,140 @@ impl Parser<'_> {
         })
     }
 
-    fn conditions(&mut self, table: &TableDef) -> Result<Vec<FilterSpec>, SqlError> {
-        let mut out = vec![self.condition(table)?];
-        loop {
-            if self.eat("and") {
-                out.push(self.condition(table)?);
-            } else if self.peek_word().as_deref() == Some("or") {
-                return Err(SqlError {
-                    message: "OR is not supported: the query spec ANDs its conditions, and \
-                              lowering an OR onto it would answer a different question"
-                        .to_owned(),
-                    at: self.at(),
-                });
-            } else {
-                return Ok(out);
+    /// Everything after `WHERE`, on a single table.
+    ///
+    /// A join's `WHERE` does not come here: its conditions are split by side
+    /// so each scan is narrowed before the hash join runs, and neither a
+    /// disjunction nor a nested predicate can be split that way.
+    fn where_clause(&mut self, table: &TableDef) -> Result<Where, SqlError> {
+        let tree = self.disjunction(table)?;
+        Ok(Self::flatten(tree))
+    }
+
+    /// `conjunction (OR conjunction)*`.
+    ///
+    /// Refuses an unparenthesized mixture, which is the position
+    /// `ledger/2026-09-25-the-disjunction-the-kernel-always-had.md` took when
+    /// there were no parentheses at all: `a AND b OR c` means `(a AND b) OR c`
+    /// in SQL and reads as `a AND (b OR c)` to about half of everyone. The
+    /// refusal is *more* defensible now rather than less, because the reader
+    /// can write the brackets and the message says to.
+    fn disjunction(&mut self, table: &TableDef) -> Result<PredicateSpec, SqlError> {
+        let (first, bare_and) = self.conjunction(table)?;
+        let mut parts = vec![first];
+        let mut bare = vec![bare_and];
+        while self.peek_word().as_deref() == Some("or") {
+            let at = self.at();
+            self.i += 1;
+            let (part, bare_and) = self.conjunction(table)?;
+            if bare.iter().any(|b| *b) || bare_and {
+                return Err(Self::mixed_connectives(at));
             }
+            parts.push(part);
+            bare.push(bare_and);
+        }
+        Ok(if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            PredicateSpec::Any(parts)
+        })
+    }
+
+    /// `primary (AND primary)*`, and whether **this call** joined more than
+    /// one part — that is, whether it is a conjunction the reader wrote with
+    /// no brackets around it.
+    ///
+    /// That flag is the whole of the mixing check, and where it comes from
+    /// matters. `a AND b OR c` reaches [`Self::disjunction`] as one call that
+    /// combined two parts; `(a AND b) OR c` reaches it as one call that
+    /// combined *nothing*, because the `AND` was joined by the recursive call
+    /// inside the brackets and this one saw a single `primary`. The two build
+    /// identical trees and only that difference tells them apart.
+    ///
+    /// A first version also had [`Self::primary`] report whether it had
+    /// consumed brackets, which reads like the natural way to know. It is
+    /// dead: the fact that a bracketed part was parsed by a *different* call
+    /// already carries it, and nothing ever looked at the flag.
+    /// `scripts/mutate.py` found it by flipping the value and watching nothing
+    /// fail — the third cause its message lists, redundant code rather than a
+    /// missing test.
+    ///
+    /// Keeping parenthesisation a parse-time fact rather than a `Group` node
+    /// is what makes `((a))` and `a` produce the same spec, as they must.
+    fn conjunction(&mut self, table: &TableDef) -> Result<(PredicateSpec, bool), SqlError> {
+        let mut parts = vec![self.primary(table)?];
+        while self.peek_word().as_deref() == Some("and") {
+            self.i += 1;
+            parts.push(self.primary(table)?);
+        }
+        if parts.len() == 1 {
+            return Ok((parts.remove(0), false));
+        }
+        Ok((PredicateSpec::All(parts), true))
+    }
+
+    /// `'(' disjunction ')'` or one condition.
+    fn primary(&mut self, table: &TableDef) -> Result<PredicateSpec, SqlError> {
+        if self.eat_symbol("(") {
+            let inner = self.disjunction(table)?;
+            self.expect_symbol(")").map_err(|mut e| {
+                // Named, because the reader who opened a bracket and did not
+                // close it has usually lost track of where — and `expected
+                // `)`, found end of input` points at the end of the statement
+                // rather than at the clause that needs one.
+                e.message = format!("{} (an unclosed `(` in the WHERE)", e.message);
+                e
+            })?;
+            return Ok(inner);
+        }
+        Ok(PredicateSpec::Of(self.condition(table)?))
+    }
+
+    /// The flattest shape that holds this tree without losing anything.
+    fn flatten(tree: PredicateSpec) -> Where {
+        /// Every part, if all of them are leaves.
+        fn leaves(parts: &[PredicateSpec]) -> Option<Vec<FilterSpec>> {
+            parts
+                .iter()
+                .map(|part| match part {
+                    PredicateSpec::Of(filter) => Some(filter.clone()),
+                    _ => None,
+                })
+                .collect()
+        }
+        match tree {
+            PredicateSpec::Of(filter) => Where::All(vec![filter]),
+            PredicateSpec::All(ref parts) => match leaves(parts) {
+                Some(flat) => Where::All(flat),
+                None => Where::Nested(tree),
+            },
+            PredicateSpec::Any(ref parts) => match leaves(parts) {
+                Some(flat) => Where::Any(flat),
+                None => Where::Nested(tree),
+            },
+        }
+    }
+
+    /// One clause cannot be part `AND` and part `OR`.
+    fn mixed_connectives(at: usize) -> SqlError {
+        Self::mixed_connectives_in("WHERE", at)
+    }
+
+    /// The same refusal, naming the clause it came from.
+    ///
+    /// `WHERE` and `HAVING` both take either connective and neither takes a
+    /// mixture, so the message is one string with the clause substituted
+    /// rather than two that can drift apart.
+    fn mixed_connectives_in(clause: &str, at: usize) -> SqlError {
+        SqlError {
+            message: format!(
+                "AND and OR cannot be mixed in one {clause} without parentheses: \
+                 `a AND b OR c` means `(a AND b) OR c` in SQL and reads as \
+                 `a AND (b OR c)` to about half of everyone. Write the brackets \
+                 you mean — both readings are supported — or use one connective \
+                 throughout."
+            ),
+            at,
         }
     }
 
@@ -2437,7 +2668,11 @@ impl Parser<'_> {
         };
 
         if self.eat("where") {
-            spec.filters = self.conditions(&inner)?;
+            match self.where_clause(&inner)? {
+                Where::All(conditions) => spec.filters = conditions,
+                Where::Any(conditions) => spec.any_of = conditions,
+                Where::Nested(tree) => spec.predicate = Some(tree),
+            }
         }
         for clause in ["group", "order", "limit", "offset", "having", "join"] {
             if self.peek_word().as_deref() == Some(clause) {
@@ -2609,6 +2844,10 @@ impl Parser<'_> {
         let mut aggregates: Vec<AggregateSpec> = Vec::new();
         let mut sort: Vec<SortSpec> = Vec::new();
         let mut having: Vec<FilterSpec> = Vec::new();
+        // Whether that list is ORed rather than ANDed. One flag beside the
+        // list rather than two lists, because the parser fills one and the
+        // spec decides which field it lands in — see the assignment below.
+        let mut having_any = false;
         let mut group_by: Vec<u32> = Vec::new();
         let mut limit: Option<u64> = None;
         let mut offset = 0;
@@ -2864,16 +3103,19 @@ impl Parser<'_> {
                     value,
                     ..FilterSpec::default()
                 });
+                let at = self.at();
                 if self.eat("and") {
+                    if having_any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
                     continue;
                 }
-                if self.peek_word().as_deref() == Some("or") {
-                    return Err(SqlError {
-                        message: "OR is not supported in HAVING, for the reason it is not \
-                                  supported in WHERE"
-                            .to_owned(),
-                        at: self.at(),
-                    });
+                if self.eat("or") {
+                    if having.len() > 1 && !having_any {
+                        return Err(Self::mixed_connectives_in("HAVING", at));
+                    }
+                    having_any = true;
+                    continue;
                 }
                 break;
             }
@@ -2951,7 +3193,16 @@ impl Parser<'_> {
                 right_key: *right_key,
                 left_where: left_where.clone(),
                 right_where: right_where.clone(),
-                having,
+                having: if having_any {
+                    Vec::new()
+                } else {
+                    having.clone()
+                },
+                having_any_of: if having_any {
+                    having.clone()
+                } else {
+                    Vec::new()
+                },
                 compute,
                 group_by,
                 aggregates,
@@ -2986,7 +3237,12 @@ impl Parser<'_> {
         Ok(Statement::Chain(ChainSpec {
             inputs: spec_inputs,
             compute,
-            having,
+            having: if having_any {
+                Vec::new()
+            } else {
+                having.clone()
+            },
+            having_any_of: if having_any { having } else { Vec::new() },
             group_by,
             aggregates,
             sort,
@@ -3397,6 +3653,175 @@ impl SelectItem {
             | Self::Aggregate { at, .. }
             | Self::Call { at, .. }
             | Self::Window { at, .. } => *at,
+        }
+    }
+}
+
+/// The module's grammar block, checked against the parser's own tables.
+///
+/// # Why this is here rather than in `tests/`
+///
+/// It reads private constants — `TIME_FUNCTIONS`, `AGGREGATES` — and the
+/// module's own source text. An integration test can do neither without
+/// exporting them, and exporting a table so a test can see it makes the table
+/// part of the crate's surface for no other reason.
+///
+/// # Why it exists at all
+///
+/// Every list in that block had gone stale. `WHERE <cond> (AND <cond>)*` was
+/// wrong for one commit, from the afternoon `OR` landed until the audit that
+/// wrote this; the call list was missing `month_start` and `year_start` for
+/// ten days, added by
+/// `ledger/2026-09-15-a-month-is-not-a-number-of-seconds.md` and
+/// `ledger/2026-09-15-the-year-there-was-no-year-to-key-on.md`, and never
+/// written down here. Both are the same failure: a name list maintained by
+/// whoever remembers, which `CLAUDE.md` names as the thing never to ask a
+/// human to keep in step.
+///
+/// What this cannot check is the *shape* of the productions — that
+/// `[ LIMIT <int> ]` really is optional and really takes an integer. Those
+/// have cases in `tests/front_end.rs` instead, one per line of the block.
+#[cfg(test)]
+mod grammar {
+    use super::{AGGREGATES, TIME_FUNCTIONS};
+
+    /// This file's own text, so the doc comment can be read as data.
+    const SOURCE: &str = include_str!("sql.rs");
+
+    /// The backticked names in the sentence that starts with `marker`.
+    ///
+    /// Bounded by the first full stop rather than by a following phrase. The
+    /// first version of this looked for the sentence that comes *after* the
+    /// list, and that sentence was wrapped across two `//!` lines, so the
+    /// search ran past the end of the doc comment and collected every
+    /// backtick in the file — 800 of them, including this function's own
+    /// source. It failed, loudly, which is the only reason it is not still
+    /// there; a delimiter that can silently over-match is a delimiter to
+    /// replace rather than to fix.
+    fn documented(marker: &str) -> Vec<String> {
+        let start = SOURCE
+            .find(marker)
+            .unwrap_or_else(|| panic!("the prose beginning {marker:?} has been reworded"));
+        let rest = &SOURCE[start + marker.len()..];
+        let end = rest
+            .find('.')
+            .expect("the sentence listing these names has no full stop to end it");
+        let sentence = rest[..end].replace("//!", " ");
+        assert!(
+            !sentence.contains("```"),
+            "{marker:?} ran into a code fence, so the full stop bounding it has gone"
+        );
+        backticked(&sentence)
+    }
+
+    fn backticked(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = text;
+        while let Some(open) = rest.find('`') {
+            rest = &rest[open + 1..];
+            let Some(close) = rest.find('`') else { break };
+            out.push(rest[..close].to_string());
+            rest = &rest[close + 1..];
+        }
+        out
+    }
+
+    #[test]
+    fn the_grammar_block_names_every_computed_call() {
+        let mut documented = documented("//! The calls are ");
+        documented.sort();
+        let mut actual: Vec<String> = TIME_FUNCTIONS.iter().map(|n| (*n).to_string()).collect();
+        actual.sort();
+        assert_eq!(
+            documented, actual,
+            "the prose's call list and TIME_FUNCTIONS disagree; the prose is the one a \
+             reader believes, and it has been wrong before"
+        );
+    }
+
+    #[test]
+    fn the_grammar_block_names_every_aggregate() {
+        // The aggregate list is new. Before it, the documentation named
+        // `count`, `max`, `sum` and `avg` in passing examples and never
+        // mentioned `min` at all — which is how this test found its first
+        // defect: a reader working from the module documentation had no way
+        // to learn that `min` exists.
+        let mut documented = documented("//! The aggregates are ");
+        documented.sort();
+        let mut actual: Vec<String> = AGGREGATES.iter().map(|n| (*n).to_string()).collect();
+        actual.sort();
+        assert_eq!(
+            documented, actual,
+            "the prose's aggregate list and AGGREGATES disagree"
+        );
+    }
+
+    #[test]
+    fn the_where_and_having_lines_admit_or() {
+        // The specific staleness this module shipped with for a commit: `OR`
+        // landed in both clauses and the block still read `(AND <cond>)*`. A
+        // reader takes the block as the specification, so it said the feature
+        // did not exist.
+        let block = SOURCE
+            .split("//! ```text")
+            .nth(1)
+            .and_then(|rest| rest.split("//! ```").next())
+            .expect("the grammar block is no longer a ```text fence");
+        // The `WHERE` line delegates to `<predicate>`, so the connectives are
+        // on that production rather than on the clause. Checked by the text
+        // that introduces each rather than by position, because a block whose
+        // lines moved is exactly the block this test is for.
+        for (what, marker) in [
+            ("the predicate production", "<predicate> :="),
+            ("HAVING", "[ HAVING "),
+        ] {
+            let start = block
+                .lines()
+                .position(|line| line.contains(marker))
+                .unwrap_or_else(|| panic!("no {what} line in the grammar block"));
+            // Two lines, because `<predicate>` wraps: the connectives may be
+            // on the continuation.
+            let text: String = block
+                .lines()
+                .skip(start)
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                text.contains("OR"),
+                "{what} does not mention OR, which the parser accepts: {text}"
+            );
+            assert!(text.contains("AND"), "{what} does not mention AND: {text}");
+        }
+        // And the `WHERE` line still reaches the production, rather than
+        // having quietly grown its own connectives back.
+        let where_line = block
+            .lines()
+            .find(|line| line.contains("[ WHERE "))
+            .expect("no WHERE line in the grammar block");
+        assert!(
+            where_line.contains("<predicate>"),
+            "the WHERE line should delegate to <predicate>: {where_line}"
+        );
+    }
+
+    #[test]
+    fn the_refused_keywords_are_all_named() {
+        // A refusal is a feature here — `ledger/2026-09-18-subqueries-exists-
+        // and-union.md` argues the whole point of refusing is that the reader
+        // is told — and a refusal the documentation does not mention is a
+        // refusal the reader meets as a surprise.
+        let doc: String = SOURCE
+            .lines()
+            .take_while(|line| line.starts_with("//!") || line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in ["UNION", "INTERSECT", "EXCEPT", "EXISTS", "NOT EXISTS"] {
+            assert!(
+                doc.contains(name),
+                "`{name}` is refused by name in this parser and the module documentation \
+                 does not say so"
+            );
         }
     }
 }

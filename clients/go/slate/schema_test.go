@@ -140,6 +140,40 @@ func TestTheFingerprintMatchesTheServers(t *testing.T) {
 	}
 }
 
+// The two properties a column can carry beyond its name and type, pinned.
+//
+// `docs` above has neither a decimal nor an array, so this port could drop the
+// scale and the element type from its hash and that test would still pass —
+// which is exactly what
+// `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md` recorded as
+// the gap: four implementations each computing the element type's contribution
+// separately, compared only by the live suites, and only for the tables those
+// suites exercise.
+//
+// One table with both, because a column is never both at once and the two arms
+// are independent: dropping either changes this number and neither changes
+// `docs`.
+func TestTheScaleAndTheElementTypeArePinnedToo(t *testing.T) {
+	// shelves {id u64, tags array<string>, price decimal(2)}, primary key (id).
+	//
+	//	>>> from slate.schema import fingerprint_of
+	//	>>> hex(fingerprint_of(SHELVES))
+	//	'0xdf013a5ccb6808c0'
+	const canonical uint64 = 0xdf01_3a5c_cb68_08c0
+	shelves := slate.TableDef{
+		Name: "shelves",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "tags", Type: slate.TypeArray, Element: slate.TypeString},
+			{Name: "price", Type: slate.TypeDecimal, Scale: 2},
+		},
+		PrimaryKey: []string{"id"},
+	}
+	if got := shelves.Fingerprint(); got != canonical {
+		t.Errorf("fingerprint = %#016x, the canonical form is %#016x", got, canonical)
+	}
+}
+
 // A key naming a column the declaration does not have must not collide with a
 // correct declaration whose key is the first column.
 //
@@ -320,5 +354,40 @@ func TestADecimalsScaleIsPartOfTheFingerprint(t *testing.T) {
 	}
 	if priced(2).Fingerprint() == priced(4).Fingerprint() {
 		t.Error("two scales hashed alike, which is the whole point")
+	}
+}
+
+// AsView renames a declaration and copies what it shares.
+//
+// The copy is the point: `TableDef` holds slices, and a view built by
+// reference would let an append to either declaration's `Columns` be seen by
+// the other — which produces a wrong ordinal, and a silently mis-decoded row
+// rather than an error.
+func TestAsViewCopiesWhatItShares(t *testing.T) {
+	base := docsTable()
+	view := base.AsView("recent_docs")
+
+	if view.Name != "recent_docs" {
+		t.Fatalf("name = %q, want recent_docs", view.Name)
+	}
+	if len(view.Columns) != len(base.Columns) {
+		t.Fatalf("columns = %d, want %d", len(view.Columns), len(base.Columns))
+	}
+	for i := range base.Columns {
+		if view.Columns[i] != base.Columns[i] {
+			t.Fatalf("column %d = %+v, want %+v", i, view.Columns[i], base.Columns[i])
+		}
+		got, ok := view.Ordinal(base.Columns[i].Name)
+		if !ok || int(got) != i {
+			t.Fatalf("ordinal of %q = %d %v, want %d true", base.Columns[i].Name, got, ok, i)
+		}
+	}
+
+	// A view may not narrow columns, so its fingerprint over the same columns
+	// is the base table's claim under another name — the server checks it that
+	// way, and a divergence here would be a claim the server rejects.
+	view.Columns[0].Name = "mutated"
+	if base.Columns[0].Name == "mutated" {
+		t.Fatal("writing the view's column changed the base table's: the slice is shared")
 	}
 }

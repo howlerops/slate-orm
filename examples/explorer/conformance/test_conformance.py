@@ -155,6 +155,60 @@ def pairs() -> list[tuple[str, bool, str]]:
     return checks
 
 
+def silent() -> list[tuple[str, bool, str]]:
+    """A case that produced neither an agreement nor a finding is a finding.
+
+    The gap this closes: `tally` defines passing as "not named by a finding",
+    so a case the loop skipped counted as a pass and *raised* the reported
+    number. Four checks, because the wrong fix has three tempting shapes — a
+    silent case that is not reported, one reported and still counted as
+    passing, and a real pass reported as silent.
+    """
+    names = ["alpha", "beta", "gamma"]
+    checks = []
+
+    skipped = conformance.silent_cases(
+        names, [conformance.Finding("alpha", ["FAIL  alpha: nope"])], {"beta": "{}"}
+    )
+    checks.append((
+        "a case with neither an agreement nor a finding is reported",
+        [f.case for f in skipped] == ["gamma"],
+        f"expected gamma alone, got {[f.case for f in skipped]}",
+    ))
+    checks.append((
+        "and it says it was skipped rather than that it failed",
+        bool(skipped) and any("skipped, not passed" in line for line in skipped[0].lines),
+        f"the message does not say so: {skipped and skipped[0].lines}",
+    ))
+    checks.append((
+        "so the tally stops counting it as a pass",
+        # One case failed, one agreed, one was silent: two failures and one
+        # pass, where before this the silent one made it two passes.
+        conformance.tally(
+            len(names),
+            [conformance.Finding("alpha", ["FAIL  alpha: nope"]), *skipped],
+        ) == (1, 2),
+        f"got {conformance.tally(len(names), [conformance.Finding('alpha', ['x']), *skipped])}",
+    ))
+    checks.append((
+        "and a run where every case reached a verdict reports nothing",
+        conformance.silent_cases(
+            names,
+            [conformance.Finding("alpha", ["FAIL  alpha: nope"])],
+            {"beta": "{}", "gamma": "{}"},
+        ) == [],
+        "a case that agreed was reported as silent",
+    ))
+    checks.append((
+        "a pair finding, which is about no case, does not fill a case's slot",
+        [f.case for f in conformance.silent_cases(
+            names, [conformance.Finding(None, ["FAIL  a pair"])], {}
+        )] == names,
+        "a finding about no case was read as a verdict for one",
+    ))
+    return checks
+
+
 def main() -> int:
     failed = 0
     for name, (cases, findings), expected in CASES:
@@ -165,13 +219,13 @@ def main() -> int:
         if not ok:
             print(f"        expected {expected}, got {got}")
 
-    for name, ok, why in rosters() + pairs():
+    for name, ok, why in rosters() + pairs() + silent():
         failed += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  {name}")
         if not ok:
             print(f"        {why}")
 
-    total = len(CASES) + len(rosters()) + len(pairs())
+    total = len(CASES) + len(rosters()) + len(pairs()) + len(silent())
     print()
     print(f"{total - failed} passed, {failed} failed")
     return 1 if failed else 0

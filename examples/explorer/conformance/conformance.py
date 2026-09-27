@@ -107,6 +107,32 @@ CASES: list[tuple[str, str, Any, str]] = [
           {"op": "lt", "column": 3, "value": {"i64": "1990"}}]},
       "sort": [{"column": 0, "direction": "asc"}]}, "app"),
 
+    # A disjunction with nothing wrapped around it. `a negated disjunction`
+    # below already reaches every adapter's `or` arm, so this is not the first
+    # — the caveat that claimed it was is withdrawn in
+    # `ledger/2026-09-25-every-client-sends-a-disjunction.md`. What it adds is
+    # an answer that is neither empty nor everything: this is `NOT (1960 <=
+    # year < 1990)`, the complement of `a conjunction` above over the same
+    # column, and it admits three of the eleven books. An adapter that read
+    # `or` as `and` returns nothing here and disagrees with the other two.
+    #
+    # Considered and rejected: a `MUST_DIFFER` pair against `a conjunction`.
+    # It would have been decoration. The two are complements, so an adapter
+    # that ANDed this one returns *nothing*, which differs from eight books
+    # perfectly well — the pair would pass while the bug was live. Pairing
+    # instead on the same two arms would need the disjunction to be
+    # `year >= 1960 OR year < 1990`, a tautology whose answer is the whole
+    # table and which therefore cannot tell a working `or` from a filter
+    # dropped on the floor. The charter above is right that this list is for
+    # dropped fields; a connective is caught by three adapters disagreeing,
+    # which is the check that already exists.
+    ("a disjunction", "/api/query",
+     {"table": "books",
+      "filter": {"op": "or", "parts": [
+          {"op": "lt", "column": 3, "value": {"i64": "1960"}},
+          {"op": "ge", "column": 3, "value": {"i64": "1990"}}]},
+      "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+
     ("a negated disjunction", "/api/query",
      {"table": "books",
       "filter": {"op": "not", "part": {"op": "or", "parts": [
@@ -800,6 +826,7 @@ MUST_DIFFER: list[tuple[str, str]] = [
     # nothing refuses a query whose hint went missing — a hint is advice, so
     # `EXPECTED_REFUSALS` cannot cover this either.
     ("a search for 'the' by index", "a search for 'the' by scan"),
+
     ("a search for 'the games' by index", "a search for 'the games' by scan"),
 ]
 
@@ -865,6 +892,39 @@ def tally(cases: int, findings: list[Finding]) -> tuple[int, int]:
     """
     broken = {f.case for f in findings if f.case is not None}
     return cases - len(broken), len(findings)
+
+
+def silent_cases(
+    names: list[str], findings: list[Finding], agreed_by_name: dict[str, str]
+) -> list[Finding]:
+    """Every case that produced neither an agreement nor a finding.
+
+    `tally` defines passing as "not named by a finding", which makes a case
+    that never ran indistinguishable from one that passed — a `continue` in the
+    wrong place would take a case out of the comparison and *raise* the passed
+    count's credibility rather than lowering it. That is the residual
+    `ledger/2026-09-21-the-conformance-runners-own-arithmetic.md` recorded and
+    this closes.
+
+    Positive rather than by subtraction inside `tally`: a silent case becomes a
+    finding, so it is named in the output the way every other failure is, and
+    the arithmetic that was the original defect stays untouched. Subtracting it
+    inside `tally` would make the count right and the report silent, which is
+    the same class of quiet as the bug.
+
+    The `case` is set, so a silent case costs a passing case — unlike
+    `must_differ_findings`, whose findings are about a *pair* and belong to
+    neither.
+    """
+    verdict = {f.case for f in findings if f.case is not None} | set(agreed_by_name)
+    return [
+        Finding(name, [
+            f"FAIL  {name}: no adapter comparison ran for this case, and it "
+            f"produced no finding — it was skipped, not passed"
+        ])
+        for name in names
+        if name not in verdict
+    ]
 
 
 def must_differ_findings(agreed_by_name: dict[str, str]) -> list[Finding]:
@@ -962,6 +1022,9 @@ def main() -> int:
             *(f"    {sdk:7} {text[:400]}" for sdk, text in rendered.items()),
         ]))
 
+    # Before `must_differ_findings`, whose findings are about no case and so
+    # would not fill a silent case's slot.
+    findings.extend(silent_cases([c[0] for c in CASES], findings, agreed_by_name))
     findings.extend(must_differ_findings(agreed_by_name))
 
     print()

@@ -405,6 +405,45 @@ test("grouping a chain by its computed value", async () => {
   }
 });
 
+// And *ordering* those groups by the chain's computed value, which
+// `ledger/2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md`
+// recorded as untested from any client.
+//
+// Descending, deliberately. The kernel's own order is ascending by encoded
+// key, so an ascending assertion passes against a server that dropped the
+// sort entirely. Descending disagrees with the default, so the answer changes
+// if the sort does not arrive; the ascending run below then proves the
+// descending one was the sort talking and not the fixture.
+test("ordering a chain's groups by its computed value", async () => {
+  const session = await library();
+  const b = newJoin();
+  const authors = b.add({ table: "authors" });
+  const books = b.add({ table: "books", on: [{ earlier: at(authors, 0), own: 1 }] });
+  b.add({ table: "books", on: [{ earlier: at(books, 0), own: 0 }] });
+  const chain = {
+    ...b.query(),
+    compute: [mul(div(ref(at(books, 3)), lit(int(10))), lit(int(10)))],
+  };
+
+  const decades = async (direction: "asc" | "desc") => {
+    const groups = await session
+      .aggregateJoin(chain, {
+        groupBy: [joinComputed(0)],
+        aggregates: [count()],
+        sort: [{ column: groupKey(0), direction }],
+      })
+      .collect();
+    return groups.map((group) => {
+      const decade = group.key[0];
+      assert.ok(decade?.kind === "int", `the key is ${decade?.kind}`);
+      return decade.value;
+    });
+  };
+
+  assert.deepEqual(await decades("desc"), [2010n, 2000n, 1990n]);
+  assert.deepEqual(await decades("asc"), [1990n, 2000n, 2010n]);
+});
+
 test("explain join describes every input", async () => {
   const session = await library();
   const plan = await session.explainJoin(authorsBooks());

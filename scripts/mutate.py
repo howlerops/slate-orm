@@ -5,9 +5,11 @@
 thing, confirm a *named* test fails, restore, re-verify. The discipline is
 sound and doing it by hand has a failure mode that looks exactly like success.
 
-**Five ways a mutation run lies. The first three were met by hand in one
-session; the fourth was found by pointing this script at itself; the fifth was
-this script's own fault:**
+**Six ways a mutation run lies. The first three were met by hand in one
+session; the fourth was found by pointing this script at itself; the fifth
+was this script's own fault; the sixth is `go test` doing what it is
+documented to do.** (It said *five* while listing six for four days, which
+is the smallest possible version of the staleness this file argues against.)
 
 1. **The patch does not apply.** An anchor string moves under `cargo fmt` and
    the replacement silently matches nothing. The suite then runs against
@@ -32,6 +34,14 @@ this script's own fault:**
    read as a broken test rather than a dirty tree. That is the first lie again
    with a longer fuse: a suite running against code nobody meant to be there.
 
+6. **A cached result is replayed.** `go test` caches a package's result on
+   its *Go* inputs. `clients/go` exercises a Rust server over a socket, so a
+   mutation in `crates/` changes nothing the cache hashes: the run prints
+   `ok <pkg> (cached)`, replays the old `--- PASS` lines, and the mutation
+   scores as a survivor. Same shape as the fourth — the wrong code judged —
+   and not a bug in `go`, which is why `-count=1` belongs in the command and
+   the `go` dialect refuses a cached line rather than reading it.
+
 Each is caught here rather than trusted to a reader's attention:
 
 - the old text must occur **exactly once**, and the count is reported when not;
@@ -50,6 +60,19 @@ Each is caught here rather than trusted to a reader's attention:
   command line somebody happened to quote in a ledger entry, and none had. A
   defect in this script is only as expensive as the runs it silently ruined,
   and that number was unknowable.
+
+**And one lie nothing here can catch, which is caught beside it instead.** Every
+protection above is about a pattern matching too *little*: the exact-once rule
+watches the anchor, the reported-suites count watches the report pattern, and a
+failure pattern that misses a real failure eventually shows up as a survivor,
+which exits non-zero and demands an explanation. A failure pattern matching a
+line that is *not* a failure is the mirror image and is silent — every mutation
+then looks caught, the run exits 0, and the session writes up a test that
+defends nothing. Nothing in this file reads the failure patterns at all, so
+`scripts/test_mutate.py` holds a corpus of real output from all five runners and
+checks every pattern against every dialect's clean run. Two realistic
+over-matches — reading libtest's `... ok` as `... FAILED`, and TAP's `ok 1 -` as
+`not ok 1 -` — were written and caught by it.
 
 **A surviving mutation exits non-zero.** That is the point: a survival is a
 finding — a missing test, or code that is redundant — and it should interrupt
@@ -216,14 +239,31 @@ DIALECTS = {
     ),
     # `node --test`'s TAP output, which `clients/typescript` uses:
     # `not ok 3 - the name` per failure, and a closing `# pass N` / `# fail N`.
+    # The `# fail` line is the report marker rather than `# pass` because a run
+    # where everything fails still prints it.
     #
-    # The failure pattern skips the per-file wrapper line, which node emits as
-    # `not ok 1 - test/foo.test.ts` alongside the real case — a name ending in
-    # `.ts` is the file, not a test, and counting it would report a failure
-    # nobody wrote. The `# fail` line is the report marker rather than `# pass`
-    # because a run where everything fails still prints it.
+    # This used to carry `(?!.*\.ts$)` to skip a "per-file wrapper line",
+    # believed to be emitted beside the real case. Both halves of that were
+    # wrong, and the exclusion was a hole in the shape of the pytest `ERROR`
+    # one. Observed on node v22.22.2, two files, one passing case and one
+    # failing case:
+    #
+    #   ok 1 - a named case
+    #   not ok 2 - a failing case
+    #
+    # No wrapper. Add a third file that throws while loading and it appears:
+    #
+    #   not ok 3 - c.test.js
+    #
+    # So the wrapper is emitted *only* for a file that could not run, and it is
+    # the only thing that file says. Excluding it is therefore exactly backwards
+    # — with no other failure in the run, `# fail 1` still matches the report
+    # pattern, no failure name is found, and a mutation that broke a test file
+    # outright scores as a **survivor**. And the exclusion never fired here
+    # anyway: `package.json` runs `node --test dist-test/test/*.test.js`, so
+    # the wrapper ends in `.js`. A guard that was both wrong and dead.
     "node": (
-        re.compile(r"^not ok \d+ - (?!.*\.ts$)(.+?)\s*$", re.MULTILINE),
+        re.compile(r"^not ok \d+ - (.+?)\s*$", re.MULTILINE),
         re.compile(r"^# fail \d+\s*$", re.MULTILINE),
     ),
     # `go test`, which `clients/go` uses: `--- FAIL: TestName (0.00s)` per
@@ -248,10 +288,24 @@ DIALECTS = {
     # not compile scored as a clean run and read as a survivor, which is the
     # same lie the pytest `ERROR` hole told, met in the same session. `[setup
     # failed]` is the other shape `go test` prints in that position.
+    #
+    # `(cached)` is the sixth lie in the docstring, and the only one that is
+    # nobody's bug: `go test` replays a cached result — the `--- PASS` lines
+    # and their original durations — for a package whose *Go* inputs have not
+    # changed. `clients/go` builds `slate-serverd` out of the Rust tree and
+    # talks to it over a socket, so every mutation this repository runs
+    # through the `go` dialect is invisible to that cache, and a cached replay
+    # scored a caught mutation as a survivor. Met on a chain's grouped sort:
+    # `if !grouping.sort.is_empty()` mutated to `if false`, `ok ... (cached)`,
+    # SURVIVED — and `-count=1` on the same command failed two named tests.
+    # Excluded rather than accepted, so the run reports NOTHING RAN and says
+    # to add `-count=1` instead of quietly scoring a replay.
     "go": (
         re.compile(r"^\s*--- FAIL: (\S+)", re.MULTILINE),
         re.compile(
-            r"^(?:ok|FAIL)[ \t]+\S+(?![^\n]*\[(?:build|setup) failed\])", re.MULTILINE
+            r"^(?:ok|FAIL)[ \t]+\S+"
+            r"(?![^\n]*(?:\[(?:build|setup) failed\]|\(cached\)))",
+            re.MULTILINE,
         ),
     ),
 }
@@ -425,6 +479,51 @@ def run(command: list[str], dialect: str) -> tuple[list[str], int, str, int]:
         output,
         finished.returncode,
     )
+
+
+def restore_report(
+    failures: list[str], reported: int, status: int
+) -> tuple[str, bool | None]:
+    """What to print after the restore, and whether the tree came back clean.
+
+    Three outcomes and not two, which is the whole of this function. The
+    version before it printed `the tree did not come back clean: []` for all
+    three — and an empty list after that sentence is the worst of both
+    readings: it asserts a dirty tree and shows no evidence of one. Two of the
+    three actually mean *I could not tell*, which is a different thing to hand
+    somebody deciding whether to trust the results above it.
+
+    `None` rather than `False` for those two, in the record as well as in the
+    prose, because "could not be scored" and "came back dirty" are different
+    facts about a run and a later reader should not have to guess which one a
+    `false` meant.
+
+    Every outcome but the first is still a problem and still exits non-zero:
+    the point is to say *why*, not to soften it.
+
+    Split out of `apply` so the two unreadable arms can be tested. Reaching
+    them through `apply` needs a command that scores its baseline and then
+    stops reporting, which is a state this container cannot arrange on purpose
+    — and an untestable branch about an unreadable result is the shape
+    `unreadable` itself was written to catch.
+    """
+    if failures:
+        return f"  !! the tree did not come back clean: {failures[:5]}", False
+    if reported == 0:
+        return (
+            "  !! the restore could not be scored: nothing reported, so the "
+            "tree may or may not be clean. Re-run the command by hand.",
+            None,
+        )
+    if unreadable(failures, reported, status):
+        return (
+            f"  !! the restore could not be scored: the command exited "
+            f"{status} with {reported} suites reporting and named no failing "
+            f"test, which this dialect cannot read. The tree may or may not "
+            f"be clean.",
+            None,
+        )
+    return f"restored: {reported} suites reported, none failing", True
 
 
 def unreadable(failures: list[str], reported: int, status: int) -> bool:
@@ -641,13 +740,10 @@ def scored(
     # skipped most often: a mutation run that leaves the tree broken makes every
     # later result a lie.
     failures, reported, _, status = run(command, dialect)
-    if failures or reported == 0 or unreadable(failures, reported, status):
-        print(f"  !! the tree did not come back clean: {failures[:5]}")
-        entry["restored_clean"] = False
-        problems += 1
-    else:
-        print(f"restored: {reported} suites reported, none failing")
-        entry["restored_clean"] = True
+    message, clean = restore_report(failures, reported, status)
+    print(message)
+    entry["restored_clean"] = clean
+    problems += clean is not True
     entry["outcome"] = "problems" if problems else "clean"
     return 1 if problems else 0
 
