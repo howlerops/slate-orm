@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-27T00:08:14+00:00",
+  "file": "scripts/check_caveat_citations.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_caveat_citations.py"
+  ],
+  "commit": "a15c379",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a cited directory no longer resolves",
+      "old": "    prefix = cited.rstrip(\"/\") + \"/\"\n    return any(name.startswith(prefix) for name in known)",
+      "new": "    return False",
+      "verdict": "caught",
+      "caught_by": [
+        "a cited directory resolves by its tracked contents"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

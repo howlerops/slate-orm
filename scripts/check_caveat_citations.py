@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -150,6 +151,62 @@ def citations(by: str) -> list[str]:
     return seen
 
 
+def ignored(root: Path) -> set[str]:
+    """Every path in the tree that git is told to ignore; empty outside one.
+
+    Resolving against what git *will not carry* rather than against the
+    filesystem alone, and the difference is not pedantry — it is the
+    local-versus-CI gap this repository keeps meeting. A verdict cited
+    `site/slate_wasm_bg.wasm`, a **build output** listed in `.gitignore`: it is
+    on the container that built it, so this printed `ok` here, and it is not in
+    the checkout, so CI failed on a file nobody had touched. The same shape
+    `CLAUDE.md` describes for `ty` resolving imports against whatever
+    `site-packages` happens to be installed.
+
+    Ignored-ness rather than tracked-ness, and the difference matters on the
+    commit that *adds* the cited file: a brand-new entry is untracked until
+    `git add`, and a rule of "must be tracked" fails a `check.sh` run made
+    before staging — which is when it is run. An ignored path is never going to
+    be in a checkout; an untracked one is about to be.
+
+    Empty when git cannot answer — a tarball, a fixture that is not a
+    repository — which is the same answer as "nothing here is ignored" and
+    wants the same behaviour: fall back to the filesystem alone, because a
+    guard that refuses to run outside a checkout is a guard that cannot be
+    tested over a temporary directory. An earlier draft returned `None` for
+    that case and branched on it; a mutation collapsing the two was caught by
+    nothing, because there was nothing to catch.
+    """
+    found = subprocess.run(
+        ["git", "status", "--porcelain", "--ignored=matching", "-z"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if found.returncode != 0:
+        return set()
+    out = set()
+    for entry in found.stdout.decode("utf-8", "replace").split("\0"):
+        if entry.startswith("!! "):
+            out.add(entry[3:].rstrip("/"))
+    return out
+
+
+def resolves(cited: str, hidden: set[str], root: Path) -> bool:
+    """Is the cited path something a checkout of this repository would carry?
+
+    On disk, and not ignored — nor inside an ignored directory, because
+    `git status` names a whole ignored tree by its directory rather than
+    listing what is in it.
+    """
+    if not (root / cited).exists():
+        return False
+    parts = Path(cited).parts
+    return not any(
+        "/".join(parts[: n + 1]) in hidden for n in range(len(parts))
+    )
+
+
 def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
     """`(what, ok, detail)` per check, in the shape the other guards use."""
     out: list[tuple[str, bool, str]] = []
@@ -169,13 +226,14 @@ def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
 
     record("docs/caveat-status.json parses", True, f"{len(verdicts)} verdicts")
 
+    hidden = ignored(root)
     dead: list[str] = []
     counted = 0
     for verdict in verdicts:
         by = verdict.get("by") or ""
         for cited in citations(by):
             counted += 1
-            if not (root / cited).exists():
+            if not resolves(cited, hidden, root):
                 dead.append(f"{verdict.get('entry', '?')}: {cited}")
 
     # The never-fires guard every check in this directory carries. A renamed

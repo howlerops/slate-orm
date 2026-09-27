@@ -208,6 +208,25 @@ that is set and missing is a hard error, never a silent fall back to building.
   publishing; a `paths:` filter also does not match when a branch is created,
   which would have meant the site never deployed at all. Both are written up in
   the workflow files. Prefer running something cheap unconditionally.
+- **Read the run's conclusion; do not wait to be told.** A push starts
+  seventeen jobs and nothing in this container reports how they ended. A
+  session once set a watch that matched on the Pages string and expired after
+  thirty minutes, and three red runs went by unnoticed —
+  `ledger/2026-09-14-ci-clippy-is-newer-than-mine.md` recorded that the honest
+  fix is to ask. It is one call:
+
+  ```
+  mcp__github__actions_list, method list_workflow_runs, resource_id ci.yml,
+      workflow_runs_filter {"branch": "<your branch>"}
+  mcp__github__get_job_logs, run_id <the run>, failed_only true,
+      return_content true
+  ```
+
+  Doing it after a batch of pushes found three failures in one run: a guard
+  that resolved a citation against the *filesystem* and passed here while the
+  file was absent from the checkout, a browser check whose expectation had gone
+  stale, and a registry refusing an anonymous pull. None was visible from this
+  container, and the first two were a session's own work.
 - **CI's clippy is newer than yours, and `-D warnings` makes that fatal.**
   `dtolnay/rust-toolchain@stable` tracks the current release; this container
   has whatever it was built with. That gap is not theoretical: three commits

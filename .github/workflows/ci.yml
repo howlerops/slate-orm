@@ -38,7 +38,7 @@ jobs:
     name: formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -48,7 +48,7 @@ jobs:
     name: clippy, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -78,7 +78,7 @@ jobs:
     name: build the head node
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Two invocations, not one. `cargo build -p a -p b --bin x` applies the
@@ -110,8 +110,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: binaries
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24"
           cache-dependency-path: clients/go/go.sum
@@ -141,8 +141,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: binaries
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
@@ -186,8 +186,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: binaries
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -208,8 +208,8 @@ jobs:
     name: demo frontend units
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -225,7 +225,7 @@ jobs:
     name: the pre-commit hook
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The hook refuses a commit that changes anything outside `ledger/`
       # without an entry, and refuses an entry that says nothing. It is the
       # only check here that guards the *reasoning*, and it had no test until
@@ -236,7 +236,7 @@ jobs:
     name: no crate outside the workspace
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       # A crate outside the workspace is never built by `cargo test
       # --workspace`, so it rots silently. That happened to
@@ -248,8 +248,8 @@ jobs:
     name: the Python that is not the client
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       # ty needs the `slate` package to resolve, because half of what it checks
@@ -368,14 +368,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: binaries
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
@@ -417,17 +417,17 @@ jobs:
     name: the kernel in a browser
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           key: wasm
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       # Pinned: `wasm-bindgen-cli` must match the `wasm-bindgen` the crate
@@ -445,22 +445,22 @@ jobs:
     name: deployed against object storage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: deployed
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install grpcio protobuf
       # Go and Node as well: the run asks the same questions through all three
       # SDKs over the same socket, so a job with only Python would silently
       # skip two thirds of it.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
       # The whole stack: a real S3 server, SlateDB on it, a head node with two
@@ -481,15 +481,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: binaries
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24"
           cache-dependency-path: examples/explorer/backends/go/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
@@ -604,15 +604,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: binaries
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24"
           cache-dependency-path: examples/batchbench/go/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v4
@@ -645,7 +645,7 @@ jobs:
     name: head-node benchmarks, smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: crates/slate-headbench/run.sh --smoke
 
@@ -663,7 +663,7 @@ jobs:
     name: storage examples, smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: crates/slate-slatedb/run.sh --smoke
 
@@ -687,7 +687,7 @@ jobs:
     name: kernel and ORM examples, smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: sh scripts/run_examples.sh slate-kernel --smoke
       - run: sh scripts/run_examples.sh slate-orm --smoke
@@ -718,7 +718,7 @@ jobs:
       SLATE_S3_SECRET_ACCESS_KEY: minioadmin
       SLATE_S3_ALLOW_HTTP: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Started as a step rather than a service container, and pulled from
       # quay.io, which took two tries to get right.
       #

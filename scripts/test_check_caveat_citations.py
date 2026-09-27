@@ -10,6 +10,7 @@ nothing asserts. Every case below breaks one thing and names what must fail.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -30,6 +31,30 @@ def tree(verdicts: list[dict], files: tuple[str, ...] = ()) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x\n", encoding="utf-8")
     return root
+
+
+def repository(root: Path, ignore: tuple[str, ...] = ()) -> None:
+    """Make `root` a git repository whose `.gitignore` lists `ignore`.
+
+    The guard asks git what a checkout would *not* carry, because a build
+    output is on the machine that built it and nowhere else —
+    `site/slate_wasm_bg.wasm` passed here and failed CI on a file nobody had
+    touched. A fixture that is a plain directory exercises the fallback and
+    never the rule, so the cases below build a real repository.
+    """
+    # The keyword arguments are written out rather than unpacked from a dict:
+    # `ty` cannot pick an overload of `subprocess.run` through a `**kwargs`,
+    # and the local run is green while CI's is not — the gap `CLAUDE.md`
+    # describes for `ty` and the one this whole commit is about.
+    subprocess.run(
+        ["git", "init", "-q"],
+        cwd=root,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if ignore:
+        (root / ".gitignore").write_text("\n".join(ignore) + "\n")
 
 
 def case(name: str, verdicts, files, failing: set[str]) -> bool:
@@ -112,6 +137,54 @@ def parses(name: str, by: str, want: list[str]) -> bool:
         return False
     print(f"ok    {name}")
     return True
+
+
+def case_a_directory_resolves() -> bool:
+    """A verdict cites a directory as often as a file, and git lists files.
+
+    `crates/slate-kernel/src` is a citation this repository writes; `git
+    ls-files` never names it, so a prefix match is what answers for one. A
+    mutation deleting that arm survived until this case existed — every other
+    fixture cites a file.
+    """
+    root = tree(
+        [{"entry": "a.md", "key": "k", "verdict": "closed", "by": "crates/x/src did it"}],
+        ("crates/x/src/lib.rs",),
+    )
+    repository(root)
+    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    ok = "every cited path resolves" not in failed
+    print(f"{'ok  ' if ok else 'FAIL'}  a cited directory resolves")
+    if not ok:
+        print(f"        failed: {failed}")
+    return ok
+
+
+def case_git_decides(hide: str) -> bool:
+    """A cited file that is on disk: ignored, it does not resolve; otherwise it does.
+
+    `hide` is what goes in `.gitignore` — the file itself, the directory
+    holding it, or nothing. The directory case is separate because
+    `git status --ignored` names an ignored *tree* by its directory and does
+    not list what is inside it, so a guard that only compared whole paths
+    would pass a build output in an ignored folder.
+    """
+    name = {
+        "": "a cited file that git will carry resolves",
+        "site/built.wasm": "a cited build output listed in .gitignore is reported",
+        "site/": "and one inside an ignored directory is reported too",
+    }[hide]
+    root = tree(
+        [{"entry": "a.md", "key": "k", "verdict": "closed", "by": "site/built.wasm made it"}],
+        ("site/built.wasm",),
+    )
+    repository(root, (hide,) if hide else ())
+    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    ok = ("every cited path resolves" in failed) is bool(hide)
+    print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+    if not ok:
+        print(f"        failed: {failed}")
+    return ok
 
 
 def main() -> int:
@@ -267,6 +340,10 @@ def main() -> int:
             {"every cited test or function name is defined somewhere"},
         ),
     ]
+    passed.append(case_a_directory_resolves())
+    passed.append(case_git_decides(""))
+    passed.append(case_git_decides("site/built.wasm"))
+    passed.append(case_git_decides("site/"))
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")
     return 0 if all(passed) else 1
 

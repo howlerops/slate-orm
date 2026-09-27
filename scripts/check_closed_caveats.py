@@ -80,6 +80,8 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "marker-deserved": ("def undeserved", "scripts/check_cost_prose.py"),
  "struck-span-flag": ("inside: bool = False", "scripts/check_cost_prose.py"),
  "sources-complete": ("def unscanned", "scripts/check_handlers.py"),
+ "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
+ "node24-actions": ("actions/checkout@v5", ".github/workflows/ci.yml"),
  "array-literal-sql": ("array", "crates/slate-serverd/src/lang/pred.rs"),
  "array-schema": ("Array", "crates/slate-schema/src/table.rs"),
  "array-wire": ("array", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -329,6 +331,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-the-caveat-was-already-true.md',
      'Two crates, named explicitly.'):
         'sources-complete',
+    ('2026-09-14-ci-clippy-is-newer-than-mine.md',
+     'It does not close the reporting gap.'):
+        'ci-conclusion',
+    ('2026-09-14-ci-clippy-is-newer-than-mine.md',
+     'It does not address the deprecation warnings'):
+        'node24-actions',
     ('2026-09-26-a-sixth-verdict-for-a-caveat-half-done.md',
      '`narrowed` has no `residual` field.'):
         'residual-field',

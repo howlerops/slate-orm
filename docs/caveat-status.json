@@ -122,16 +122,16 @@
     {
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
       "key": "It does not address the deprecation warnings",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "every actions/* still on Node 20 moved to its first Node 24 major, read off each tag's action.yml rather than recalled: checkout@v5, setup-node@v5, setup-python@v6, setup-go@v6. ledger/2026-09-27-three-red-jobs-nobody-was-watching.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
       "key": "It does not close the reporting gap.",
-      "verdict": "open",
-      "by": "",
-      "checked": "2026-09-26"
+      "verdict": "closed",
+      "by": "CLAUDE.md now says to read the run's conclusion with two named calls rather than trusting a watch, and doing it found three red jobs nobody had seen. ledger/2026-09-27-three-red-jobs-nobody-was-watching.md",
+      "reviewed": "2026-09-27"
     },
     {
       "entry": "2026-09-14-ci-clippy-is-newer-than-mine.md",
@@ -346,7 +346,7 @@
       "entry": "2026-09-15-a-month-is-not-a-number-of-seconds.md",
       "key": "Nothing checks the `slate-wasm` bundle's freshness the same ",
       "verdict": "closed",
-      "by": "site/check/workbench.py stale_sources(), added the same day by ledger/2026-09-15-one-table-twice.md: sources newer than site/slate_wasm_bg.wasm are a hard error, the same rule task #140 gave slate-serverd",
+      "by": "site/check/workbench.py stale_sources(), added the same day by ledger/2026-09-15-one-table-twice.md: sources newer than the built `slate_wasm_bg.wasm` are a hard error, the same rule task #140 gave slate-serverd",
       "reviewed": "2026-09-26"
     },
     {
@@ -6220,6 +6220,24 @@
       "key": "Neither guard can see a fourth kind of silent pass.",
       "verdict": "open",
       "checked": "2026-09-26"
+    },
+    {
+      "entry": "2026-09-27-three-red-jobs-nobody-was-watching.md",
+      "key": "The MinIO job is still red, and it is not this repository's ",
+      "verdict": "open",
+      "checked": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-27-three-red-jobs-nobody-was-watching.md",
+      "key": "The Node 24 bump is unverified until CI runs it.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-27-three-red-jobs-nobody-was-watching.md",
+      "key": "Reading the conclusion is a practice, not a check.",
+      "verdict": "deliberate",
+      "by": "that entry: nothing can enforce it from inside the repository, because the thing being checked is whether a session asks. CLAUDE.md names the two calls instead",
+      "reviewed": "2026-09-27"
     }
   ]
 }

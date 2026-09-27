@@ -218,9 +218,18 @@ out.backToQuery = await page.locator(".console").isVisible();
 // 9c. The kitchen sink, clicked from the sidebar like a reader would.
 //     Every example is executed by `crates/slate-wasm/tests/examples.rs`;
 //     this is the one that has to survive the *click*, because it is the only
-//     one that is two statements and the only one with a semicolon in it.
+//     one that is several statements and the only one with a semicolon in it.
+//
+//     The log is counted before and after, so the assertion is "three more
+//     statements ran" rather than a total that moves whenever a case above
+//     runs one more query. That total is what went stale: the example grew a
+//     third statement, the grid showed *its* result rather than the second's,
+//     and this case failed in CI describing a shape nobody had changed.
+await page.locator('[data-tab="log"]').click();
+const loggedBefore = await page.locator('[data-app="log"] .entry').count();
+await page.locator('[data-tab="results"]').click();
 await page.locator('.examples button:has-text("Kitchen sink")').click();
-await page.waitForTimeout(500);
+await page.waitForTimeout(1000);
 out.sink = {
   status: await page.locator('[data-app="status"]').innerText(),
   headers: await page.locator('[data-app="grid"] th').allInnerTexts(),
@@ -228,7 +237,7 @@ out.sink = {
   refusal: await page.locator('[data-app="grid"] .refusal').count(),
 };
 await page.locator('[data-tab="log"]').click();
-out.sink.logged = await page.locator('[data-app="log"] .entry').count();
+out.sink.ran = (await page.locator('[data-app="log"] .entry').count()) - loggedBefore;
 await page.locator('[data-tab="results"]').click();
 
 // 9c2. HAVING filters the groups, and the refusals hold.
@@ -833,10 +842,22 @@ def main() -> int:
     )
     check(
         "the kitchen sink example runs when a reader clicks it",
+        # Every statement, none refused, and the grid showing the last one.
+        # Counted rather than shaped: the example is a demonstration of the
+        # grammar and its statements change, so an assertion on the *last*
+        # one's columns goes stale on an edit that is not a defect — which is
+        # exactly what happened. What must not change is that clicking it runs
+        # all of them and refuses none.
+        #
+        # Eleven headers for a `SELECT pickup_zone, fare` is not a projection
+        # bug: the grid always shows the table's columns and marks the ones the
+        # plan never read, which is what "a column the plan never read is not
+        # rendered as a null" above is asserting.
         seen["sink"]["refusal"] == 0
-        and seen["sink"]["rows"] == 20
-        and seen["sink"]["headers"][:3] == ["PICKUP_ZONE", "PASSENGERS", "COUNT(*)"]
-        and len(seen["sink"]["headers"]) == 9,
+        and seen["sink"]["ran"] == 3
+        and seen["sink"]["rows"] == 10
+        and "PICKUP_ZONE" in seen["sink"]["headers"]
+        and "FARE" in seen["sink"]["headers"],
         f"{seen['sink']}",
     )
     check(

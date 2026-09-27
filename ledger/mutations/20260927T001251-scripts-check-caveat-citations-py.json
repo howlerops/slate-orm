@@ -1,0 +1,72 @@
+{
+  "at": "2026-09-27T00:12:51+00:00",
+  "file": "scripts/check_caveat_citations.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_caveat_citations.py"
+  ],
+  "commit": "a15c379",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the ignore list is never consulted",
+      "old": "    hidden = ignored(root)",
+      "new": "    hidden = None",
+      "verdict": "caught",
+      "caught_by": [
+        "a cited build output listed in .gitignore is reported",
+        "and one inside an ignored directory is reported too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an ignored parent directory does not hide its contents",
+      "old": "    parts = Path(cited).parts\n    return not any(\n        \"/\".join(parts[: n + 1]) in hidden for n in range(len(parts))\n    )",
+      "new": "    return cited not in hidden",
+      "verdict": "caught",
+      "caught_by": [
+        "and one inside an ignored directory is reported too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a path that is not on disk resolves anyway",
+      "old": "    if not (root / cited).exists():\n        return False",
+      "new": "    if False:\n        return False",
+      "verdict": "caught",
+      "caught_by": [
+        "a citation naming a file that does not exist is reported",
+        "the failure names the entry and the path, not just a count",
+        "one dead citation among several live ones is still reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "git failing is read as nothing ignored rather than no answer",
+      "old": "    if found.returncode != 0:\n        return None",
+      "new": "    if found.returncode != 0:\n        return set()",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the ignored marker is read as any status line",
+      "old": "        if entry.startswith(\"!! \"):",
+      "new": "        if entry[2:3] == \" \":",
+      "verdict": "caught",
+      "caught_by": [
+        "a cited directory resolves",
+        "a cited file that git will carry resolves"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
