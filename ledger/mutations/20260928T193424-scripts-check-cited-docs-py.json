@@ -1,0 +1,59 @@
+{
+  "at": "2026-09-28T19:34:24+00:00",
+  "file": "scripts/check_cited_docs.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_docs.py"
+  ],
+  "commit": "0cd6046",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the shell-script suffix is dropped again",
+      "old": "    \".sh\",\n    \".yml\",",
+      "new": "    \".yml\",",
+      "verdict": "caught",
+      "caught_by": [
+        "the workflow, the config, the page and the shell script are read too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the workflow suffix is dropped again",
+      "old": "    \".yml\",\n    \".yaml\",",
+      "new": "    \".yaml\",",
+      "verdict": "caught",
+      "caught_by": [
+        "the workflow, the config, the page and the shell script are read too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the docs-page suffix is dropped again",
+      "old": "    \".toml\",\n    \".html\",\n)",
+      "new": "    \".toml\",\n)",
+      "verdict": "caught",
+      "caught_by": [
+        "the workflow, the config, the page and the shell script are read too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the hook suite's fixture row is deleted",
+      "old": "    \".githooks/test-pre-commit.sh\": (",
+      "new": "    \"scripts/absent-on-purpose.sh\": (",
+      "verdict": "caught",
+      "caught_by": [
+        "every citation in this repository resolves"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

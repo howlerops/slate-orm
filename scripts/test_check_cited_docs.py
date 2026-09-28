@@ -126,6 +126,25 @@ def main() -> int:
             broken=1,
         ),
         case(
+            "the workflow, the config, the page and the shell script are read too",
+            # The residual of
+            # `ledger/2026-09-26-the-citation-nobody-could-follow.md`: four
+            # guards between them read `.rs`, `.py`, `.go`, `.ts` and prose, so
+            # an entry named in CI's own workflow, in a `head.toml`, on a docs
+            # page or in a shell script was invisible — "the eighth invented
+            # citation will be there". All five are real places this repository
+            # cites an entry from today.
+            {
+                "ci.yml": "# see ledger/gone.md\n",
+                "head.toml": '# see docs/gone.md\n',
+                "page.html": "<!-- docs/gone.md -->\n",
+                "run.sh": "# docs/gone.md\n",
+                "app.tsx": "// docs/gone.md\n",
+            },
+            seen=5,
+            broken=5,
+        ),
+        case(
             "every source language is read, not only Rust",
             {
                 "a.rs": "// docs/gone.md\n",
