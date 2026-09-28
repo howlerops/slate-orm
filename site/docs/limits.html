@@ -119,6 +119,28 @@
         top of it rather than under it.
       </p>
       <p>
+        <strong>A decimal's scale is the client's to get right.</strong>
+        <code>Value::Decimal</code> carries units and the scale lives on the
+        column, so a client renders <code>1999</code> as
+        <code>19.99</code> by reading the scale it declared locally. Nothing
+        checks that against the server's: the schema fingerprint deliberately
+        does not hash a scale, because a scale addresses no column, so a client
+        that believes a column is scale 2 where the catalog says 4 reaches the
+        right column and prints every value a hundred times wrong — with no
+        error at any layer. It is the sharpest edge in the decimal work and it
+        is the price of a protocol that publishes no schema.
+      </p>
+      <p>
+        <strong>A streamed read's rows are in no measurement.</strong> Every
+        latency the node reports — the summary line, the quantiles and the
+        exported histogram — is time to the <em>response head</em>. A read that
+        streamed for a minute and then failed contributes its first-byte
+        latency and nothing else. <code>request_timeout</code> has the same
+        shape: it bounds a request that waits, not one the handler answers
+        without pending, which is measured rather than asserted in
+        <code>crates/slate-serverd/tests/ceilings.rs</code>.
+      </p>
+      <p>
         <strong>No in-place promotion</strong> of a read replica to writer —
         promotion is a restart. No multi-writer. No cross-shard transactions,
         because there is no sharding.

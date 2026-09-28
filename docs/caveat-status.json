@@ -10435,6 +10435,20 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "this entry's scope is the daemon's two settings, which is what the residual named. ExecutionLimits has its own tests in the kernel and ledger/2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md covers those paths; re-examining them here would be a second copy of that coverage."
+    },
+    {
+      "entry": "2026-09-28-the-limits-page-omitted-the-sharpest-limit.md",
+      "key": "It fixes neither.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "both stay open in docs/caveat-status.json, which is where the work is tracked. This is the page a reader meets first saying what the tracker already knew."
+    },
+    {
+      "entry": "2026-09-28-the-limits-page-omitted-the-sharpest-limit.md",
+      "key": "The other 118 open caveats are not on the page",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "most are about a missing test or an unmeasured number, which is this repository's business rather than a reader's; putting all 118 on the page would bury the ones that change what a caller writes. The two chosen are the two that do, which is the line the page's other paragraphs are drawn on and is a judgement rather than a rule."
     }
   ]
 }
