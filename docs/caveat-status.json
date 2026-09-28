@@ -7250,6 +7250,712 @@
       "checked": "2026-09-28",
       "by": "every one of the 408 entries carries `## What this does not do`, spelled exactly, so nothing is missed today. Measured while widening: zero entries with no matching section and zero near-miss headings. ledger/2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md",
       "residual": "a missing or misspelled section is skipped silently rather than reported, so the day an entry grows one the tracker will say nothing. The template supplies the heading and the pre-commit hook requires it, which is why the count is zero and not why it would stay zero."
+    },
+    {
+      "entry": "2026-09-13-a-grouped-chain-on-the-wire.md",
+      "key": "`EXPLAIN` still cannot describe a grouped chain, or a groupe",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/explain.rs describes both, and slate-server exposes them. ledger/2026-09-14-explaining-a-grouped-read.md"
+    },
+    {
+      "entry": "2026-09-13-a-grouped-chain-on-the-wire.md",
+      "key": "The three clients can now *reach* a grouped chain, and only ",
+      "verdict": "closed",
+      "by": "examples/explorer/run.sh --conformance runs the same grouped-chain case through all three adapters and compares their answers, so the TypeScript path is no longer the only one exercising a self-join. ledger/2026-09-14-self-checking-quickstarts-and-conformance.md"
+    },
+    {
+      "entry": "2026-09-13-a-site.md",
+      "key": "No deployment. The site is files in a directory; nothing pub",
+      "verdict": "closed",
+      "by": ".github/workflows/pages.yml publishes the site. ledger/2026-09-14-ci-that-had-never-run.md"
+    },
+    {
+      "entry": "2026-09-13-a-site.md",
+      "key": "No search, no versioning, no dark/light toggle — it is dark,",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: the site is a query console and is dark on purpose. Search and versioning are features for a documentation set larger than ten pages, and the alternative — adding them now — buys navigation nobody needs over a set small enough to read end to end.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-a-site.md",
+      "key": "The landing page asserts things about the project that are t",
+      "verdict": "narrowed",
+      "by": "site/check/docs.py renders all ten pages in a browser, site/check/quickstarts.py runs the code they contain, and scripts/check_retired_claims.py now reads .html so a struck claim cannot stand on a page. ledger/2026-09-28-the-eighth-invented-citation-had-somewhere-to-hide.md",
+      "residual": "a page's prose can still be true-today and wrong-tomorrow without being a retired claim or a broken quickstart; nothing derives an assertion about the project from the project.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-defects-found-by-review.md",
+      "key": "It is an index, not an account. The reasoning for each fix i",
+      "verdict": "deliberate",
+      "by": "this entry's own framing: the reasoning lives in each fix's commit and in docs/security-review.md, and restating it would make two copies to keep in step. The alternative — one long account — is the shape ledger/README.md forbids for exactly that reason.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-defects-found-by-review.md",
+      "key": "Two security findings stay open and neither is a patch: the ",
+      "verdict": "closed",
+      "by": "both were carried through: the EXPLAIN channel became a grant in ledger/2026-09-13-explain-is-privileged.md, and the write-side existence report was closed as inherent with the documentation narrowed to match in ledger/2026-09-13-security-findings-4-and-8.md"
+    },
+    {
+      "entry": "2026-09-13-duplicated-identity-header.md",
+      "key": "It closes the one part of the trusted-header arrangement the",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: a head node behind a mesh cannot audit the mesh. The alternative is the second identity system the next caveat rejects, and what it would cost is a second thing to get wrong.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-duplicated-identity-header.md",
+      "key": "It does not add a mode that verifies the identity independen",
+      "verdict": "deliberate",
+      "by": "this entry's Alternatives: a second identity system inside a node that exists to sit behind one. docs/security-review.md records the trusted-header boundary as the deployment's, and the refusal of a duplicated header is the part the server can check by itself.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-explain-is-privileged.md",
+      "key": "It gates the channel; it does not remove it. Anyone who gran",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning, and it carries a test rather than a footnote: granting `explain` on a policy-bearing table is a deliberate act with a documented consequence. Removing the channel would remove EXPLAIN.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-explain-is-privileged.md",
+      "key": "It does nothing about equality predicates, which never leake",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-13-explain-is-privileged.md",
+      "key": "It does not distinguish a caller who can read every row of a",
+      "verdict": "open",
+      "by": "nothing yet. Doing it properly needs per-tenant statistics — knowing whether a caller's row filter is a tautology — which is unbuilt. The grant is the blunt instrument standing in for it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-explain-is-privileged.md",
+      "key": "The `Action::EVERYTHING` spelling is a convenience and a haz",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: the rename from `ALL` was the mitigation chosen, so that reaching for the wrong grant has to be typed deliberately. The alternative — removing the spelling — costs the superuser role its one correct grant.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-go-client.md",
+      "key": "`Join`, `Aggregate` and `ExplainJoin` are on the wire and ha",
+      "verdict": "closed",
+      "by": "all of it was built: joins and aggregates in ledger/2026-09-13-go-joins-and-aggregates.md, SchemaCheck in ledger/2026-09-14-schema-checks-in-go-and-typescript.md, computed values in clients/go/slate/query.go and clients/typescript/src/query.ts, whose Scalar surfaces the three-SDK conformance runner exercises"
+    },
+    {
+      "entry": "2026-09-13-go-client.md",
+      "key": "Nothing here is a differential *against the Python client*. ",
+      "verdict": "closed",
+      "by": "examples/explorer/run.sh --conformance runs the same corpus through the Go, Python and TypeScript adapters and compares their answers to each other. ledger/2026-09-14-self-checking-quickstarts-and-conformance.md"
+    },
+    {
+      "entry": "2026-09-13-go-client.md",
+      "key": "The tests need `cargo` on the path and build the daemon, so ",
+      "verdict": "closed",
+      "by": "SLATE_SERVERD points the harness at a prebuilt binary, which is how CI builds the server once and how a Go-only checkout runs this suite. clients/go/slate/harness_test.go. ledger/2026-09-14-ci-that-had-never-run.md"
+    },
+    {
+      "entry": "2026-09-13-go-joins-and-aggregates.md",
+      "key": "No computed values in a query or join input, no vector simil",
+      "verdict": "closed",
+      "by": "SchemaCheck in ledger/2026-09-14-schema-checks-in-go-and-typescript.md, computed values in clients/go/slate/query.go and clients/typescript/src/query.ts, whose Scalar surfaces the three-SDK conformance runner exercises, and vector similarity through the same Scalar surface"
+    },
+    {
+      "entry": "2026-09-13-go-joins-and-aggregates.md",
+      "key": "Nothing here compares the Go client's answers against the Py",
+      "verdict": "closed",
+      "by": "the three-SDK conformance runner does exactly this. ledger/2026-09-14-self-checking-quickstarts-and-conformance.md"
+    },
+    {
+      "entry": "2026-09-13-grouped-joins-on-the-wire.md",
+      "key": "Grouping a chain is not built, in the kernel or here. A grou",
+      "verdict": "closed",
+      "by": "both halves: grouping a chain in ledger/2026-09-13-grouping-a-chain.md, and costing a grouped join as grouped in withdrawn rather than built, with a demonstration: `the_per_row_term_is_symmetric_so_grouping_cannot_flip_the_algorithm` in crates/slate-kernel/tests/grouped_chain_oracle.rs shows the per-joined-row term is added to the hash cost and the loop cost equally, so discounting it for a grouped join changes no plan at all. What grouping does change is the projection, which `narrowed_join` already exploits"
+    },
+    {
+      "entry": "2026-09-13-grouped-joins-on-the-wire.md",
+      "key": "`aggregate_to_proto_query` still emits the single-table shap",
+      "verdict": "closed",
+      "by": "HAVING over a grouped join and a grouped chain is built and tested in ledger/2026-09-15-having-on-a-join.md, and brackets in it in ledger/2026-09-28-a-having-brackets-the-way-a-where-does.md"
+    },
+    {
+      "entry": "2026-09-13-grouping-a-chain.md",
+      "key": "A grouped chain reads wider than it needs to, as above. It i",
+      "verdict": "closed",
+      "by": "the per-step projection was narrowed in ledger/2026-09-14-narrowing-a-grouped-chain.md"
+    },
+    {
+      "entry": "2026-09-13-grouping-a-chain.md",
+      "key": "There is no `EXPLAIN` for a grouped chain, or for a grouped ",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/explain.rs describes both. ledger/2026-09-14-explaining-a-grouped-read.md"
+    },
+    {
+      "entry": "2026-09-13-grouping-a-chain.md",
+      "key": "`group_by_chain` is not on the wire. The server refuses a ch",
+      "verdict": "closed",
+      "by": "crates/slate-server/src/convert.rs maps a chain-shaped AggregateQuery onto GroupedSource::Chain, and the comment there records that the old refusal was the lie this caveat named"
+    },
+    {
+      "entry": "2026-09-13-ignore-the-testservers-target.md",
+      "key": "Nothing stops the next nested workspace from doing the same ",
+      "verdict": "narrowed",
+      "by": "the pre-commit hook grew a size guard, which catches a build artefact staged by accident — .githooks/pre-commit and its case `a file over the limit` in .githooks/test-pre-commit.sh. clients/python/testserver is also a root-workspace member now, so it has no target of its own. ledger/2026-09-14-the-testserver-joins-the-workspace.md",
+      "residual": "no `git check-ignore` assertion, so a nested workspace whose artefacts are each under the size limit is still staged silently. The size guard catches the usual shape of the accident rather than the cause of it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-in-list-per-row-cost.md",
+      "key": "Three of finding 7's four items are untouched here: `GROUP B",
+      "verdict": "closed",
+      "by": "all four were bounded in ledger/2026-09-13-per-request-ceilings.md: max_groups, max_distinct_values and max_sorted_rows, plus max_concurrent_requests and request_timeout on the daemon"
+    },
+    {
+      "entry": "2026-09-13-in-list-per-row-cost.md",
+      "key": "It does not cap the list. A caller can still send a very lar",
+      "verdict": "open",
+      "by": "still uncapped. tonic's 4 MB default request size is the only bound, which admits a few hundred thousand values; ExecutionLimits has no max_in_list_values and the entry that added the ceilings recorded the same gap.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-in-list-per-row-cost.md",
+      "key": "The two `Expr` forms deliberately disagree on estimated sele",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: the plain form's estimate was wrong, so the two agreeing would mean keeping the wrong one. Anything comparing plans across the rewrite boundary sees the difference, which is the cost and is smaller than a knowingly wrong estimate.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-per-request-ceilings.md",
+      "key": "The three defaults (1M groups, 1M distinct values, 5M sorted",
+      "verdict": "open",
+      "by": "still chosen rather than measured. Nothing establishes where a real node falls over, so the numbers are a guard rail rather than a calibration; docs/performance.md measures throughput and not the failure point.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-per-request-ceilings.md",
+      "key": "`max_concurrent_requests` maps to tonic's per-connection lim",
+      "verdict": "open",
+      "by": "still per-connection. A node-wide bound needs a semaphore in the service and none is there; a caller opening more connections still gets more concurrency.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-per-request-ceilings.md",
+      "key": "The join's own `DEFAULT_BUILD_LIMIT` is untouched and still ",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning for not merging them: build_limit is per-Join and client-settable where ExecutionLimits deliberately is not, so merging would either make the ceilings client-settable or take a knob away from the join. Both cost more than the duplication.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-per-request-ceilings.md",
+      "key": "Nothing here bounds the *number* of values in an `IN` list, ",
+      "verdict": "open",
+      "by": "the same uncapped IN list the in-list entry records. tonic's 4 MB default is the only bound on a decoded request and there is no cap on the list itself.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-point-the-readme-at-everything-new.md",
+      "key": "Nothing keeps this table current. It went stale once by accr",
+      "verdict": "narrowed",
+      "by": "three guards now read README.md: scripts/check_retired_claims.py has it in ROOT_FILES, scripts/check_cited_docs.py reads its citations, and the gap-table rows are retired in writing rather than deleted. ledger/2026-09-20-the-gap-list-that-outlived-its-gaps.md",
+      "residual": "nothing derives a row from the code, so a feature built and not written down is still invisible — which is the direction that went wrong twice. The guards catch a row that has gone false, not a row that is missing.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-point-the-readme-at-everything-new.md",
+      "key": "The README's Status section still describes the project as o",
+      "verdict": "closed",
+      "by": "the whole document was swept in ledger/2026-09-14-main-and-the-documentation-sweep.md"
+    },
+    {
+      "entry": "2026-09-13-python-grouped-join-and-a-rotted-testserver.md",
+      "key": "`testserver` stays outside the root workspace, so nothing st",
+      "verdict": "closed",
+      "by": "it is a root-workspace member — Cargo.toml lists clients/python/testserver — so cargo builds it with everything else. ledger/2026-09-14-the-testserver-joins-the-workspace.md"
+    },
+    {
+      "entry": "2026-09-13-python-grouped-join-and-a-rotted-testserver.md",
+      "key": "Grouping a chain is still unbuilt in the kernel; the client ",
+      "verdict": "closed",
+      "by": "built in ledger/2026-09-13-grouping-a-chain.md and carried onto the wire in convert.rs"
+    },
+    {
+      "entry": "2026-09-13-security-findings-4-and-8.md",
+      "key": "The insert/upsert oracle is still there — it is inherent, an",
+      "verdict": "deliberate",
+      "by": "inherent, and recorded as such: a unique key is a shared resource, so refusing to say it is taken means accepting writes that cannot land. crates/slate-kernel/src/security.rs says so, and docs/security-review.md records finding 4 closed-as-inherent with the claim it contradicted narrowed rather than dropped.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-security-findings-4-and-8.md",
+      "key": "Table existence remains disclosed to an authenticated caller",
+      "verdict": "deliberate",
+      "by": "recorded as a decision in docs/security-review.md rather than left open: a caller with a grant on any table learns which tables exist, and hiding that means either a per-table NOT_FOUND that leaks through timing or a catalog read that fails closed on every unknown name.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-security-findings-4-and-8.md",
+      "key": "Only the four fingerprint-checking handlers authorise early.",
+      "verdict": "closed",
+      "by": "the gap this predicted was found and closed: ledger/2026-09-20-taking-a-catalog-was-not-the-hazard.md, and a guard against the shape rather than the four instances in crates/slate-server/tests/, whose guard fails a converter that resolves a table without authorising it first"
+    },
+    {
+      "entry": "2026-09-13-the-explorer-and-what-it-found.md",
+      "key": "No frontend yet — this is the backend and the contract.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-13-the-explorers-frontend.md"
+    },
+    {
+      "entry": "2026-09-13-the-explorer-and-what-it-found.md",
+      "key": "`groupBy: \"decade\"` is a documented refusal rather than a fe",
+      "verdict": "closed",
+      "by": "computed columns reached the clients and the adapters: examples/explorer/backends/go/handlers.go now computes a decade, and examples/explorer/conformance/conformance.py has `a grouped join by a computed decade` as a case all three must agree on"
+    },
+    {
+      "entry": "2026-09-13-the-explorer-and-what-it-found.md",
+      "key": "The adapters are not a benchmark and the README says so: the",
+      "verdict": "deliberate",
+      "by": "this entry's own framing, and still true by construction: the adapters add a JSON round trip the SDKs do not have. The measurements that are benchmarks live in docs/performance.md and say what they ran on.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-the-explorers-frontend.md",
+      "key": "No tests. The panels are checked by having been driven in a ",
+      "verdict": "closed",
+      "by": "examples/explorer/web/test/api.test.ts, run by its own CI job. ledger/2026-09-14-frontend-tests-and-configurable-ports.md"
+    },
+    {
+      "entry": "2026-09-13-the-explorers-frontend.md",
+      "key": "No `groupBy: \"decade\"` — the UI offers it and the adapters r",
+      "verdict": "closed",
+      "by": "all three adapters compute it and the conformance runner requires them to agree. examples/explorer/backends/go/handlers.go names this caveat in its comment"
+    },
+    {
+      "entry": "2026-09-13-the-explorers-frontend.md",
+      "key": "The frontend talks to three hard-coded localhost ports. Fine",
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/api.ts reads VITE_GO_URL, VITE_NODE_URL and VITE_PYTHON_URL. ledger/2026-09-14-frontend-tests-and-configurable-ports.md"
+    },
+    {
+      "entry": "2026-09-13-the-ledger.md",
+      "key": "It cannot tell whether an entry is honest or useful — only t",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning, and no hook can close it. What was added instead is the layer above: scripts/caveats.py tracks whether each entry's stated limits are still true, which does not judge honesty but does make an entry that says nothing visible as an entry with nothing to triage.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-the-ledger.md",
+      "key": "It does not backfill. The thirty commits already on this bra",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-13-the-ledger.md",
+      "key": "It enforces nothing on a push, only on a local commit. A com",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning, and CLAUDE.md now states the compensating rule: --no-verify exists so a check with no escape hatch does not get switched off, and a bypassed commit is one whose entry is written afterwards. The alternative, a server-side hook, is not available on this repository.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-the-typescript-package-was-not-importable.md",
+      "key": "The Go and Python clients are not checked this way. Go has n",
+      "verdict": "open",
+      "by": "still unchecked for Python. A wrong `packages` in clients/python/pyproject.toml produces the same class of bug and nothing imports the built package from outside its own tree; Go genuinely cannot have it, since the module path is the import path.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-the-typescript-package-was-not-importable.md",
+      "key": "Three separate files in this repository have now had the sam",
+      "verdict": "narrowed",
+      "by": "all three search upward for a landmark, and the idiom spread rather than the bug: scripts/ and site/check/ resolve ROOT the same way. ledger/2026-09-14-guards-against-the-recurring-mistakes.md",
+      "residual": "nothing refuses a fourth `..`-counting path. The guards added there cover the mistakes they were written for, and a relative path is not one of the shapes any of them matches.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-typescript-client.md",
+      "key": "`Join`, `Aggregate` and `ExplainJoin` have no typed surface,",
+      "verdict": "closed",
+      "by": "built in ledger/2026-09-13-typescript-joins-and-aggregates.md, SchemaCheck in ledger/2026-09-14-schema-checks-in-go-and-typescript.md, computed values in clients/go/slate/query.go and clients/typescript/src/query.ts, whose Scalar surfaces the three-SDK conformance runner exercises"
+    },
+    {
+      "entry": "2026-09-13-typescript-client.md",
+      "key": "Nothing compares the three clients against *each other*. All",
+      "verdict": "closed",
+      "by": "examples/explorer/run.sh --conformance does. ledger/2026-09-14-self-checking-quickstarts-and-conformance.md"
+    },
+    {
+      "entry": "2026-09-13-typescript-client.md",
+      "key": "The package is not published anywhere and its version is `0.",
+      "verdict": "narrowed",
+      "by": "SLATE_SERVERD points the harness at a prebuilt binary, so `npm test` runs from a JavaScript-only checkout. clients/typescript/test/harness.ts. ledger/2026-09-14-ci-that-had-never-run.md",
+      "residual": "still unpublished and still 0.0.1. Publishing is a release decision rather than a defect, and the version is honest about what it is.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-13-typescript-joins-and-aggregates.md",
+      "key": "No computed values, vectors or `SchemaCheck`, matching the G",
+      "verdict": "closed",
+      "by": "all three: ledger/2026-09-14-schema-checks-in-go-and-typescript.md and clients/go/slate/query.go and clients/typescript/src/query.ts, whose Scalar surfaces the three-SDK conformance runner exercises"
+    },
+    {
+      "entry": "2026-09-13-typescript-joins-and-aggregates.md",
+      "key": "Still nothing compares the three clients' answers against ea",
+      "verdict": "closed",
+      "by": "the three-SDK conformance runner. ledger/2026-09-14-self-checking-quickstarts-and-conformance.md"
+    },
+    {
+      "entry": "2026-09-14-a-comment-that-named-the-wrong-plan.md",
+      "key": "Comments only; no assertion, threshold or query changed. It ",
+      "verdict": "narrowed",
+      "by": "scripts/check_retired_claims.py now reads the whole prose surface — eleven suffixes and .github/ — so a claim struck in one place cannot stand in another. ledger/2026-09-28-the-eighth-invented-citation-had-somewhere-to-hide.md",
+      "residual": "a comment naming the wrong plan is not a *retired* claim, so no guard matches it. The structural answer is the one this caveat names: assert the access path rather than describe it, which `the_clock_stops_before_the_rows_are_rendered` does and the rest of the file still does not.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-a-playground-nobody-could-find.md",
+      "key": "It does not measure whether anyone now finds the panel; the ",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-a-playground-nobody-could-find.md",
+      "key": "The ordering assertion only pins `#playground` before `#what",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: pinning an exact index fails every time a section is added, which trains a reader to update the number rather than to check the order. A relative assertion is the weaker check that stays true.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-a-playground-nobody-could-find.md",
+      "key": "The default-column assertion checks the *option label* ends ",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning, and the failure it describes is still a real failure — a change that stopped marking indexed columns would turn the check red, with a message pointing one step away from the cause. The alternative, asserting the picker's state rather than its rendering, means reaching past the DOM the check exists to exercise.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-a-playground-nobody-could-find.md",
+      "key": "The panel still opens on `books`, which is hard-coded in `bo",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-a-playground-that-runs-the-kernel.md",
+      "key": "Filters, sort, projection, limit, offset. No joins, aggregat",
+      "verdict": "closed",
+      "by": "joins, aggregates and grouped reads reached the binding in ledger/2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md and the panel in ledger/2026-09-14-the-panel-catches-up-with-the-binding.md; the workbench then gave the whole kernel a SQL front end"
+    },
+    {
+      "entry": "2026-09-14-a-playground-that-runs-the-kernel.md",
+      "key": "One filter, not a conjunction. `WHERE a = 1 AND b > 2` is ex",
+      "verdict": "closed",
+      "by": "conjunctions reached the binding in ledger/2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md, and site/workbench.js writes `WHERE … AND …` as SQL"
+    },
+    {
+      "entry": "2026-09-14-a-playground-that-runs-the-kernel.md",
+      "key": "Nothing lazy-loads the bundle: 596 KiB is paid by every visi",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-not-paying-for-the-playground.md defers the import until the panel is about to be visible"
+    },
+    {
+      "entry": "2026-09-14-a-playground-that-runs-the-kernel.md",
+      "key": "The wasm is not reproducible: two builds of one commit diffe",
+      "verdict": "open",
+      "by": "still not reproducible, and nothing needs it to be. --remap-path-prefix and a pinned toolchain were named as most of the way there and have not been attempted; the question they would answer — is the deployed bundle the audited one — has not been asked yet.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-a-playground-that-runs-the-kernel.md",
+      "key": "The size budget is a number in a shell script, not a measure",
+      "verdict": "deliberate",
+      "by": "this entry's own framing, and the honest alternative is worse: a measurement of what a reader tolerates needs readers, and this project has none. A budget that is a stated judgement is a budget somebody can argue with; a budget derived from nothing would look like a finding.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-a-timer-that-can-be-wrong.md",
+      "key": "The wasm arm of `now_ms()` — `performance.now()` through `wa",
+      "verdict": "narrowed",
+      "by": "site/check/workbench.py drives the kernel in a real browser, so the wasm arm runs on every push rather than only in a native test. ledger/2026-09-14-the-home-page-is-a-workbench.md",
+      "residual": "the browser check still only asserts the numbers are present, ordered and non-zero. Nothing compares the wasm clock against a second source in the browser, so a clock wrong by a factor inside those bounds passes — the next caveat is the same gap stated directly.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-a-timer-that-can-be-wrong.md",
+      "key": "Nothing catches a clock wrong by a constant factor *inside* ",
+      "verdict": "open",
+      "by": "still true, and only a second implementation would catch it. `performance.now()` is the one clock the browser offers that is not the wall clock, so the second source would have to be the wall clock — coarse enough that a 0.6x error on a millisecond measurement hides inside it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-a-timer-that-can-be-wrong.md",
+      "key": "The `+ N ms JSON` figure the status bar shows is still a sub",
+      "verdict": "open",
+      "by": "still a subtraction and still unprofiled. It is labelled as marshalling, is mostly serde_json, and nothing has measured what the rest is.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-ci-that-had-never-run.md",
+      "key": "Pages needs **Settings → Pages → Source: GitHub Actions** tu",
+      "verdict": "deliberate",
+      "by": "a repository setting no commit can make, and ledger/2026-09-14-main-and-the-documentation-sweep.md took the one action available: the deploy step now fails legibly, printing the setting a person with admin has to change. The alternative — `enablement: true` — is kept and does not work here, which that entry records.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-ci-that-had-never-run.md",
+      "key": "What follows was true until that tag, and is left because it",
+      "verdict": "closed",
+      "by": "v0.0.1 is tagged and pushed — `git ls-remote --tags origin` shows refs/tags/v0.0.1 — so the release step has run. The entry already carries the closure inline"
+    },
+    {
+      "entry": "2026-09-14-ci-that-had-never-run.md",
+      "key": "The `rust` job runs `cargo test --workspace`, which this con",
+      "verdict": "deliberate",
+      "by": "a property of this container rather than of the code, and CLAUDE.md states it as one: the disk allowance is smaller than the build, so the workspace is verified here in groups and in CI as one command. The alternative is not running the suite, which is worse than running it in two places and saying so.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-ci-that-had-never-run.md",
+      "key": "Nothing checks the *aarch64* release binary beyond compiling",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: a cross-compiled binary cannot be run on the runner that built it, and an emulator is more machinery than a --check on an unreleased project earns. The cost is that an aarch64-only runtime fault ships; the release is a prerelease and says so.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-explaining-a-grouped-read.md",
+      "key": "The demo's `/api/explain` still explains the ungrouped read;",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-the-grouped-plan-in-the-demo.md, which the entry already names inline"
+    },
+    {
+      "entry": "2026-09-14-explaining-a-grouped-read.md",
+      "key": "`AggregateExplainResponse.display` is the sub-plan's text wi",
+      "verdict": "open",
+      "by": "still ordinals and a Debug form. Naming columns needs the display side to hold a TableDef, which JoinExplanation's does not, and nothing has been done about that.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-explaining-a-grouped-read.md",
+      "key": "`decodes` is per input, and for a chain it is per step — but",
+      "verdict": "open",
+      "by": "still unreported. A reader comparing a group key to `decodes` still does the ordinal shift by hand, which is the arithmetic ColumnRef exists to avoid everywhere else.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-explaining-a-grouped-read.md",
+      "key": "No client exposes `ExplainAggregate` inside a transaction ex",
+      "verdict": "open",
+      "by": "still Go only. Python and TypeScript reach the non-transactional form; the server implements both, so this is client surface rather than protocol.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
+      "key": "The e2e covers the five panels' central behaviour, not their",
+      "verdict": "deliberate",
+      "by": "this entry's own framing, and the division is deliberate: the operators, the switcher, the projection, the offset and both sort directions are exercised as HTTP cases in the conformance suite, which is where a disagreement between adapters shows up. Clicking each one in a browser would test the same code path through a slower and flakier harness.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
+      "key": "The bar chart is asserted on count and threshold, not on geo",
+      "verdict": "open",
+      "by": "still true: a CSS change rendering every bar at zero width passes. Asserting geometry means asserting rendered pixel widths, which nothing here does.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
+      "key": "`web/package.json` now depends on `playwright` for a demo, w",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: justified because the browser is already present in this environment, and the cost is a download on a reader's first npm install. The alternative — no browser test for the demo — is what the entry was written to end.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-guards-against-the-recurring-mistakes.md",
+      "key": "The hook is a `pre-commit`, so it protects this repository's",
+      "verdict": "deliberate",
+      "by": "the same decision ledger/2026-09-13-the-ledger.md records: a local hook is the only enforcement point this repository has, and CLAUDE.md states the compensating rule for --no-verify. The struck half is closed inline — CI runs the hook's own suite on every push.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-guards-against-the-recurring-mistakes.md",
+      "key": "The Go and Python clients have no equivalent of the TypeScri",
+      "verdict": "closed",
+      "by": "the entry closes it inline: Go's module path is its import path so the failure mode does not exist, and Python's is covered by the packaging tests"
+    },
+    {
+      "entry": "2026-09-14-guards-against-the-recurring-mistakes.md",
+      "key": "Nothing stops a *fourth* nested workspace from being created",
+      "verdict": "narrowed",
+      "by": "clients/python/testserver became a root-workspace member, so the one nested workspace that caused the original accident is gone. ledger/2026-09-14-the-testserver-joins-the-workspace.md",
+      "residual": "the demo's three backends are still nested workspaces by necessity — they are Go, Node and Python — and the size guard catches the symptom rather than the cause. No `git check-ignore` assertion exists.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md",
+      "key": "`authors` and `books` only — no chain of three, though the k",
+      "verdict": "closed",
+      "by": "chains reached the binding and the SQL front end: crates/slate-wasm/tests/ exercises a three-table chain, and site/workbench.js writes one"
+    },
+    {
+      "entry": "2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md",
+      "key": "The join is inner. Left, right and full outer exist in the k",
+      "verdict": "open",
+      "by": "the binding still offers an inner join only. Left, right and full outer exist in the kernel and would mostly demonstrate the placeholder the row renderer already carries, which is why this has stayed unbuilt rather than been decided against.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md",
+      "key": "No `HAVING` and no group ordering, both of which the kernel ",
+      "verdict": "closed",
+      "by": "site/workbench.js carries a HAVING example — `HAVING count(*) > 300 AND avg(duration) > 900` — and the SQL front end brackets one the way it brackets a WHERE. ledger/2026-09-28-a-having-brackets-the-way-a-where-does.md"
+    },
+    {
+      "entry": "2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md",
+      "key": "The panel exposes none of this yet. This commit is the bindi",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-the-panel-catches-up-with-the-binding.md, and then the workbench, which exposes the whole subset as SQL"
+    },
+    {
+      "entry": "2026-09-14-main-and-the-documentation-sweep.md",
+      "key": "So the deploy job fails, correctly, and now fails *legibly*:",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-main-and-the-documentation-sweep.md",
+      "key": "`enablement: true` is kept rather than reverted, even though",
+      "verdict": "deliberate",
+      "by": "this entry's own Alternatives, quoted there in full: where a token is permitted it removes the manual step, and where it is not the message below it names the setting. Reverting to `enablement: false` produces an error addressed to the wrong person.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-main-and-the-documentation-sweep.md",
+      "key": "`main` is not yet the **default** branch, and this session c",
+      "verdict": "deliberate",
+      "by": "a repository setting no commit can change, and everything a default branch would buy already behaves as though it were one: CI on every push, Pages from main, releases from a tag. Recorded rather than left open because there is nothing in the tree to do.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-main-and-the-documentation-sweep.md",
+      "key": "The two branches will drift the moment anything is pushed to",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-main-and-the-documentation-sweep.md",
+      "key": "The sweep covered the files that describe *current state*: `",
+      "verdict": "narrowed",
+      "by": "the three documents it skipped are now covered by guards rather than by a sweep: scripts/check_retired_claims.py reads docs/, scripts/check_cited_docs.py checks their citations, and scripts/check_mutation_claims.py checks their mutation counts against the recorded runs.",
+      "residual": "none of those guards reads a *number*. A measurement in docs/performance.md that has gone stale is caught only by somebody re-measuring, which is the judgement this caveat is about and is still a judgement.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-narrowing-a-grouped-chain.md",
+      "key": "The gather is per *table*, not per *row shape*: a chain that",
+      "verdict": "deliberate",
+      "by": "correct and wider than necessary, in a case the fixture does not have: a chain joining one table twice at different positions gets the union of both positions' needs. Narrowing per position means keying the gather on the chain step rather than the table, which buys nothing until such a chain exists and costs a second notion of what a projection belongs to.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-narrowing-a-grouped-chain.md",
+      "key": "Nothing narrows the *first* table's projection differently f",
+      "verdict": "deliberate",
+      "by": "as the caveat itself says — a join key must be read to join on. There is no narrower projection to choose, so this is a statement about what the gather cannot improve rather than about what it does not do.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-not-paying-for-the-playground.md",
+      "key": "The observer's 200px margin is a guess at \"about to be visib",
+      "verdict": "deliberate",
+      "by": "a tuning constant with no reader to tune against, the same shape as the size budget: too small and the reader waits, too large and a fast scroller pays. 200px is stated as the guess it is, which is the most an unvisited page supports.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-not-paying-for-the-playground.md",
+      "key": "A reader who loads the page and immediately jumps to `#playg",
+      "verdict": "deliberate",
+      "by": "inherent to deferring: the deep-linker wants the bundle immediately and gets it immediately, having skipped the deferral rather than been penalised by it. The alternative is preloading for everyone, which is what the entry removed.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-not-paying-for-the-playground.md",
+      "key": "There is no progress indication beyond \"Loading…\". The fetch",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: a progress bar means fetching the bytes by hand and instantiating them separately, replacing one `import()` with a streaming loader. That is a lot of machinery for a bar on a 600 KB asset.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-not-paying-for-the-playground.md",
+      "key": "Nothing caches across visits beyond what the browser's HTTP ",
+      "verdict": "open",
+      "by": "still unchecked. The browser's HTTP cache is probably enough for a Pages-served asset and nobody has looked at the headers Pages actually sends.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-ports-below-the-ephemeral-range.md",
+      "key": "It does not make the window zero. A process deliberately bin",
+      "verdict": "deliberate",
+      "by": "inherent to probing for a free port: any bind-then-listen has a window, and closing it means holding the socket, which is what the service does. What this removed is the automatic reuse, which was the only mechanism with evidence behind it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-ports-below-the-ephemeral-range.md",
+      "key": "Nothing tests the allocator itself. There is no case asserti",
+      "verdict": "open",
+      "by": "still no case asserting every allocated port is below the ephemeral floor, so an edit moving it back into the range would be caught only by CI, intermittently — which is where this started.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-ports-below-the-ephemeral-range.md",
+      "key": "The orphaned `go` and `node` processes the job's cleanup rep",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-the-demo-runner-left-processes-behind.md, which is the second defect this caveat spotted in the same log"
+    },
+    {
+      "entry": "2026-09-14-schema-checks-in-go-and-typescript.md",
+      "key": "Only what the wire can express. A `Get` carries its claim on",
+      "verdict": "deliberate",
+      "by": "a property of the protocol rather than of these clients: a SchemaCheck is a claim about a table, and Begin and Commit name none. Carrying one anyway would mean inventing a table for a request that has none.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-schema-checks-in-go-and-typescript.md",
+      "key": "The reasoning was written from the client's side alone, with",
+      "verdict": "closed",
+      "by": "the entry closes it inline, with a demonstration in each language and a control: `TestARenamedColumnIsAcceptedUnderItsPreviousName` in clients/go/slate/schema_test.go and `a renamed column is accepted under its previous name` in clients/typescript/test/schema.test.ts"
+    },
+    {
+      "entry": "2026-09-14-self-checking-quickstarts-and-conformance.md",
+      "key": "The quickstart check does not verify the *prose* around the ",
+      "verdict": "open",
+      "by": "still true, and the packages are still unpublished. site/check/quickstarts.py runs the code and not the install line above it, so `pip install slate-client` and `npm install @slate-orm/client` name things that do not exist.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-self-checking-quickstarts-and-conformance.md",
+      "key": "The conformance mode picks free ports for the adapters but t",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-frontend-tests-and-configurable-ports.md, which the entry already names inline: the frontend reads VITE_GO_URL and friends"
+    },
+    {
+      "entry": "2026-09-14-self-checking-quickstarts-and-conformance.md",
+      "key": "The TypeScript snippet is compiled with a `tsconfig` this ch",
+      "verdict": "deliberate",
+      "by": "deliberately the strict NodeNext shape rather than a reader's: the check is that the snippet compiles under the configuration the package is built for, and a looser config admits strictly more. A reader on a looser one hits nothing this would have caught; a reader on a stricter one does not exist.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-first-two-days-of-the-invisible-backlog.md",
+      "key": "364 remain, and they are the 2026-09-15 to 2026-09-27 entrie",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The same work at the same rate, recorded against this entry so the remainder is a caveat with a verdict rather than only a count in a tool's output."
+    },
+    {
+      "entry": "2026-09-28-the-first-two-days-of-the-invisible-backlog.md",
+      "key": "A verdict citing a path that resolves can still be wrong abo",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "already recorded deliberate against ledger/2026-09-26-the-citation-nobody-could-follow.md under 'It checks existence, not aptness': judging whether a cited file supports the citing sentence is the work the citation is, and no pattern does it. Restated here because this batch produced a worked example of it — a resolving path whose claim was false — rather than because the decision changed."
+    },
+    {
+      "entry": "2026-09-28-the-first-two-days-of-the-invisible-backlog.md",
+      "key": "The `open` verdicts name no owner and no plan.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "the tracker records whether a claim is still true, which is a different question from whether it is worth acting on. Giving each open row an owner and a plan would make docs/caveat-status.json a backlog, and ledger/README.md's argument against a shared log applies: several agents work here at once and a priority ordering is the field they would all edit."
     }
   ]
 }
