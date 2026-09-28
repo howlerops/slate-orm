@@ -22,6 +22,42 @@ from slate.schema import fingerprint_of
 
 from .fixture import AUTHORS, BOOKS, DOCS, SALES, SECRETS, USERS
 
+#: The tables whose fingerprints are pinned across all four implementations.
+#:
+#: At module scope so `test_every_value_type_appears_in_a_pinned_table` can
+#: *derive* which types are covered instead of repeating a list — a guard whose
+#: expectation is hand-written is the same maintenance problem it guards.
+PINNED_DOCS = Table(
+    name="docs",
+    columns=[
+        Column("id", ValueType.U64),
+        Column("kind", ValueType.STR),
+        Column("size", ValueType.I64),
+    ],
+    primary_key=["id"],
+)
+PINNED_SHELVES = Table(
+    name="shelves",
+    columns=[
+        Column("id", ValueType.U64),
+        Column("tags", ValueType.ARRAY, element=ValueType.STR),
+        Column("price", ValueType.DECIMAL, scale=2),
+    ],
+    primary_key=["id"],
+)
+READINGS = Table(
+    name="readings",
+    columns=[
+        Column("id", ValueType.U64),
+        Column("ok", ValueType.BOOL),
+        Column("raw", ValueType.BYTES),
+        Column("weight", ValueType.F64),
+        Column("tag", ValueType.UUID),
+        Column("point", ValueType.VECTOR),
+    ],
+    primary_key=["id"],
+)
+
 
 @pytest.mark.parametrize("table", [DOCS, USERS, AUTHORS, BOOKS, SALES], ids=lambda t: t.name)
 def test_the_declared_width_matches_the_rows_the_server_returns(
@@ -135,6 +171,41 @@ def test_a_decimals_scale_is_part_of_the_fingerprint() -> None:
     assert fingerprint_of(priced(2)) != fingerprint_of(priced(4))
 
 
+def test_every_column_type_contributes_to_the_fingerprint() -> None:
+    """The five types no pinned table carried.
+
+    `DOCS` is u64/str/i64 and `SHELVES` is u64/array/decimal, so between them a
+    port could misspell `bool`, `bytes`, `f64`, `uuid` or `vector` in its hash
+    and every pinned value stayed green. That is the residual
+    `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md` recorded:
+    two tables were pinned, not the type surface.
+
+    Each of the five is swapped for `STR` in turn and must move the number.
+    That is what makes one table a pin for five types rather than for the first
+    one that happens to differ -- and it is checked here rather than asserted,
+    because "the hash reads every column's type" is exactly the kind of claim
+    that is true of the code somebody read and false of the code somebody
+    wrote.
+    """
+    base = list(READINGS.columns)
+    readings = READINGS
+
+    # This client is the port the other three pin against; `review_fingerprint.rs`,
+    # `schema_test.go` and `schema.test.ts` each write this number down
+    # independently, which is what makes it evidence rather than self-agreement.
+    assert fingerprint_of(readings) == 0x9EB9CC433C353EB1
+
+    for index in range(1, len(base)):
+        swapped = list(base)
+        swapped[index] = Column(base[index].name, ValueType.STR)
+        assert fingerprint_of(
+            Table(name="readings", columns=swapped, primary_key=["id"])
+        ) != fingerprint_of(readings), (
+            f"`{base[index].name}` is declared {base[index].type.value} and the "
+            "fingerprint does not read it"
+        )
+
+
 def test_only_a_decimal_contributes_a_scale() -> None:
     """A table with no decimal hashes exactly as it did.
 
@@ -167,3 +238,54 @@ def test_only_a_decimal_contributes_a_scale() -> None:
         primary_key=["id"],
     )
     assert fingerprint_of(plain) != fingerprint_of(at_zero)
+
+
+def _unpinned_types(*tables: Table) -> list[str]:
+    """The `ValueType` members no column of `tables` declares, by name.
+
+    A function rather than an expression inside the test, so the *never-fires*
+    case can call it with a short list. A guard whose computation exists only
+    where it is asserted cannot be shown to fire.
+    """
+    covered = {column.type for table in tables for column in table.columns}
+    return sorted(t.value for t in ValueType if t not in covered)
+
+
+def test_every_value_type_appears_in_a_pinned_table() -> None:
+    """An eleventh column type must not arrive with no pinned fingerprint.
+
+    Five of the ten were in that position until
+    `ledger/2026-09-28-five-column-types-no-pinned-table-carried.md`: `docs`
+    and `shelves` between them covered neither `bool`, `bytes`, `f64`, `uuid`
+    nor `vector`, so a port misspelling one of those produced a fingerprint the
+    server refuses for exactly the tables that use it.
+
+    Closing those five does not close the shape, which is what this is for. The
+    covered set is *derived* from the pinned tables rather than listed, so
+    adding a type to `ValueType` fails here until some pinned table carries it
+    — and the three constants beside them are what make that pin evidence.
+    """
+    missing = _unpinned_types(PINNED_DOCS, PINNED_SHELVES, READINGS)
+    assert not missing, (
+        f"{missing} appear in no pinned table, so a port could misspell one in "
+        "its fingerprint and every pinned value would stay green. Add a column "
+        "of that type to one of the pinned tables, recompute its fingerprint "
+        "here, and write the new number down in review_fingerprint.rs, "
+        "schema_test.go and schema.test.ts."
+    )
+
+
+def test_the_coverage_guard_fires_when_a_type_is_unpinned() -> None:
+    """The never-fires half, without which the guard above proves nothing.
+
+    A guard that computes an empty answer passes for ever and reads exactly
+    like a guard that is satisfied -- `scripts/mutate.py` found this one by
+    replacing the computation with `[]` and watching the suite stay green. So
+    the computation is exercised against a set that is deliberately short: with
+    only `docs` pinned, the seven types it does not carry must be named.
+    """
+    short = _unpinned_types(PINNED_DOCS)
+    assert "vector" in short and "bool" in short, short
+    assert "u64" not in short, "docs carries u64, so it is not missing"
+    # And the real answer is not simply everything: `docs` covers three.
+    assert len(short) == len(list(ValueType)) - 3, short

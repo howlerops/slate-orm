@@ -2166,9 +2166,9 @@
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The four fingerprint implementations are held together only ",
       "verdict": "narrowed",
-      "by": "the named half is closed: Rust, Go and TypeScript each pin 0xdf013a5ccb6808c0 for a table with an `array<string>` and a `decimal(2)`, against the Python client's `fingerprint_of`. Six mutations, one per arm per port, all caught \u2014 ledger/2026-09-27-three-ports-could-have-dropped-the-element-type-and-passed.md. Measured there: dropping both arms leaves `docs` byte-identical, so every pin that existed before was blind to them.",
-      "checked": "2026-09-27",
-      "residual": "two tables are pinned, not the type surface. `vector`, `uuid`, `bytes` and `f64` appear in no pinned value, so a port misspelling one is still caught only by a live suite that writes such a column. And the Python client remains unpinned by construction: it is the reference the other three are pinned against."
+      "by": "ledger/2026-09-28-five-column-types-no-pinned-table-carried.md: a fourth pinned table, readings, covers bool, bytes, f64, uuid and vector \u2014 the five types neither pinned table carried \u2014 and its 0x9eb9cc433c353eb1 is written down independently in crates/slate-server/tests/review_fingerprint.rs, clients/go/slate/schema_test.go, clients/typescript/test/schema.test.ts and clients/python/tests/test_fixture.py. Every one of the ten column types now appears in a pinned value.",
+      "checked": "2026-09-28",
+      "residual": "the pins prove the four implementations agree with each other, not that the hash is the one `fingerprint::check` accepts \u2014 that is still the live client suites. And nothing stops an eleventh column type arriving in no pinned table; the guard for that would read the type enum and is not written."
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
@@ -7157,6 +7157,35 @@
       "verdict": "deliberate",
       "by": "that entry: the roster is the mechanism that forces the next table added to the catalog to be shown or explained, and it works empty. The alternative is to delete it and re-add it when a table needs hiding, which is the same as not having it \u2014 nobody adds a roster while adding the table it would have caught. Kept, with a comment saying why it is empty rather than unused.",
       "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-five-column-types-no-pinned-table-carried.md",
+      "key": "It does not pin a type against the *server's* acceptance.",
+      "verdict": "deliberate",
+      "by": "that entry: the four constants prove the implementations agree with each other; that the hash is the one fingerprint::check wants is proved by the live client suites, an arrangement that predates this change. The alternative is a test that stands a server up to hash one table, which is a live suite by another name and already exists. Not taken.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-five-column-types-no-pinned-table-carried.md",
+      "key": "`decimal` and `array` are pinned only through `shelves`.",
+      "verdict": "deliberate",
+      "by": "that entry: a column is never both a decimal and an array, so one table covering all ten types would not be a plausible schema. The alternative is to fold them in anyway and accept a fixture nobody would write; not taken, and test_every_value_type_appears_in_a_pinned_table in clients/python/tests/test_fixture.py covers both across the three tables together.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-five-column-types-no-pinned-table-carried.md",
+      "key": "The coverage guard is Python's alone.",
+      "verdict": "deliberate",
+      "by": "that entry: the guard reads ValueType in the port the other three are pinned against, and a type the server does not know cannot reach an accepted fingerprint anyway. The alternative is four guards, one per port, which can disagree about what the list of types is \u2014 the failure the single reference exists to avoid. Not taken.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-five-column-types-no-pinned-table-carried.md",
+      "key": "Nothing checks that the three other ports pin the same *tabl",
+      "verdict": "narrowed",
+      "by": "each port's table is three lines beside the constant it asserts, so a mismatch is visible in review, and the number itself is the cross-port evidence.",
+      "checked": "2026-09-28",
+      "residual": "a port that wrote the right number against a different table would pass. Enforcing it means a shared fixture the four ports read, which is a file format none of them has."
     }
   ]
 }

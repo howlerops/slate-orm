@@ -327,3 +327,39 @@ fn a_decimals_scale_is_hashed_and_a_wrong_one_is_refused() {
     // TypeScript suites. A fourth copy of that claim would be a fourth thing
     // to update and no more evidence.
 }
+
+/// The five types no pinned table carried.
+///
+/// `docs` is u64/str/i64 and `shelves` is u64/array/decimal, so between them a
+/// port could misspell `bool`, `bytes`, `f64`, `uuid` or `vector` in its hash
+/// and every pinned value stayed green. That is the residual
+/// `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md` recorded:
+/// two tables are pinned, not the type surface.
+///
+/// One table with all five rather than five tables, because the fingerprint
+/// hashes each column's type name in turn, so changing any one moves the
+/// number. That was checked before the constant was written down — each of the
+/// five swapped for `str` in turn gives a different value — rather than
+/// assumed from reading the hash.
+///
+/// The number is the Python client's, computed independently, and the Go and
+/// TypeScript suites write it down separately:
+///
+/// ```text
+/// >>> hex(fingerprint_of(READINGS))
+/// '0x9eb9cc433c353eb1'
+/// ```
+#[test]
+fn every_remaining_column_type_is_pinned_across_the_ports() {
+    let readings = TableDef::builder("readings", TableId(1))
+        .column("id", ValueType::U64)
+        .column("ok", ValueType::Bool)
+        .column("raw", ValueType::Bytes)
+        .column("weight", ValueType::F64)
+        .column("tag", ValueType::Uuid)
+        .column("point", ValueType::Vector)
+        .primary_key(["id"])
+        .build()
+        .expect("valid schema");
+    assert_eq!(fingerprint::of_table(&readings), 0x9eb9_cc43_3c35_3eb1);
+}
