@@ -1,0 +1,64 @@
+{
+  "at": "2026-09-28T17:53:43+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the unclosed-bracket message hard-codes WHERE again",
+      "old": "Clause::Having(..) | Clause::JoinHaving(..) => \"HAVING\",",
+      "new": "Clause::Having(..) | Clause::JoinHaving(..) => \"WHERE\",",
+      "verdict": "caught",
+      "caught_by": [
+        "an_unclosed_bracket_in_a_having_says_having_and_not_where",
+        "mixing_connectives_in_a_having_without_brackets_is_still_refused"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a nested single-table HAVING lands in the flat conjunction",
+      "old": "Where::Nested(tree) => spec.having_predicate = Some(tree),",
+      "new": "Where::Nested(_) => spec.having_predicate = None,",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_in_a_having_is_anded_with_what_follows_it",
+        "a_flat_having_never_lands_in_the_nested_field",
+        "a_nested_having_survives_the_json_round_trip",
+        "the_other_having_nesting_works_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "an ORed single-table HAVING lands in the ANDed field",
+      "old": "Where::Any(terms) => spec.having_any_of = terms,",
+      "new": "Where::Any(terms) => spec.having = terms,",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a nested join HAVING is dropped",
+      "old": "Where::Nested(tree) => having_predicate = Some(tree),",
+      "new": "Where::Nested(_) => having_predicate = None,",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_having_reaches_a_join_and_a_chain"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-28T17:54:19+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an ORed single-table HAVING lands in the ANDed field",
+      "old": "Where::Any(terms) => spec.having_any_of = terms,",
+      "new": "Where::Any(terms) => spec.having = terms,",
+      "verdict": "caught",
+      "caught_by": [
+        "an_ored_single_table_having_is_a_disjunction_and_not_a_conjunction"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

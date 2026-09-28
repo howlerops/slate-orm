@@ -72,6 +72,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WITNESS: dict[str, tuple[str | None, str]] = {
 
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
+ "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
  "bad-section-run": ("refuses()", "scripts/run_examples.sh"),
  "ambiguity": ("ambigu", "crates/slate-sql/src"),
  "array-codegen": ("element", "scripts/codegen.py"),
@@ -342,6 +343,12 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-25-or-in-having-too.md',
+     'No parentheses, so still no nesting.'):
+        'having-brackets',
+    ('2026-09-25-parentheses-in-a-where.md',
+     'No brackets in a `HAVING`'):
+        'having-brackets',
     ('2026-09-26-a-mistyped-section-is-a-refusal-now.md',
      'Nothing in CI runs an example with a bad section.'):
         'bad-section-run',

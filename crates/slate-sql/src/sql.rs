@@ -27,16 +27,17 @@
 //!         ( JOIN <table> [AS <alias>] ON <ref> = <ref> )*
 //!         [ WHERE <predicate> ]
 //!         [ GROUP BY <item> (, <item>)* ]
-//!         [ HAVING <group-cond> ((AND <group-cond>)* | (OR <group-cond>)*) ]
+//!         [ HAVING <group-predicate> ]
 //!         [ ORDER BY <item | aggregate> [ASC|DESC] (, ...)* ]
 //!         [ LIMIT <int> ] [ OFFSET <int> ]
 //!
 //!         -- <predicate> := <cond> | '(' <predicate> ')'
 //!         --                | <predicate> ((AND <predicate>)* | (OR <predicate>)*)
+//!         -- <group-predicate> := <group-cond> | '(' <group-predicate> ')'
+//!         --                | <group-predicate> ((AND ...)* | (OR ...)*)
 //!         -- an ungrouped JOIN takes SELECT * and nothing else
 //!         -- on a join: ORDER BY needs a GROUP BY
 //!         -- a join's WHERE takes AND only, and no brackets
-//!         -- a HAVING takes no brackets either
 //!         -- AS only where a table is read more than once
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
@@ -210,9 +211,17 @@
 //! now write the brackets they mean, so the refusal names the fix instead of
 //! being the end of the road.
 //!
-//! A **`HAVING` takes no brackets.** It is all `AND` or all `OR`, and a
-//! mixture is refused bracketed or not: the group-condition lists have no
-//! nested form to lower, and nobody has written a query that wanted one.
+//! **A `HAVING` brackets exactly as a `WHERE` does**, and by the same code:
+//! `HAVING (count(*) > 5 OR count(*) < 2) AND count(*) <> 3` is a tree, it
+//! lands in `having_predicate`, and a bracket that nests nothing produces the
+//! spec the unbracketed form does. The two clauses differ only in what a leaf
+//! resolves against — a column for one, a select item in group space for the
+//! other — which is what the `Clause` enum carries.
+//!
+//! It did not, for a while: the argument was that the group-condition lists
+//! had no nested form to lower. That was true of the *spec* and never of the
+//! kernel, whose `Grouping::having` has been an `Expr` tree since it was
+//! written, so the missing piece was a third spec field and not an operator.
 //!
 //! A **join's `WHERE`** takes `AND` only, brackets or no brackets. Its
 //! conditions are split by side so each scan is narrowed before the hash
@@ -511,6 +520,43 @@ enum Where {
     All(Vec<FilterSpec>),
     Any(Vec<FilterSpec>),
     Nested(PredicateSpec),
+}
+
+/// Which clause is being parsed, and what its leaves resolve against.
+///
+/// `WHERE` and `HAVING` differ *only* at the leaf: one compares a column of
+/// the table, the other a select item resolved into group space. Precedence,
+/// the refusal of a bare `AND`/`OR` mixture, the flattening and the
+/// unclosed-bracket message are the same in both, and this enum is what lets
+/// them be the same *code* rather than two copies.
+///
+/// That is not a tidiness argument. `OR` arrived in the two clauses as two
+/// separate pieces of work, and they disagreed for a week about whether a
+/// chain's `HAVING` had it — `ledger/2026-09-25-or-in-having-too.md` is that
+/// gap. Brackets arriving the same way would have repeated it, and the
+/// single-table and the join paths would each have needed their own
+/// bracket-matching loop.
+#[derive(Clone, Copy)]
+enum Clause<'a> {
+    /// A condition over one of the table's own columns.
+    Where(&'a TableDef),
+    /// A condition over a group of a single-table query. The spec is the one
+    /// being built: `HAVING count(*) > 100` names an aggregate by what the
+    /// query computes, so the select list must already be resolved.
+    Having(&'a QuerySpec, &'a TableDef),
+    /// A condition over a group of a join or a chain, whose group space is
+    /// assembled from the parse rather than read off a spec.
+    JoinHaving(GroupSpace<'a>, &'a [Input]),
+}
+
+impl Clause<'_> {
+    /// The keyword a refusal names, so one message serves both clauses.
+    fn name(self) -> &'static str {
+        match self {
+            Clause::Where(_) => "WHERE",
+            Clause::Having(..) | Clause::JoinHaving(..) => "HAVING",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1569,7 +1615,7 @@ impl Parser<'_> {
             Some(shown)
         };
         let filter = if self.eat("where") {
-            Some(self.disjunction(&base)?)
+            Some(self.disjunction(Clause::Where(&base))?)
         } else {
             None
         };
@@ -1725,7 +1771,7 @@ impl Parser<'_> {
         // HAVING and ORDER BY are about group space and computed columns — so
         // the delay is invisible to every other clause.
         let mut clause = if self.eat("where") {
-            Some(self.disjunction(&table)?)
+            Some(self.disjunction(Clause::Where(&table))?)
         } else {
             None
         };
@@ -1892,30 +1938,12 @@ impl Parser<'_> {
             // `HAVING count(*) > 100` names an aggregate by what the query
             // *computes* — the same rule ORDER BY follows — and `spec.aggregates`
             // is not populated until the loop above has run.
-            let mut any = false;
-            let mut terms = Vec::new();
-            loop {
-                terms.push(self.having_condition(&spec, &table)?);
-                let at = self.at();
-                if self.eat("and") {
-                    if any {
-                        return Err(Self::mixed_connectives_in("HAVING", at));
-                    }
-                    continue;
-                }
-                if self.eat("or") {
-                    if terms.len() > 1 && !any {
-                        return Err(Self::mixed_connectives_in("HAVING", at));
-                    }
-                    any = true;
-                    continue;
-                }
-                break;
-            }
-            if any {
-                spec.having_any_of = terms;
-            } else {
-                spec.having = terms;
+            // The borrow of `spec` ends with this statement, which is what
+            // lets the three fields below be assigned from its own result.
+            match self.clause_tree(Clause::Having(&spec, &table))? {
+                Where::All(terms) => spec.having = terms,
+                Where::Any(terms) => spec.having_any_of = terms,
+                Where::Nested(tree) => spec.having_predicate = Some(tree),
             }
         }
         if self.eat("order") {
@@ -2856,7 +2884,13 @@ impl Parser<'_> {
     /// so each scan is narrowed before the hash join runs, and neither a
     /// disjunction nor a nested predicate can be split that way.
     fn where_clause(&mut self, table: &TableDef) -> Result<Where, SqlError> {
-        let tree = self.disjunction(table)?;
+        self.clause_tree(Clause::Where(table))
+    }
+
+    /// The whole of a `WHERE` or a `HAVING`, flattened to the shape that holds
+    /// it without losing anything.
+    fn clause_tree(&mut self, clause: Clause<'_>) -> Result<Where, SqlError> {
+        let tree = self.disjunction(clause)?;
         Ok(Self::flatten(tree))
     }
 
@@ -2868,16 +2902,16 @@ impl Parser<'_> {
     /// in SQL and reads as `a AND (b OR c)` to about half of everyone. The
     /// refusal is *more* defensible now rather than less, because the reader
     /// can write the brackets and the message says to.
-    fn disjunction(&mut self, table: &TableDef) -> Result<PredicateSpec, SqlError> {
-        let (first, bare_and) = self.conjunction(table)?;
+    fn disjunction(&mut self, clause: Clause<'_>) -> Result<PredicateSpec, SqlError> {
+        let (first, bare_and) = self.conjunction(clause)?;
         let mut parts = vec![first];
         let mut bare = vec![bare_and];
         while self.peek_word().as_deref() == Some("or") {
             let at = self.at();
             self.i += 1;
-            let (part, bare_and) = self.conjunction(table)?;
+            let (part, bare_and) = self.conjunction(clause)?;
             if bare.iter().any(|b| *b) || bare_and {
-                return Err(Self::mixed_connectives(at));
+                return Err(Self::mixed_connectives_in(clause.name(), at));
             }
             parts.push(part);
             bare.push(bare_and);
@@ -2910,11 +2944,11 @@ impl Parser<'_> {
     ///
     /// Keeping parenthesisation a parse-time fact rather than a `Group` node
     /// is what makes `((a))` and `a` produce the same spec, as they must.
-    fn conjunction(&mut self, table: &TableDef) -> Result<(PredicateSpec, bool), SqlError> {
-        let mut parts = vec![self.primary(table)?];
+    fn conjunction(&mut self, clause: Clause<'_>) -> Result<(PredicateSpec, bool), SqlError> {
+        let mut parts = vec![self.primary(clause)?];
         while self.peek_word().as_deref() == Some("and") {
             self.i += 1;
-            parts.push(self.primary(table)?);
+            parts.push(self.primary(clause)?);
         }
         if parts.len() == 1 {
             return Ok((parts.remove(0), false));
@@ -2923,20 +2957,34 @@ impl Parser<'_> {
     }
 
     /// `'(' disjunction ')'` or one condition.
-    fn primary(&mut self, table: &TableDef) -> Result<PredicateSpec, SqlError> {
+    fn primary(&mut self, clause: Clause<'_>) -> Result<PredicateSpec, SqlError> {
         if self.eat_symbol("(") {
-            let inner = self.disjunction(table)?;
+            let inner = self.disjunction(clause)?;
             self.expect_symbol(")").map_err(|mut e| {
                 // Named, because the reader who opened a bracket and did not
                 // close it has usually lost track of where — and `expected
                 // `)`, found end of input` points at the end of the statement
-                // rather than at the clause that needs one.
-                e.message = format!("{} (an unclosed `(` in the WHERE)", e.message);
+                // rather than at the clause that needs one. The clause is
+                // substituted rather than written, because a shared parser
+                // that says WHERE inside a HAVING is worse than no name.
+                e.message = format!("{} (an unclosed `(` in the {})", e.message, clause.name());
                 e
             })?;
             return Ok(inner);
         }
-        Ok(PredicateSpec::Of(self.condition(table)?))
+        Ok(PredicateSpec::Of(self.leaf(clause)?))
+    }
+
+    /// One comparison, resolved in whichever space the clause names.
+    ///
+    /// The only place the two clauses diverge, which is the property the
+    /// [`Clause`] enum exists to hold.
+    fn leaf(&mut self, clause: Clause<'_>) -> Result<FilterSpec, SqlError> {
+        match clause {
+            Clause::Where(table) => self.condition(table),
+            Clause::Having(spec, table) => self.having_condition(spec, table),
+            Clause::JoinHaving(space, inputs) => self.join_having_condition(space, inputs),
+        }
     }
 
     /// The flattest shape that holds this tree without losing anything.
@@ -2962,11 +3010,6 @@ impl Parser<'_> {
                 None => Where::Nested(tree),
             },
         }
-    }
-
-    /// One clause cannot be part `AND` and part `OR`.
-    fn mixed_connectives(at: usize) -> SqlError {
-        Self::mixed_connectives_in("WHERE", at)
     }
 
     /// The same refusal, naming the clause it came from.
@@ -3309,6 +3352,28 @@ impl Parser<'_> {
         Ok((op.to_owned(), value))
     }
 
+    /// One `HAVING` comparison over a join's or a chain's group space.
+    ///
+    /// The single-table twin of this is [`Self::having_condition`]; they differ
+    /// only in how an ordinal is resolved, which is the difference between a
+    /// query with one table and one with several.
+    fn join_having_condition(
+        &mut self,
+        space: GroupSpace<'_>,
+        inputs: &[Input],
+    ) -> Result<FilterSpec, SqlError> {
+        let at = self.at();
+        let item = self.select_item()?;
+        let column = self.join_group_ordinal(&item, space, inputs, at, "HAVING")?;
+        let (op, value) = self.comparison_tail()?;
+        Ok(FilterSpec {
+            column,
+            op,
+            value,
+            ..FilterSpec::default()
+        })
+    }
+
     /// One `HAVING` comparison: `count(*) > 100`, `avg(total) >= 25.0`.
     ///
     /// The left side is a select item rather than a column, and it resolves
@@ -3410,6 +3475,10 @@ impl Parser<'_> {
         // list rather than two lists, because the parser fills one and the
         // spec decides which field it lands in — see the assignment below.
         let mut having_any = false;
+        // The bracketed case, which is neither of the above. Three states in
+        // two variables rather than one `Option<Where>` because the two flat
+        // ones are what every existing build site below reads.
+        let mut having_predicate: Option<PredicateSpec> = None;
         let mut group_by: Vec<u32> = Vec::new();
         let mut limit: Option<u64> = None;
         let mut offset = 0;
@@ -3644,42 +3713,18 @@ impl Parser<'_> {
             // *computes* — the rule ORDER BY follows — and `aggregates` is not
             // populated until the loop above has run. The single-table clause
             // sits in the same place for the same reason.
-            loop {
-                let at = self.at();
-                let item = self.select_item()?;
-                let column = self.join_group_ordinal(
-                    &item,
-                    GroupSpace {
-                        keys: &group_by,
-                        aggregates: &aggregates,
-                        compute: &compute,
-                    },
-                    &inputs,
-                    at,
-                    "HAVING",
-                )?;
-                let (op, value) = self.comparison_tail()?;
-                having.push(FilterSpec {
-                    column,
-                    op,
-                    value,
-                    ..FilterSpec::default()
-                });
-                let at = self.at();
-                if self.eat("and") {
-                    if having_any {
-                        return Err(Self::mixed_connectives_in("HAVING", at));
-                    }
-                    continue;
-                }
-                if self.eat("or") {
-                    if having.len() > 1 && !having_any {
-                        return Err(Self::mixed_connectives_in("HAVING", at));
-                    }
+            let space = GroupSpace {
+                keys: &group_by,
+                aggregates: &aggregates,
+                compute: &compute,
+            };
+            match self.clause_tree(Clause::JoinHaving(space, &inputs))? {
+                Where::All(terms) => having = terms,
+                Where::Any(terms) => {
+                    having = terms;
                     having_any = true;
-                    continue;
                 }
-                break;
+                Where::Nested(tree) => having_predicate = Some(tree),
             }
         }
 
@@ -3765,6 +3810,7 @@ impl Parser<'_> {
                 } else {
                     Vec::new()
                 },
+                having_predicate: having_predicate.clone(),
                 compute,
                 group_by,
                 aggregates,
@@ -3805,6 +3851,7 @@ impl Parser<'_> {
                 having.clone()
             },
             having_any_of: if having_any { having } else { Vec::new() },
+            having_predicate,
             group_by,
             aggregates,
             sort,
@@ -4335,7 +4382,7 @@ mod grammar {
         // lines moved is exactly the block this test is for.
         for (what, marker) in [
             ("the predicate production", "<predicate> :="),
-            ("HAVING", "[ HAVING "),
+            ("the group-predicate production", "<group-predicate> :="),
         ] {
             let start = block
                 .lines()
@@ -4355,16 +4402,25 @@ mod grammar {
             );
             assert!(text.contains("AND"), "{what} does not mention AND: {text}");
         }
-        // And the `WHERE` line still reaches the production, rather than
-        // having quietly grown its own connectives back.
-        let where_line = block
-            .lines()
-            .find(|line| line.contains("[ WHERE "))
-            .expect("no WHERE line in the grammar block");
-        assert!(
-            where_line.contains("<predicate>"),
-            "the WHERE line should delegate to <predicate>: {where_line}"
-        );
+        // And both clause lines still reach a production, rather than
+        // having quietly grown their own connectives back. The `HAVING` line
+        // joined this check when it stopped listing its connectives inline:
+        // it used to spell `((AND ..)* | (OR ..)*)` out, because a bracketed
+        // group condition had nowhere to go and the clause *was* the whole
+        // grammar. Now it delegates exactly as the `WHERE` does.
+        for (clause, marker, production) in [
+            ("WHERE", "[ WHERE ", "<predicate>"),
+            ("HAVING", "[ HAVING ", "<group-predicate>"),
+        ] {
+            let line = block
+                .lines()
+                .find(|line| line.contains(marker))
+                .unwrap_or_else(|| panic!("no {clause} line in the grammar block"));
+            assert!(
+                line.contains(production),
+                "the {clause} line should delegate to {production}: {line}"
+            );
+        }
     }
 
     #[test]

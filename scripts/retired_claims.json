@@ -30,6 +30,12 @@
       "retired_by": "ledger/2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
       "why": "N1 put a `path` of relationships on the wire, so nested loading crossed it. The claim was struck in docs/orm-comparison.md and left standing on site/docs/roadmap.html, which is the two-copies failure this list exists for.",
       "instead": "A path resolves levels in one round trip; what it stops at is a predicate, ordering or limit per level."
+    },
+    {
+      "phrase": "a HAVING takes no brackets",
+      "retired_by": "ledger/2026-09-28-a-having-brackets-the-way-a-where-does.md",
+      "why": "It does now, through the same parser the WHERE uses. The reason given for the limit \u2014 that the group-condition lists had no nested form to lower \u2014 was true of the spec and never of the kernel, whose Grouping::having has always been an Expr tree.",
+      "instead": "A HAVING brackets exactly as a WHERE does; a join's WHERE is the one clause that still takes AND only."
     }
   ]
 }

@@ -314,8 +314,11 @@ prop_compose! {
             // hand: generating one means generating the *brackets* too, and a
             // generator that emits `(a AND b) OR c` is a second implementation
             // of the precedence rule this parser deliberately refuses to have.
-            // The hand-written case is weaker and says what it proves.
+            // The hand-written case is weaker and says what it proves. The
+            // same argument covers `having_predicate`, which this generator
+            // does not reach either: it produces no grouping at all.
             predicate: None,
+            having_predicate: None,
             sort,
             limit,
             offset,

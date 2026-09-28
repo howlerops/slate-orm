@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-28T17:55:57+00:00",
+  "file": "crates/slate-wasm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "having",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the single-table guard cannot see a nested HAVING",
+      "old": "        if !spec.having.is_empty()\n            || !spec.having_any_of.is_empty()\n            || spec.having_predicate.is_some()\n        {",
+      "new": "        if !spec.having.is_empty() || !spec.having_any_of.is_empty() {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_having_reaches_the_kernel_and_is_not_silently_dropped"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the single-table call site drops the nested tree",
+      "old": "                &spec.having,\n                &spec.having_any_of,\n                spec.having_predicate.as_ref(),",
+      "new": "                &spec.having,\n                &spec.having_any_of,\n                None,",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_having_reaches_the_kernel_and_is_not_silently_dropped"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

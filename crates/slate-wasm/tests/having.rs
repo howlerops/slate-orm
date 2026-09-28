@@ -346,3 +346,166 @@ fn the_spec_shows_the_having_it_ran() {
     assert_eq!(having[0]["op"], json!("gt"), "{having}");
     assert_eq!(having[0]["value"], json!("3000"), "{having}");
 }
+
+#[test]
+fn a_bracketed_having_reaches_the_kernel_and_is_not_silently_dropped() {
+    // The binding decides whether to attach a HAVING at all by looking at the
+    // spec's fields, and a *nested* HAVING lands in a third one. A guard that
+    // was not widened to see it would attach nothing — returning every group,
+    // which is a wrong answer rather than an error, and the exact failure the
+    // three call sites make possible.
+    let playground = loaded();
+    let all = all_zones(&playground);
+
+    // The arms are deliberately far apart, so the bracket is load-bearing:
+    // `(busy OR quiet) AND NOT the busiest` keeps a band no single condition
+    // and no flat conjunction describes.
+    let answer = ok(
+        &playground,
+        "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone \
+         HAVING (count(*) > 3000 OR count(*) < 10) AND count(*) < 9000",
+    );
+    let returned = answer["returned"].as_u64().unwrap();
+    assert!(
+        returned < all,
+        "a bracketed HAVING that filtered nothing was dropped: {returned} of {all}"
+    );
+
+    // And every survivor really satisfies it, which asserting the count alone
+    // would not: a HAVING keeping some other set of groups returns a number
+    // under `all` too.
+    for row in answer["rows"].as_array().unwrap() {
+        let count: u64 = row[1].as_str().unwrap().parse().unwrap();
+        // `!(10..=3000).contains(&count)` is `count > 3000 OR count < 10`,
+        // the disjunction the query asked for. Written as a range because
+        // clippy's `manual_range_contains` rejects the readable form.
+        assert!(
+            !(10..=3000).contains(&count) && count < 9000,
+            "a group of {count} does not satisfy the bracketed HAVING"
+        );
+    }
+
+    // The band is not vacuous, and not the whole table either: both arms of
+    // the disjunction contributed, so a lowering that dropped one would be
+    // caught here rather than passing on the other's rows.
+    let counts: Vec<u64> = answer["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row[1].as_str().unwrap().parse().unwrap())
+        .collect();
+    assert!(
+        counts.iter().any(|c| *c > 3000),
+        "no group came from the busy arm: {counts:?}"
+    );
+    assert!(
+        counts.iter().any(|c| *c < 10),
+        "no group came from the quiet arm: {counts:?}"
+    );
+}
+
+#[test]
+fn the_spec_shows_a_bracketed_having_as_a_tree() {
+    // The Spec tab's claim about what it sent, for the nested shape. A HAVING
+    // that ran but was reported as flat would make the tab wrong in exactly
+    // the case a reader is most likely to be checking it for.
+    let playground = loaded();
+    let answer = ok(
+        &playground,
+        "SELECT pickup_zone, count(*) FROM trips GROUP BY pickup_zone \
+         HAVING (count(*) > 3000 OR count(*) < 10) AND count(*) < 9000",
+    );
+    let spec = &answer["spec"];
+    assert!(
+        spec["havingPredicate"].is_object(),
+        "a bracketed HAVING should serialize as a tree: {spec}"
+    );
+    // And not *also* in a flat list, which is the invariant that makes three
+    // fields safe rather than three ways to say one thing.
+    assert!(
+        spec["having"].is_null(),
+        "the flat conjunction should be absent: {spec}"
+    );
+    assert!(
+        spec["havingAnyOf"].is_null(),
+        "the flat disjunction should be absent: {spec}"
+    );
+}
+
+#[test]
+fn a_bracketed_having_reaches_a_grouped_join_too() {
+    // The join and the chain parse through a different function from the
+    // single-table path, and lower through a different call site. They share
+    // `group_predicate`, so the tree conversion is the same code — but "the
+    // same code" is an argument, and this is the demonstration. The two paths
+    // already disagreed once about whether a HAVING took `OR`
+    // (`ledger/2026-09-25-or-in-having-too.md`), which is the precedent.
+    let playground = loaded();
+    let all = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough",
+    )["returned"]
+        .as_u64()
+        .unwrap();
+
+    let answer = ok(
+        &playground,
+        "SELECT borough, count(*) FROM trips JOIN zones ON trips.pickup_zone = zones.id \
+         GROUP BY borough HAVING (count(*) > 20000 OR count(*) < 200) AND count(*) < 60000",
+    );
+    let returned = answer["returned"].as_u64().unwrap();
+    assert!(
+        returned < all,
+        "a bracketed HAVING on a join filtered nothing: {returned} of {all}"
+    );
+    for row in answer["rows"].as_array().unwrap() {
+        let count: u64 = row[1].as_str().unwrap().parse().unwrap();
+        // The range form again, for the reason given above.
+        assert!(
+            !(200..=20000).contains(&count) && count < 60000,
+            "a group of {count} does not satisfy the bracketed HAVING"
+        );
+    }
+}
+
+#[test]
+fn a_bracketed_having_reaches_a_grouped_chain_too() {
+    // Three inputs, so the *chain* lowering runs rather than the two-table
+    // join's — a separate `group_predicate` call site, and the one a mutation
+    // found unexercised: dropping the nested tree there survived the whole
+    // file while the join and single-table cases caught theirs. The fixture
+    // has two tables, so the third input is `zones` under an alias, which is
+    // what the front end's own chain cases do.
+    let playground = loaded();
+    let chain = "FROM trips \
+                 JOIN zones AS a ON trips.pickup_zone = a.id \
+                 JOIN zones AS b ON trips.pickup_zone = b.id";
+    let all = ok(
+        &playground,
+        &format!("SELECT a.borough, count(*) {chain} GROUP BY a.borough"),
+    )["returned"]
+        .as_u64()
+        .unwrap();
+
+    let answer = ok(
+        &playground,
+        &format!(
+            "SELECT a.borough, count(*) {chain} GROUP BY a.borough \
+             HAVING (count(*) > 20000 OR count(*) < 200) AND count(*) < 60000"
+        ),
+    );
+    let returned = answer["returned"].as_u64().unwrap();
+    assert!(
+        returned < all,
+        "a bracketed HAVING on a chain filtered nothing: {returned} of {all}"
+    );
+    for row in answer["rows"].as_array().unwrap() {
+        let count: u64 = row[1].as_str().unwrap().parse().unwrap();
+        // The range form again, for the reason given above.
+        assert!(
+            !(200..=20000).contains(&count) && count < 60000,
+            "a group of {count} does not satisfy the bracketed HAVING"
+        );
+    }
+}

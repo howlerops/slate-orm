@@ -804,7 +804,10 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+                if !spec.having.is_empty()
+                    || !spec.having_any_of.is_empty()
+                    || spec.having_predicate.is_some()
+                {
                     // Over the group, and its stored keys resolved through the
                     // *joined* ordinal -- which is what `group_value_type` now
                     // walks, and the reason the joined path had no HAVING
@@ -818,6 +821,7 @@ impl Playground {
                     grouping = grouping.having(group_predicate(
                         &spec.having,
                         &spec.having_any_of,
+                        spec.having_predicate.as_ref(),
                         &keys,
                         &aggregates,
                         &[&authors, &books],
@@ -1068,10 +1072,14 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+                if !spec.having.is_empty()
+                    || !spec.having_any_of.is_empty()
+                    || spec.having_predicate.is_some()
+                {
                     grouping = grouping.having(group_predicate(
                         &spec.having,
                         &spec.having_any_of,
+                        spec.having_predicate.as_ref(),
                         &keys,
                         &aggregates,
                         &refs,
@@ -1557,10 +1565,14 @@ impl Playground {
         // the sort only decides what order they come back in. The kernel
         // applies them in that order regardless; setting them in the same
         // order here is so that reading this says what happens.
-        if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+        if !spec.having.is_empty()
+            || !spec.having_any_of.is_empty()
+            || spec.having_predicate.is_some()
+        {
             grouping = grouping.having(group_predicate(
                 &spec.having,
                 &spec.having_any_of,
+                spec.having_predicate.as_ref(),
                 &keys,
                 &aggregates,
                 &[table],

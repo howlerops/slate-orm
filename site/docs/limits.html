@@ -96,15 +96,16 @@
         brackets you mean.
       </p>
       <p>
-        Two clauses take no brackets. A <em>join's</em> <code>WHERE</code>
+        One clause takes no brackets. A <em>join's</em> <code>WHERE</code>
         is <code>AND</code> only: its conditions are split by side so each
         scan is narrowed before the hash join runs, and neither a disjunction
         nor a tree spanning both sides can be split that way. A
-        <code>HAVING</code> is all <code>AND</code> or all <code>OR</code>
-        — on a single table, a join and a chain alike — because the group
-        conditions have no nested form to lower onto. A disjunction is also a
-        filter rather than an access path: it cannot become a scan bound,
-        because <code>a = 1 OR b = 2</code> has no single key range.
+        <code>HAVING</code> brackets exactly as a <code>WHERE</code> does
+        — on a single table, a join and a chain alike — and shares
+        the same parser, so the two cannot come to disagree about what a
+        bracket means. A disjunction is still a filter rather than an access
+        path: it cannot become a scan bound, because
+        <code>a = 1 OR b = 2</code> has no single key range.
       </p>
       <p>
         <strong>The newest features stop where they stop.</strong> A window

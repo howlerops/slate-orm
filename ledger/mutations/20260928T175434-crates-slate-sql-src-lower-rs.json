@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-28T17:54:34+00:00",
+  "file": "crates/slate-sql/src/lower.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a bracketed OR lowers as an AND",
+      "old": "            Expr::Or(out)\n        }\n    })\n}",
+      "new": "            let mut all = Expr::True;\n            for part in out {\n                all = match all {\n                    Expr::True => part,\n                    existing => existing.and(part),\n                };\n            }\n            all\n        }\n    })\n}",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_in_a_having_is_anded_with_what_follows_it",
+        "the_other_having_nesting_works_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the nested tree is conjoined away",
+      "old": "        let expr = group_tree(tree, keys, aggregates, inputs)?;\n        conjunction = match conjunction {",
+      "new": "        let expr = Expr::True;\n        let _ = group_tree(tree, keys, aggregates, inputs)?;\n        conjunction = match conjunction {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_in_a_having_is_anded_with_what_follows_it",
+        "the_other_having_nesting_works_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a bracketed AND lowers as an OR",
+      "old": "        PredicateSpec::All(parts) => {\n            let mut out = Expr::True;",
+      "new": "        PredicateSpec::All(parts) if false => {\n            let mut out = Expr::True;",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
