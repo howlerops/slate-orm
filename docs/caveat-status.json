@@ -8292,9 +8292,10 @@
     {
       "entry": "2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md",
       "key": "Nothing measures it. \"Two reads rather than N\" is a claim ab",
-      "verdict": "open",
-      "by": "still structural. `parents_sharing_a_tag_share_one_read_of_it` counts the values in the IN filter, which is the request's size; no benchmark counts round trips or latency for a many-to-many.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "crates/slate-orm/tests/read_counts.rs counts the loader's calls into Records with a Counting wrapper: a_many_to_many_is_two_reads_whatever_the_parent_count reads exactly twice at 2 parents and at 24, where a per-parent loader would read 24 times and a per-join-row one 48.",
+      "checked": "2026-09-28",
+      "residual": "it counts reads, not latency. Two reads on a loopback memory store says nothing about what two reads cost over a network, which is what examples/deployed would measure and still does not."
     },
     {
       "entry": "2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md",
@@ -8318,9 +8319,10 @@
     {
       "entry": "2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md",
       "key": "The claim \"two reads\" is structural rather than measured. No",
-      "verdict": "open",
-      "by": "still unmeasured, and the same claim the many-to-many entry makes. Nothing counts round trips at runtime and the deployed benchmark does not exercise either function.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "nested_loading_is_two_reads_whatever_the_parent_count in crates/slate-orm/tests/read_counts.rs counts them: two, at 2 parents and at 24. keeping_the_join_rows_costs_no_extra_read asserts the same for load_related_through rather than inferring it from the two being one function.",
+      "checked": "2026-09-28",
+      "residual": "same as the row above: a count of reads is not a count of round trips over a network, and the depth limit itself still has nothing to limit."
     },
     {
       "entry": "2026-09-16-predicate-writes-in-three-clients-and-a-guard-that-never-ran.md",
@@ -10515,6 +10517,27 @@
       "verdict": "deliberate",
       "by": "this entry: the accepted cost of the append-only rule, argued against both alternatives above. The tracker is the mechanism — all five caveats these entries raise carry a closed verdict naming crates/slate-server/src/fingerprint.rs.",
       "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
+      "key": "It does not measure a round trip.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. examples/deployed is where a network round trip would be measured and it does not exercise a relation load; it needs MinIO, which this container does not have."
+    },
+    {
+      "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
+      "key": "It leaves the other two unmeasured claims where they were.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Batching from a client and keyset paging on the wire are claims about a client, so an instrument inside slate-orm cannot reach them; a per-connection request count the test could read is the cheaper design and is not built."
+    },
+    {
+      "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
+      "key": "It counts calls, not work.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: what a scan costs is the planner's question with its own tests in crates/slate-kernel, and a Records-level counter that also measured scan width would move when the planner is tuned and read as a relation-loading regression."
     }
   ]
 }
