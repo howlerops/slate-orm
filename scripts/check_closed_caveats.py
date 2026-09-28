@@ -71,6 +71,48 @@ ROOT = Path(__file__).resolve().parent.parent
 #: exist. `path` is a `git grep` pathspec, so a directory covers its tree.
 WITNESS: dict[str, tuple[str | None, str]] = {
 
+ # --- the 2026-09-13/14 backlog, triaged 2026-09-28 --------------------------
+ #
+ # Forty closures in one batch, because the paragraph widening in
+ # `ledger/2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md` made
+ # two days of caveats visible at once and most had been answered by work
+ # nobody had connected back to them. Each needle was checked with `git grep`
+ # before its row was written, which is the step that turned one
+ # plausible-looking closure — "plan.rs costs a grouped join as grouped" —
+ # into the withdrawal below, which is what actually happened.
+ "ceilings": ("ExecutionLimits", "crates/slate-kernel/src/limits.rs"),
+ "readme-swept": ("Status", "README.md"),
+ "explain-grouped": ("grouped read narrows its", "crates/slate-kernel/src/explain.rs"),
+ "conformance-runner": ("conformance", "examples/explorer/run.sh"),
+ "pages-deploy": (None, ".github/workflows/pages.yml"),
+ "grouped-chain-wire": ("GroupedSource", "crates/slate-server/src/convert.rs"),
+ "go-schemacheck": ("SchemaCheck", "clients/go/slate/schema.go"),
+ "ts-renamed-column": (
+     "a renamed column is accepted under its previous name",
+     "clients/typescript/test/schema.test.ts",
+ ),
+ "go-scalar": ("Scalar", "clients/go/slate/query.go"),
+ "ts-scalar": (None, "clients/typescript/src/scalar.ts"),
+ "prebuilt-binary": ("SLATE_SERVERD", "clients/go/slate/harness_test.go"),
+ "testserver-member": ("clients/python/testserver", "Cargo.toml"),
+ "narrowed-chain": ("fn narrowed_chain", "crates/slate-kernel/src/read.rs"),
+ "authorise-before-convert": (
+     "before the query is converted",
+     "crates/slate-server/tests/security_probe.rs",
+ ),
+ "demo-frontend-tests": (None, "examples/explorer/web/test/api.test.ts"),
+ "demo-decade": ("decade", "examples/explorer/backends/go/handlers.go"),
+ "demo-ports": ("VITE_GO_URL", "examples/explorer/web/src/api.ts"),
+ "demo-grouped-plan": ("grouped", "examples/explorer/web/src/panels.tsx"),
+ "grouped-cost-withdrawn": (
+     "the_per_row_term_is_symmetric",
+     "crates/slate-kernel/tests/grouped_chain_oracle.rs",
+ ),
+ "workbench-having": ("HAVING", "site/workbench.js"),
+ "wasm-lazy-import": ("await import", "site/workbench.js"),
+ "wasm-chain": ("chain", "crates/slate-wasm/tests"),
+ "python-packaging": (None, "clients/python/tests/test_packaging.py"),
+ "runner-teardown": ("kill", "examples/explorer/run.sh"),
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
  "full-join-unmatched": ("BothUnmatchedSidesOfAFullJoin", "clients/go/slate/scalar_test.go"),
@@ -246,6 +288,12 @@ EXEMPT: dict[str, str] = {
         "re-examined under a wider frame, a set of gap rows re-read for their "
         "real shape. The output is prose and the entry is the artifact"
     ),
+    "tagged": (
+        "closed by a git tag, which is a ref rather than a file. `v0.0.1` is on "
+        "the remote — `git ls-remote --tags origin` shows it — and the working "
+        "tree carries the workflow that reacts to a tag, not the fact that one "
+        "was pushed. A file asserting the tag exists would be a second copy of it"
+    ),
     "stamped": (
         "closed by the state of `docs/caveat-status.json` itself — a count of "
         "unread caveats, answered by every open verdict carrying a `checked` "
@@ -263,6 +311,9 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-14-ci-that-had-never-run.md',
+     'What follows was true until that tag, and is left because it'):
+        'closed by pushing `v0.0.1`, which is a git tag and not a file. `git ls-remote --tags origin` shows it; nothing in the working tree records that the release workflow has now run, and adding a file that said so would be a second copy of the tag',
     ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
      'Three residuals are now on the worklist and have not been re'):
         'closed by re-reading the three residuals against the tree. Two still held '
@@ -346,6 +397,127 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # --- the 2026-09-13/14 backlog, triaged 2026-09-28 ----------------------
+    ('2026-09-13-a-grouped-chain-on-the-wire.md',
+     '`EXPLAIN` still cannot describe a grouped chain, or a groupe'):
+        'explain-grouped',
+    ('2026-09-13-a-grouped-chain-on-the-wire.md',
+     'The three clients can now *reach* a grouped chain, and only '):
+        'conformance-runner',
+    ('2026-09-13-a-site.md',
+     'No deployment. The site is files in a directory; nothing pub'):
+        'pages-deploy',
+    ('2026-09-13-defects-found-by-review.md',
+     'Two security findings stay open and neither is a patch: the '):
+        'authorise-before-convert',
+    ('2026-09-13-go-client.md',
+     '`Join`, `Aggregate` and `ExplainJoin` are on the wire and ha'):
+        'go-schemacheck',
+    ('2026-09-13-go-client.md',
+     'Nothing here is a differential *against the Python client*. '):
+        'conformance-runner',
+    ('2026-09-13-go-client.md',
+     'The tests need `cargo` on the path and build the daemon, so '):
+        'prebuilt-binary',
+    ('2026-09-13-go-joins-and-aggregates.md',
+     'No computed values in a query or join input, no vector simil'):
+        'go-scalar',
+    ('2026-09-13-go-joins-and-aggregates.md',
+     "Nothing here compares the Go client's answers against the Py"):
+        'conformance-runner',
+    ('2026-09-13-grouped-joins-on-the-wire.md',
+     'Grouping a chain is not built, in the kernel or here. A grou'):
+        'grouped-cost-withdrawn',
+    ('2026-09-13-grouped-joins-on-the-wire.md',
+     '`aggregate_to_proto_query` still emits the single-table shap'):
+        'workbench-having',
+    ('2026-09-13-grouping-a-chain.md',
+     'A grouped chain reads wider than it needs to, as above. It i'):
+        'narrowed-chain',
+    ('2026-09-13-grouping-a-chain.md',
+     'There is no `EXPLAIN` for a grouped chain, or for a grouped '):
+        'explain-grouped',
+    ('2026-09-13-grouping-a-chain.md',
+     '`group_by_chain` is not on the wire. The server refuses a ch'):
+        'grouped-chain-wire',
+    ('2026-09-13-in-list-per-row-cost.md',
+     "Three of finding 7's four items are untouched here: `GROUP B"):
+        'ceilings',
+    ('2026-09-13-point-the-readme-at-everything-new.md',
+     "The README's Status section still describes the project as o"):
+        'readme-swept',
+    ('2026-09-13-python-grouped-join-and-a-rotted-testserver.md',
+     '`testserver` stays outside the root workspace, so nothing st'):
+        'testserver-member',
+    ('2026-09-13-python-grouped-join-and-a-rotted-testserver.md',
+     'Grouping a chain is still unbuilt in the kernel; the client '):
+        'grouped-chain-wire',
+    ('2026-09-13-security-findings-4-and-8.md',
+     'Only the four fingerprint-checking handlers authorise early.'):
+        'authorise-before-convert',
+    ('2026-09-13-the-explorer-and-what-it-found.md',
+     'No frontend yet — this is the backend and the contract.'):
+        'demo-frontend-tests',
+    ('2026-09-13-the-explorer-and-what-it-found.md',
+     '`groupBy: "decade"` is a documented refusal rather than a fe'):
+        'demo-decade',
+    ('2026-09-13-the-explorers-frontend.md',
+     'No tests. The panels are checked by having been driven in a '):
+        'demo-frontend-tests',
+    ('2026-09-13-the-explorers-frontend.md',
+     'No `groupBy: "decade"` — the UI offers it and the adapters r'):
+        'demo-decade',
+    ('2026-09-13-the-explorers-frontend.md',
+     'The frontend talks to three hard-coded localhost ports. Fine'):
+        'demo-ports',
+    ('2026-09-13-typescript-client.md',
+     '`Join`, `Aggregate` and `ExplainJoin` have no typed surface,'):
+        'ts-scalar',
+    ('2026-09-13-typescript-client.md',
+     'Nothing compares the three clients against *each other*. All'):
+        'conformance-runner',
+    ('2026-09-13-typescript-joins-and-aggregates.md',
+     'No computed values, vectors or `SchemaCheck`, matching the G'):
+        'ts-scalar',
+    ('2026-09-13-typescript-joins-and-aggregates.md',
+     "Still nothing compares the three clients' answers against ea"):
+        'conformance-runner',
+    ('2026-09-14-a-playground-that-runs-the-kernel.md',
+     'Filters, sort, projection, limit, offset. No joins, aggregat'):
+        'workbench-having',
+    ('2026-09-14-a-playground-that-runs-the-kernel.md',
+     'One filter, not a conjunction. `WHERE a = 1 AND b > 2` is ex'):
+        'workbench-having',
+    ('2026-09-14-a-playground-that-runs-the-kernel.md',
+     'Nothing lazy-loads the bundle: 596 KiB is paid by every visi'):
+        'wasm-lazy-import',
+    ('2026-09-14-ci-that-had-never-run.md',
+     'What follows was true until that tag, and is left because it'):
+        '=tagged',
+    ('2026-09-14-explaining-a-grouped-read.md',
+     "The demo's `/api/explain` still explains the ungrouped read;"):
+        'demo-grouped-plan',
+    ('2026-09-14-guards-against-the-recurring-mistakes.md',
+     'The Go and Python clients have no equivalent of the TypeScri'):
+        'python-packaging',
+    ('2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md',
+     '`authors` and `books` only — no chain of three, though the k'):
+        'wasm-chain',
+    ('2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md',
+     'No `HAVING` and no group ordering, both of which the kernel '):
+        'workbench-having',
+    ('2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md',
+     'The panel exposes none of this yet. This commit is the bindi'):
+        'workbench-having',
+    ('2026-09-14-ports-below-the-ephemeral-range.md',
+     "The orphaned `go` and `node` processes the job's cleanup rep"):
+        'runner-teardown',
+    ('2026-09-14-schema-checks-in-go-and-typescript.md',
+     "The reasoning was written from the client's side alone, with"):
+        'ts-renamed-column',
+    ('2026-09-14-self-checking-quickstarts-and-conformance.md',
+     'The conformance mode picks free ports for the adapters but t'):
+        'demo-ports',
     ('2026-09-25-or-in-having-too.md',
      'No parentheses, so still no nesting.'):
         'having-brackets',

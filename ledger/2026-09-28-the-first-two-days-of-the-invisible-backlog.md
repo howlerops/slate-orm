@@ -2,7 +2,7 @@
 
 - **Date:** 2026-09-28
 - **Author:** an agent session
-- **Touches:** `docs/caveat-status.json`
+- **Touches:** `docs/caveat-status.json`, `scripts/check_closed_caveats.py`
 - **Kind:** process
 
 ## What changed
@@ -30,6 +30,13 @@ node-wide concurrency bound, ordinals rather than column names in a grouped
 EXPLAIN, a bar chart asserted on count rather than geometry, unpublished
 packages named in a quickstart's install line.
 
+Every one of the 40 closures also needed a **witness**: a needle and a path
+`scripts/check_closed_caveats.py` can `git grep` for, so that a closure claims
+something checkable rather than something remembered. 22 new witnesses cover
+them, each needle verified with `git grep` before its row was written, plus one
+new exemption kind — `tagged`, for the release whose evidence is a git ref
+rather than a file.
+
 ## Alternatives rejected
 
 **Mark the old ones `moment` wholesale.** Tempting — they are two weeks old and
@@ -45,6 +52,12 @@ written. The closures were checked against the tree rather
 than against memory before the `by` was written — and four `by` fields I did
 write from memory named ledger entries that do not exist, which
 `scripts/check_caveat_citations.py` refused.
+
+**Let the forty closures stand without witnesses.** Not available, and rightly:
+`check_closed_caveats.py` fails a `closed` verdict that names neither a witness
+nor an exemption, and it failed this batch until all forty had one. That check
+is what turned "the item was built" into "here is the line that built it",
+twenty-two times.
 
 **Do it in one pass over all 468.** Rejected on the same grounds a batch of ten
 was chosen for the original triage: a verdict written without reading the tree
