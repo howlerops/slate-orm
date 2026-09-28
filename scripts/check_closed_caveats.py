@@ -333,6 +333,10 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "go-paging-count": (
      "WithChainStreamInterceptor",
      "clients/go/slate/related_test.go",
+ ),
+ "retired-row-only-predicate": (
+     "a_predicate_that_selects_only_the_retired_row_touches_nothing",
+     "crates/slate-kernel/tests/soft_delete.rs",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -1634,6 +1638,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-28-the-go-client-was-already-counting.md',
      'Neither Go test counts paging.'):
         'go-paging-count',
+    ('2026-09-20-four-say-absent-one-says-present.md',
+     'The predicate paths were probed at one shape.'):
+        'retired-row-only-predicate',
 }
 
 

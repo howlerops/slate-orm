@@ -9578,8 +9578,9 @@
     {
       "entry": "2026-09-20-four-say-absent-one-says-present.md",
       "key": "Three paths remain unprobed",
-      "verdict": "open",
-      "by": "a cascade delete into a retired child, a write to a retired row inside an atomic batch, and purge_deleted on a table whose rows a policy hides. The first two go through the same write_many, which is an expectation rather than a measurement.",
+      "verdict": "narrowed",
+      "by": "two of the three are probed, both in crates/slate-kernel/tests/soft_delete.rs and both written the same afternoon as this entry: the cascade into an already-retired child by a_cascade_edge_leaves_an_already_retired_child_and_its_timestamp_alone (commit 5561a77), and the write to a retired row inside an atomic batch by the_bulk_writes_restore_a_retired_row_too and a_bulk_insert_at_a_retired_rows_key_is_still_refused (commit 4beac75) \u2014 which is the write_many path the entry named.",
+      "residual": "purge_deleted on a table whose rows a policy hides. Eight purge tests in soft_delete.rs and none constructs a row filter, so whether a purge erases what the caller could not have read is still an expectation.",
       "checked": "2026-09-28"
     },
     {
@@ -9592,9 +9593,9 @@
     {
       "entry": "2026-09-20-four-say-absent-one-says-present.md",
       "key": "The predicate paths were probed at one shape.",
-      "verdict": "open",
-      "by": "a predicate matching only the retired row would report affected=0, which was not run and is the case where 'silently skipped' is most likely to surprise somebody.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "a_predicate_that_selects_only_the_retired_row_touches_nothing in crates/slate-kernel/tests/soft_delete.rs runs exactly this shape and cites this entry by name. Written 65 minutes after the entry, in commit 9578e1b, and never read back into the verdict until now.",
+      "reviewed": "2026-09-28"
     },
     {
       "entry": "2026-09-20-nine-pushes-over-a-red-branch.md",
@@ -10319,8 +10320,9 @@
     {
       "entry": "2026-09-21-the-rust-seeding-entry-point-was-never-missing.md",
       "key": "It does not build a factory, which is the half of the row th",
-      "verdict": "open",
-      "by": "nothing generates a plausible row, sequences an id, or builds a graph of related records; the two rows in the test are written out by hand. That is the genuinely open half of the row.",
+      "verdict": "narrowed",
+      "by": "crates/slate-orm/src/factory.rs, added 17 minutes after this entry in commit a82915b. Factory::rows generates a plausible value per column from the table's own types, defaults and checks, and sequences the primary key and any unique index injectively in the row index \u2014 the first two of the caveat's three clauses.",
+      "residual": "nothing assembles a graph of related records in one call. Factory::cycle is the foreign-key tool and the caller generates the parents, collects their keys and cycles the children over them \u2014 a deliberate refusal, since reading the store would make generation async and tie it to a transaction. crates/slate-orm/tests/seeding.rs, the entry point this caveat's entry is about, also still writes its two rows by hand.",
       "checked": "2026-09-28"
     },
     {
@@ -10764,6 +10766,34 @@
       "verdict": "open",
       "checked": "2026-09-28",
       "by": "nothing yet. The three clients expose the channel three different ways (channel=, ...grpc.DialOption, ChannelOptions) and no guard fails if a fourth arrives without one; the witness roster catches removal of TypeScript's, not a future client's absence."
+    },
+    {
+      "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
+      "key": "It fixes none of the forty-five.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "a census measures the record, not the system. The forty-five are true, which is the tracker working; fixing them is forty-five separate pieces of work and reading them was the task."
+    },
+    {
+      "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
+      "key": "The census is of `open` only.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. 895 deliberate verdicts, sampled once at 15 with 1 false, and no cheap route into them has survived measurement \u2014 the path-dependency flag and the citation flag were both measured and withdrawn today."
+    },
+    {
+      "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
+      "key": "Nothing acts on the cause this entry identifies.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The mechanical version was measured here and flags 65 of 193 to find 4, with recall 2 of 3; what is left is a convention in ledger/README.md, which is not a check."
+    },
+    {
+      "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
+      "key": "A caveat settled by an absence is settled less thoroughly th",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "a git grep returning nothing over every place a thing could live is the right instrument for 'nothing does X', and the alternative \u2014 reading every candidate file for each of twenty-two caveats \u2014 costs more than the census is worth. The weakness is named rather than removed, as the previous census entry named it."
     }
   ]
 }
