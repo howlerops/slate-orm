@@ -1,0 +1,266 @@
+{
+  "at": "2026-09-28T16:25:10+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "cb8caa8",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "conjoin nests instead of flattening, so the merged WHERE lands in `predicate`",
+      "old": "            PredicateSpec::All(parts) => parts,",
+      "new": "            PredicateSpec::All(parts) => vec![PredicateSpec::All(parts)],",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the merge puts the outer WHERE before the body's",
+      "old": "                    Some(outer) => conjoin(body, outer),",
+      "new": "                    Some(outer) => conjoin(outer, body),",
+      "verdict": "caught",
+      "caught_by": [
+        "a_disjunction_in_a_cte_body_is_bracketed_by_the_merge",
+        "a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to",
+        "a_subquery_beside_a_cte_resolves_against_its_own_table",
+        "the_expanded_spec_lowers_to_a_kernel_query_with_both_filters"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "reading the CTE from the outer FROM is not recorded",
+      "old": "        cte.read = true;",
+      "new": "        cte.read = false;",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_body_with_no_where_contributes_nothing_to_the_filter",
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "a_cte_read_anywhere_but_the_statements_own_from_is_refused",
+        "a_disjunction_in_a_cte_body_is_bracketed_by_the_merge",
+        "a_star_over_a_cte_is_the_columns_the_cte_projects",
+        "a_subquery_beside_a_cte_resolves_against_its_own_table",
+        "a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to",
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a star over a CTE projects every base column",
+      "old": "                spec.columns.clone_from(shown);",
+      "new": "                spec.columns.clear();",
+      "verdict": "caught",
+      "caught_by": [
+        "a_star_over_a_cte_is_the_columns_the_cte_projects"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the CTE's projection does not narrow the namespace",
+      "old": "            Some(cte) => (&cte.name, cte.visible.as_deref()),",
+      "new": "            Some(cte) => (&cte.name, None),",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the base table's name stays the qualifier under a CTE",
+      "old": "            Some(cte) => (&cte.name, cte.visible.as_deref()),",
+      "new": "            Some(cte) => (table.name(), cte.visible.as_deref()),",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too",
+        "the_ctes_name_is_the_qualifier_and_the_base_tables_is_not"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the visibility filter admits exactly what it should exclude",
+      "old": "            .filter(|ordinal| visible.is_none_or(|shown| shown.contains(ordinal)))",
+      "new": "            .filter(|ordinal| visible.is_none_or(|shown| !shown.contains(ordinal)))",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_body_with_no_where_contributes_nothing_to_the_filter",
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "a_disjunction_in_a_cte_body_is_bracketed_by_the_merge",
+        "a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to",
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too",
+        "a_subquery_beside_a_cte_resolves_against_its_own_table",
+        "an_outer_query_with_no_where_of_its_own_keeps_the_ctes",
+        "the_ctes_name_is_the_qualifier_and_the_base_tables_is_not"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the no-column refusal lists the base table's columns, not the CTE's",
+      "old": "        Some(shown) => shown\n            .iter()\n            .map(|ordinal| named(*ordinal as usize))\n            .collect::<Vec<_>>(),",
+      "new": "        Some(_) => (0..table.columns().len()).map(named).collect::<Vec<_>>(),",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_the_cte_projected_away_is_not_in_scope"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a subquery keeps the CTE in scope",
+      "old": "            .map(|cte| std::mem::replace(&mut cte.read, false));",
+      "new": "            .map(|cte| std::mem::replace(&mut cte.read, true));",
+      "verdict": "caught",
+      "caught_by": [
+        "a_subquery_beside_a_cte_resolves_against_its_own_table"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a CTE named anywhere but the outer FROM is not refused",
+      "old": "        if let Some(cte) = &self.cte\n            && cte.name.eq_ignore_ascii_case(&name)\n        {\n            return Err(Self::cte_read_elsewhere(&name, at));\n        }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_read_anywhere_but_the_statements_own_from_is_refused"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a CTE as a join's left input is not refused",
+      "old": "            if let Some(name) = self.reading_cte() {\n                return Err(Self::cte_read_elsewhere(&name, join_at));\n            }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_read_anywhere_but_the_statements_own_from_is_refused"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a CTE nobody reads is accepted",
+      "old": "        if !self.cte.take().is_some_and(|cte| cte.read) {",
+      "new": "        if self.cte.take().is_some_and(|cte| cte.read) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_body_with_no_where_contributes_nothing_to_the_filter",
+        "a_star_over_a_cte_is_the_columns_the_cte_projects",
+        "a_cte_nobody_reads_is_refused",
+        "a_disjunction_in_a_cte_body_is_bracketed_by_the_merge",
+        "a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to",
+        "a_subquery_beside_a_cte_resolves_against_its_own_table",
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too",
+        "an_outer_query_with_no_where_of_its_own_keeps_the_ctes"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a CTE name that collides with a table is accepted",
+      "old": "        if self.schema.table(&name).is_some() {",
+      "new": "        if self.schema.table(&name).is_none() {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_body_with_no_where_contributes_nothing_to_the_filter",
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "a_cte_name_that_is_already_a_table_is_refused",
+        "a_cte_nobody_reads_is_refused",
+        "a_cte_that_reads_itself_is_a_recursive_cte_without_the_word",
+        "a_cte_whose_body_is_a_join_is_refused",
+        "a_disjunction_in_a_cte_body_is_bracketed_by_the_merge",
+        "a_cte_reference_takes_no_alias_and_the_name_takes_no_column_list"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a second WITH is not read as a second CTE",
+      "old": "        if self.eat_symbol(\",\") || self.peek_word().as_deref() == Some(\"with\") {",
+      "new": "        if self.eat_symbol(\",\") {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_second_cte_in_one_with_is_refused"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "RECURSIVE is not recognised after WITH",
+      "old": "        if self.peek_word().as_deref() == Some(\"recursive\") {",
+      "new": "        if self.peek_word().as_deref() == Some(\"recursively\") {",
+      "verdict": "caught",
+      "caught_by": [
+        "with_recursive_is_still_refused_and_the_reason_is_the_fixpoint"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a single-table aggregate resolves outside the CTE's namespace",
+      "old": "        let (name, visible) = self.scope(table);\n        self.aggregate_on(kind, argument, table, name, visible, at)",
+      "new": "        let (name, visible) = (table.name(), None);\n        self.aggregate_on(kind, argument, table, name, visible, at)",
+      "verdict": "caught",
+      "caught_by": [
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "LIMIT is not among the clauses a CTE body may not have",
+      "old": "            \"join\", \"inner\", \"group\", \"order\", \"limit\", \"offset\", \"having\",",
+      "new": "            \"join\", \"inner\", \"group\", \"order\", \"offset\", \"having\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_body_may_not_sort_group_or_page"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a CTE that reads itself falls through to the catalog",
+      "old": "        if self\n            .peek_word()\n            .is_some_and(|word| word.eq_ignore_ascii_case(&name))\n        {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_that_reads_itself_is_a_recursive_cte_without_the_word"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the outer FROM does not consume the CTE name",
+      "old": "        if let Some(input) = self.cte_input()? {\n            return Ok(input);\n        }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_cte_body_with_no_where_contributes_nothing_to_the_filter",
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "a_cte_reference_takes_no_alias_and_the_name_takes_no_column_list",
+        "a_disjunction_in_a_cte_body_is_bracketed_by_the_merge",
+        "a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to",
+        "a_subquery_beside_a_cte_resolves_against_its_own_table",
+        "a_star_over_a_cte_is_the_columns_the_cte_projects",
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
