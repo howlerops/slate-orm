@@ -10590,9 +10590,10 @@
     {
       "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
       "key": "It does not explain why the four clustered.",
-      "verdict": "open",
+      "verdict": "narrowed",
       "checked": "2026-09-28",
-      "by": "nothing yet. Two hypotheses fit four points equally well and distinguishing them needs a random sample of twenty-five, which neither pass drew."
+      "by": "a random twelve from the same population found nothing, so the cheap sample's rate did not reproduce — which weakens 'the first pass was more careful' and leaves selection as the likelier explanation. See ledger/2026-09-28-a-random-twelve-found-nothing.md.",
+      "residual": "twelve discriminates between the hypotheses without settling either, and 0/12 bounds the true rate only below about 22%."
     },
     {
       "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
@@ -10600,6 +10601,27 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "this entry and the one before it: deciding whether a hit bears on a claim is the reading itself, so no guard can do it. The accumulating table is the only mechanism on offer and is stated as such."
+    },
+    {
+      "entry": "2026-09-28-a-random-twelve-found-nothing.md",
+      "key": "It reads twelve, so the interval is wide.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. 0/12 bounds the rate below about 22% and no lower; forty would bring it to about 7%, and the seed is recorded so that is a continuation rather than a fresh sample."
+    },
+    {
+      "entry": "2026-09-28-a-random-twelve-found-nothing.md",
+      "key": "It does not re-examine the four that moved.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: the question was about the rest of the list. The four carry witnesses and scripts/check_closed_caveats.py watches them, which is the mechanism for a closure that regresses."
+    },
+    {
+      "entry": "2026-09-28-a-random-twelve-found-nothing.md",
+      "key": "It says nothing about the `deliberate` verdicts.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. 889 deliberate verdicts and no sample has ever been drawn from them; a decision that has stopped being defensible looks exactly like one that has not."
     }
   ]
 }
