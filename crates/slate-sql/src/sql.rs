@@ -41,6 +41,11 @@
 //! INSERT  INTO <table> VALUES ( <literal>, ... )
 //! UPDATE  <table> SET <col> = <literal> (, ...)* WHERE <pk> = <literal>
 //! DELETE  FROM <table> WHERE <pk> = <literal>
+//! WITH    <name> AS ( <cte-body> ) <the SELECT above, reading <name>>
+//!
+//!         -- <cte-body> := SELECT <* | column-list> FROM <table>
+//!         --                      [WHERE <predicate>]
+//!         -- one CTE, read once, by the outer SELECT's own FROM
 //! ```
 //!
 //! **This block is checked.** `the_grammar_block_names_every_computed_call`
@@ -90,6 +95,37 @@
 //! name, each with the reason: a statement compiles to one query spec, which
 //! has no set operator, and `EXISTS` is correlated. The refusals are the
 //! feature — see `ledger/2026-09-16-a-subquery-is-two-reads-not-an-operator.md`.
+//!
+//! # `WITH`, and the one shape of it that is here
+//!
+//! `docs/ctes.md` splits `WITH` into three constructs with three answers, and
+//! this front end now holds all three. A **non-recursive CTE read exactly
+//! once** is *expanded*: the body's `WHERE` is conjoined onto the outer
+//! query's, the body's projection becomes the outer query's namespace, and
+//! what comes out is the `QuerySpec` the inlined statement compiles to — the
+//! same one, not an equivalent. `WITH recent AS (SELECT id, title FROM books
+//! WHERE year > 2000) SELECT title FROM recent WHERE id > 5` **is** `SELECT
+//! title FROM books WHERE year > 2000 AND id > 5`, and
+//! `tests/front_end.rs` asserts the two specs are equal rather than merely
+//! agreeing.
+//!
+//! The expansion happens **entirely here, before any name is resolved against
+//! a catalog**, which is what makes it safe as well as small. `docs/ctes.md`
+//! names the hazard: register a CTE under a synthetic `TableId` so
+//! `Catalog::table_by_name` finds it, and every grant and policy keys on that
+//! id rather than the base table's. Nothing here has an id to register — the
+//! name lives for one statement, `spec.table` says `books`, and the security
+//! model needs no case for a CTE because no CTE reaches it.
+//!
+//! `WITH RECURSIVE` is **refused**: a fixpoint is a loop whose trip count is
+//! in the data, and one spec has one access path and nowhere to iterate. A CTE
+//! read anywhere but the outer `SELECT`'s own `FROM` is **refused** for the
+//! `UNION` reason — computing it once and reading it twice is a second plan in
+//! one statement.
+//!
+//! Four more, each a refusal with its reasoning in the message: a CTE whose
+//! name is already a table's, a column the body projected away, a body that
+//! joins, and a second CTE in one `WITH`.
 //!
 //! An `<item>` is a column, an aggregate, or a **call**: `hour(pickup_time)`,
 //! `round(distance)`. A call is a value computed per row and appended after
@@ -371,6 +407,99 @@ fn resolve_window_slots(spec: &mut QuerySpec, table: &TableDef) {
     }
 }
 
+/// The columns of `table` a reader can see, for a "no column" refusal.
+///
+/// `visible` narrows it to a CTE body's projection. Written as a filter over
+/// the ordinals rather than over the columns so the list comes out in the
+/// order the body *wrote* them, which is the order the reader will look for
+/// and the order `SELECT *` over the CTE returns.
+fn column_names(table: &TableDef, visible: Option<&[u32]>) -> String {
+    let named = |ordinal: usize| {
+        table
+            .columns()
+            .get(ordinal)
+            .map(|c| c.name().to_owned())
+            .unwrap_or_default()
+    };
+    match visible {
+        None => (0..table.columns().len()).map(named).collect::<Vec<_>>(),
+        Some(shown) => shown
+            .iter()
+            .map(|ordinal| named(*ordinal as usize))
+            .collect::<Vec<_>>(),
+    }
+    .join(", ")
+}
+
+/// `left AND right`, flattened one level.
+///
+/// The flattening is the whole of why this is not `PredicateSpec::All(vec![l,
+/// r])`. `WITH … WHERE year > 2000` merged onto `WHERE id > 5` has to produce
+/// the spec `WHERE year > 2000 AND id > 5` produces — `filters` with two
+/// entries — and the nested form would reach [`Parser::flatten`] as an `All`
+/// whose parts are `All`s, which is exactly the shape that cannot flatten and
+/// would land in `predicate` instead. Two specs for one query is the drift
+/// this whole front end is arranged to avoid, so the merge has to land in the
+/// same field the inlined statement does.
+///
+/// A disjunction on either side keeps its brackets, because `Any` is not an
+/// `All` and is left whole: `(a OR b) AND c`, which is what the bracketed
+/// spelling of the same query produces, token for token.
+///
+/// Wrapping instead of splicing **survived every test** this feature arrived
+/// with, because each of them had a single condition on each side and the two
+/// implementations agree on those. `a_conjunction_on_either_side_of_the_merge
+/// _stays_flat` is the case that tells them apart and exists only because the
+/// mutation lived.
+fn conjoin(left: PredicateSpec, right: PredicateSpec) -> PredicateSpec {
+    fn parts(tree: PredicateSpec) -> Vec<PredicateSpec> {
+        match tree {
+            PredicateSpec::All(parts) => parts,
+            other => vec![other],
+        }
+    }
+    let mut all = parts(left);
+    all.extend(parts(right));
+    PredicateSpec::All(all)
+}
+
+/// The one name a `WITH` binds, for as long as the statement lasts.
+///
+/// A CTE is not an [`Input`] and deliberately not a [`TableDef`]. An `Input`
+/// is a table a *plan* reads and survives into the spec; this is a name that
+/// exists between two clauses of one statement and must leave no trace. Give
+/// it either shape and the temptation is to make `Schema::table` find it,
+/// which is `docs/ctes.md`'s named hazard one step from a synthetic
+/// `TableId` — and a `TableId` is what every grant and every policy keys on.
+///
+/// So the binding sits beside the parser rather than in the schema, and the
+/// only thing it can do is be expanded into the query that reads it.
+#[derive(Debug)]
+struct Cte {
+    /// What the statement calls it. Never a table's name — a collision is
+    /// refused where the binding is read, because after expansion the spec
+    /// names the base table either way and nothing downstream could tell the
+    /// shadow from the table.
+    name: String,
+    /// The table the body reads, which is the table the whole statement reads.
+    base: TableDef,
+    /// The body's `WHERE` as a tree, resolved against `base`, taken by the
+    /// merge. A tree rather than a [`Where`] because it is about to be
+    /// conjoined with another one and flattened once, at the end: flattening
+    /// twice is how `(a OR b) AND c` would come out as a mixture nothing can
+    /// hold.
+    filter: Option<PredicateSpec>,
+    /// The base-table ordinals the body projects, or `None` for `SELECT *`.
+    ///
+    /// This *is* the outer query's namespace. A column outside it is refused
+    /// rather than resolved against `base`, which is what SQL says and the
+    /// only reading under which the outer `SELECT *` has an answer.
+    visible: Option<Vec<u32>>,
+    /// Set when the outer query's `FROM` names it, and cleared for the
+    /// duration of a subquery, which resolves against a table of its own.
+    read: bool,
+}
+
 /// A parsed `WHERE`, in whichever of the spec's three shapes holds it.
 ///
 /// Flat by preference: `filters` for an all-`AND` clause, `any_of` for an
@@ -600,6 +729,10 @@ struct Parser<'a> {
     end: usize,
     /// Things worth saying that are not errors. See [`Parsed::warnings`].
     warnings: Vec<String>,
+    /// The statement's `WITH` binding, once its body has been read. `None`
+    /// for every statement that has no `WITH`, which is all of them but one
+    /// shape — so every path below asks and almost none of them find one.
+    cte: Option<Cte>,
 }
 
 /// One parsed statement, and anything worth telling the reader about it.
@@ -647,6 +780,7 @@ pub fn parse(text: &str, schema: &Schema<'_>) -> Result<Parsed, SqlError> {
         i: 0,
         schema,
         warnings: Vec::new(),
+        cte: None,
     };
     let statement = parser.statement()?;
     // Trailing tokens are an error rather than ignored. A reader who writes
@@ -819,6 +953,19 @@ impl Parser<'_> {
     fn table(&mut self) -> Result<TableDef, SqlError> {
         let at = self.at();
         let name = self.name()?;
+        // Every path that turns a name into a table comes through here except
+        // the outer `FROM` of a `WITH`, which reads the binding in
+        // [`Self::cte_input`] before calling this. So a join input, a
+        // subquery, an INSERT, an UPDATE and a DELETE all meet the refusal
+        // without any of them having to know a CTE exists — the same
+        // "refused by there being nothing to find" shape `docs/views.md` §3a
+        // gets from keeping views out of the catalog, except that here the
+        // one function they share can say *why* rather than "no such table".
+        if let Some(cte) = &self.cte
+            && cte.name.eq_ignore_ascii_case(&name)
+        {
+            return Err(Self::cte_read_elsewhere(&name, at));
+        }
         self.schema.table(&name).cloned().ok_or_else(|| SqlError {
             message: format!(
                 "no table named `{name}` — this database has {}",
@@ -858,6 +1005,9 @@ impl Parser<'_> {
     /// error, and `FROM books AS b` still reaches the single-table refusal,
     /// because `AS` says plainly what was meant.
     fn first_input(&mut self) -> Result<Input, SqlError> {
+        if let Some(input) = self.cte_input()? {
+            return Ok(input);
+        }
         let table = self.table()?;
         if self.eat("as") {
             let name = self.name()?;
@@ -880,6 +1030,82 @@ impl Parser<'_> {
             table.name().to_owned()
         };
         Ok(Input { table, name })
+    }
+
+    /// The statement's `FROM` naming the `WITH` binding, consumed if it does.
+    ///
+    /// Returns the **base** table under the base table's own name, not under
+    /// the CTE's. That is not a detail: `Input::name` is what a single-table
+    /// read compares against `table.name()` to refuse a pointless alias, and
+    /// it is what a join qualifier resolves against — an `Input` carrying
+    /// `recent` would make the outer query look like an aliased read of
+    /// `books`, which is a different refusal with a message about something
+    /// the reader did not write. The CTE's name stays where it is useful,
+    /// in [`Self::scope`], which is the only place it means anything.
+    fn cte_input(&mut self) -> Result<Option<Input>, SqlError> {
+        let Some(name) = self.cte.as_ref().map(|cte| cte.name.clone()) else {
+            return Ok(None);
+        };
+        if !self
+            .peek_word()
+            .is_some_and(|word| word.eq_ignore_ascii_case(&name))
+        {
+            return Ok(None);
+        }
+        self.i += 1;
+        if self.peek_word().as_deref() == Some("as") {
+            return Err(SqlError {
+                message: format!(
+                    "`{name}` is a CTE and an alias on it is refused for the reason an \
+                     alias on a single table is: an alias exists to tell two readings of \
+                     one thing apart, and there is one reading here. The name already \
+                     lives for exactly this statement. See docs/ctes.md"
+                ),
+                at: self.at(),
+            });
+        }
+        let Some(cte) = self.cte.as_mut() else {
+            return Ok(None);
+        };
+        cte.read = true;
+        let table = cte.base.clone();
+        Ok(Some(Input {
+            name: table.name().to_owned(),
+            table,
+        }))
+    }
+
+    /// The CTE's name, while the outer query is reading through it.
+    fn reading_cte(&self) -> Option<String> {
+        self.cte
+            .as_ref()
+            .filter(|cte| cte.read)
+            .map(|cte| cte.name.clone())
+    }
+
+    /// A CTE read from anywhere but the outer `SELECT`'s own `FROM`.
+    ///
+    /// One function for two callers — [`Self::table`], which every other way
+    /// of naming a table goes through, and the join that follows a `FROM`
+    /// naming the CTE — because the two are the same refusal and a reader who
+    /// met different wordings for `FROM recent JOIN books` and `FROM books
+    /// JOIN recent` would reasonably conclude one of them was closer to
+    /// working.
+    fn cte_read_elsewhere(name: &str, at: usize) -> SqlError {
+        SqlError {
+            message: format!(
+                "`{name}` is a CTE, and a CTE here is read by the statement's own FROM and \
+                 by nothing else. Reading it twice is the shape that has to be computed \
+                 once and read twice — a second plan in one statement, which is the reason \
+                 UNION is refused, and delivering it without the computed-once property \
+                 would be a performance trap dressed as a feature. Reading it from a join \
+                 input or a subquery is once rather than twice, and still needs its WHERE \
+                 merged into one side of a join spec's per-side filters, which nothing here \
+                 has designed. Read once, from the FROM, it inlines into the outer query. \
+                 See docs/ctes.md"
+            ),
+            at,
+        }
     }
 
     /// `AS x`, or a bare `x` that is not the next clause's keyword.
@@ -1033,7 +1259,25 @@ impl Parser<'_> {
     }
 
     fn resolve(&self, raw: &str, table: &TableDef, at: usize) -> Result<u32, SqlError> {
-        self.resolve_named(raw, table, table.name(), at)
+        let (name, visible) = self.scope(table);
+        self.resolve_within(raw, table, name, visible, at)
+    }
+
+    /// The name a single-table read qualifies against, and the ordinals it may
+    /// see.
+    ///
+    /// Ordinarily the table's own name and every column. When the statement's
+    /// `FROM` named a `WITH` binding it is the CTE's name and the columns its
+    /// body projects, because that is what is in scope: after `FROM recent`,
+    /// `recent.title` is the column and `books` is a table the statement never
+    /// mentioned. Returning both from one place is what keeps them from
+    /// disagreeing — a namespace that narrowed the columns and not the
+    /// qualifier would refuse `recent.title` and accept `books.year`.
+    fn scope<'n>(&'n self, table: &'n TableDef) -> (&'n str, Option<&'n [u32]>) {
+        match self.cte.as_ref().filter(|cte| cte.read) {
+            Some(cte) => (&cte.name, cte.visible.as_deref()),
+            None => (table.name(), None),
+        }
     }
 
     /// [`Self::resolve`], against a name that may be an alias.
@@ -1051,6 +1295,25 @@ impl Parser<'_> {
         name: &str,
         at: usize,
     ) -> Result<u32, SqlError> {
+        self.resolve_within(raw, table, name, None, at)
+    }
+
+    /// [`Self::resolve_named`], seeing only some of the table's columns.
+    ///
+    /// `visible` is `None` everywhere but under a CTE, where it is the body's
+    /// projection. A column outside it fails the *same* way a column that is
+    /// not there at all does, deliberately: to the reader of the outer query
+    /// there is no difference — `recent` has the columns `recent` projects —
+    /// and two messages for one situation would invite them to go looking for
+    /// the one that is "really" there.
+    fn resolve_within(
+        &self,
+        raw: &str,
+        table: &TableDef,
+        name: &str,
+        visible: Option<&[u32]>,
+        at: usize,
+    ) -> Result<u32, SqlError> {
         let bare = match raw.split_once('.') {
             Some((qualifier, rest)) => {
                 if !qualifier.eq_ignore_ascii_case(name) {
@@ -1063,19 +1326,16 @@ impl Parser<'_> {
             }
             None => raw,
         };
-        self.schema.ordinal(table, bare).ok_or_else(|| SqlError {
-            message: format!(
-                "`{}` has no column `{bare}` — it has {}",
-                name,
-                table
-                    .columns()
-                    .iter()
-                    .map(|c| c.name().to_owned())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            at,
-        })
+        self.schema
+            .ordinal(table, bare)
+            .filter(|ordinal| visible.is_none_or(|shown| shown.contains(ordinal)))
+            .ok_or_else(|| SqlError {
+                message: format!(
+                    "`{name}` has no column `{bare}` — it has {}",
+                    column_names(table, visible)
+                ),
+                at,
+            })
     }
 
     fn statement(&mut self) -> Result<Statement, SqlError> {
@@ -1084,18 +1344,10 @@ impl Parser<'_> {
             Some("insert") => self.insert(),
             Some("update") => self.update(),
             Some("delete") => self.delete(),
-            // `WITH` gets its own message, for the reason the set operators do
-            // one line below: "found `WITH`" is true and reads as a parser
-            // that has not heard of it, when the answer is that `WITH` covers
-            // three constructs with three different answers. Saying "CTEs are
-            // not supported" would be wrong about one of the three, and the
-            // one it would be wrong about is the one somebody could build.
-            //
-            // Worked through in `docs/ctes.md`; the split is summarised here
-            // because an error message a reader has to leave to understand is
-            // most of the way back to "unexpected `WITH`".
-            // `CREATE` for the same reason as `WITH`, and with the same
-            // shape of answer: the interesting part is not that it is
+            Some("with") => self.with(),
+            // `CREATE` for the reason `WITH` had its own message before one
+            // shape of it was built, and with the same shape of answer: the
+            // interesting part is not that it is
             // unsupported but *what a view would have to be here*. A caller
             // reaching for one is usually reaching for a privilege boundary,
             // and it cannot be one — there is no owner for a view to run as,
@@ -1114,20 +1366,6 @@ impl Parser<'_> {
                     .to_owned(),
                 at: self.at(),
             }),
-            Some("with") => Err(SqlError {
-                message: "WITH is not supported, and the three things it means have \
-                     different reasons. A recursive CTE is a fixpoint loop and a \
-                     statement compiles to one plan with nothing to iterate. A CTE \
-                     referenced more than once has to be computed once and read twice, \
-                     which is a second plan in the same statement — the same reason \
-                     UNION is refused. A non-recursive CTE referenced *once* is neither: \
-                     it inlines into the outer query, and that inlining is the same \
-                     mechanism a view needs, so it is a gap rather than a refusal. See \
-                     docs/ctes.md. Meanwhile an uncorrelated subquery works in \
-                     `IN (SELECT …)`"
-                    .to_owned(),
-                at: self.at(),
-            }),
             _ => Err(SqlError {
                 message: format!(
                     "expected SELECT, INSERT, UPDATE or DELETE, found {}",
@@ -1135,6 +1373,248 @@ impl Parser<'_> {
                 ),
                 at: self.at(),
             }),
+        }
+    }
+
+    // --- WITH ---------------------------------------------------------------
+
+    /// `WITH <name> AS ( <body> ) <select>`, expanded into one `SELECT`.
+    ///
+    /// The expansion is the whole feature and it happens here, before any name
+    /// reaches a catalog. `docs/ctes.md` is explicit about why that matters
+    /// rather than merely being tidy: grants and policies key on a `TableId`,
+    /// so the tempting fix of registering the CTE where `table_by_name` can
+    /// find it would have every check key on a synthetic id and read the base
+    /// table's rows with the base table's policy never consulted. A name that
+    /// lives between two clauses of one statement has no id to register and
+    /// leaves nothing behind — `spec.table` says `books` — which is why this
+    /// needed no change to the kernel, the server or the security model.
+    fn with(&mut self) -> Result<Statement, SqlError> {
+        self.expect("with")?;
+        if self.peek_word().as_deref() == Some("recursive") {
+            return Err(SqlError {
+                message: "WITH RECURSIVE is not supported: a recursive CTE is a fixpoint — \
+                          evaluate the anchor, evaluate the recursive term against what you \
+                          have, repeat until nothing new appears — and that is a loop whose \
+                          trip count is in the data. A statement here compiles to one query \
+                          spec: one access path, one filter set, one projection, and nowhere \
+                          to put an iteration. It is also the one shape whose cost none of \
+                          the daemon's per-request ceilings describes. A non-recursive CTE \
+                          read once is supported and inlines into the query that reads it. \
+                          See docs/ctes.md"
+                    .to_owned(),
+                at: self.at(),
+            });
+        }
+        let at = self.at();
+        // `name`'s own message is "expected a name, found the end of the
+        // statement", which is true of a bare `WITH` and tells a reader
+        // nothing about what a `WITH` is for. The keyword is refused or
+        // expanded by what follows it, so the reader who typed only the
+        // keyword is exactly the one who needs the shape written out.
+        let name = self.name().map_err(|_| SqlError {
+            message: format!(
+                "a WITH binds one name for one SELECT to read: \
+                 `WITH <name> AS ( SELECT <columns> FROM <table> [WHERE …] ) \
+                 SELECT … FROM <name>`, and found {}. WITH RECURSIVE is refused, and so \
+                 is a CTE read anywhere but that FROM. See docs/ctes.md",
+                self.describe(self.i)
+            ),
+            at,
+        })?;
+        if self.schema.table(&name).is_some() {
+            return Err(SqlError {
+                message: format!(
+                    "`{name}` is already a table, and a CTE that shadowed it would be \
+                     invisible: the expansion leaves the spec naming `{name}` either way, \
+                     so the one artifact this front end shows you — the compiled spec — \
+                     could not tell the CTE's rows from the table's. SQL shadows; there is \
+                     nothing here to see the shadow in. Give it another name. \
+                     See docs/ctes.md"
+                ),
+                at,
+            });
+        }
+        if self.eat_symbol("(") {
+            return Err(SqlError {
+                message: format!(
+                    "`{name}(…)` renames the body's columns, and the outer query resolves \
+                     names against the base table's own — so a renamed column would have to \
+                     be mapped back onto an ordinal, which is the remapping `docs/views.md` \
+                     refuses for a view's projection and for the same reason: it has its own \
+                     ways to be silently wrong. Name the columns in the body's select list. \
+                     See docs/ctes.md"
+                ),
+                at: self.at(),
+            });
+        }
+        self.expect("as")?;
+        self.expect_symbol("(")?;
+        let cte = self.cte_body(name)?;
+
+        if self.eat_symbol(",") || self.peek_word().as_deref() == Some("with") {
+            return Err(SqlError {
+                message: "a WITH here binds one CTE. The statement that follows reads one \
+                          table, so only one of several could be the one it reads: a second \
+                          is either never read — dead text that reads as meaningful — or \
+                          read by the first, which is a CTE over a CTE. That is the nesting \
+                          `docs/views.md` §5 refuses for views, where the base table stops \
+                          being a field and becomes a traversal with a cycle check and a \
+                          depth bound behind it. Two predicates composed are `WHERE a AND \
+                          b`, which one CTE already says. See docs/ctes.md"
+                    .to_owned(),
+                at: self.at(),
+            });
+        }
+        if self.peek_word().as_deref() != Some("select") {
+            return Err(SqlError {
+                message: format!(
+                    "a WITH binds a name for one SELECT to read, and this is {}. A write \
+                     does not read through a CTE: an UPDATE or a DELETE here takes a \
+                     primary key, and there is nothing for a named intermediate to narrow. \
+                     See docs/ctes.md",
+                    self.describe(self.i)
+                ),
+                at: self.at(),
+            });
+        }
+
+        let unread = cte.name.clone();
+        self.cte = Some(cte);
+        let statement = self.select()?;
+        // `read` is set by [`Self::cte_input`] and by nothing else, so this is
+        // a fact about the statement rather than a count somebody maintained.
+        if !self.cte.take().is_some_and(|cte| cte.read) {
+            return Err(SqlError {
+                message: format!(
+                    "`{unread}` is declared and never read — the statement that follows \
+                     names a different table. A WITH whose binding nothing reads is dead \
+                     text that reads as meaningful, and the usual cause is a typo in the \
+                     reference: accepting it would answer an unnarrowed read as though it \
+                     were what was asked for. See docs/ctes.md"
+                ),
+                at,
+            });
+        }
+        Ok(statement)
+    }
+
+    /// `SELECT <* | column-list> FROM <table> [WHERE <predicate>] )`.
+    ///
+    /// A narrower `SELECT` than [`Self::select`] on purpose, and the narrowing
+    /// is not squeamishness: everything left out is something the merge cannot
+    /// carry. The body's `WHERE` is conjoined onto the outer query's, so
+    /// anything the body does *after* filtering would end up on the wrong side
+    /// of the outer clauses. `LIMIT` is the case where that is wrong rather
+    /// than merely absent — the outer `WHERE` would filter before the limit
+    /// instead of after it, and the query would quietly mean something else —
+    /// and a grouping or a window changes what a row is, so there would be no
+    /// base row for the outer query to name a column of.
+    fn cte_body(&mut self, name: String) -> Result<Cte, SqlError> {
+        self.expect("select")?;
+        if self.peek_word().as_deref() == Some("distinct") {
+            return Err(Self::beyond_a_cte_body("DISTINCT", self.at()));
+        }
+        let star = self.eat_symbol("*");
+        let mut projected: Vec<(String, usize)> = Vec::new();
+        if !star {
+            loop {
+                let item = self.select_item()?;
+                match item {
+                    SelectItem::Column { raw, at } => projected.push((raw, at)),
+                    other => {
+                        return Err(SqlError {
+                            message: "a CTE body here projects columns. An aggregate, a \
+                                      computed call or a window changes what a row is, and \
+                                      the outer query would then be naming columns of a \
+                                      shape with no base row behind it — which is also why \
+                                      a view may not project. See docs/ctes.md"
+                                .to_owned(),
+                            at: other.at(),
+                        });
+                    }
+                }
+                if !self.eat_symbol(",") {
+                    break;
+                }
+            }
+        }
+        self.expect("from")?;
+        // Before `table`, which would report it as an unknown table — the one
+        // thing it certainly is not. The same refusal `docs/views.md` §5 makes
+        // for a view that reads itself, and the same reason: this is a
+        // recursive CTE written without the word, and it gets the answer the
+        // word gets rather than a message about the catalog.
+        if self
+            .peek_word()
+            .is_some_and(|word| word.eq_ignore_ascii_case(&name))
+        {
+            return Err(SqlError {
+                message: format!(
+                    "`{name}` reads itself, which is a recursive CTE written without \
+                     RECURSIVE: a fixpoint, whose trip count is in the data, against a spec \
+                     with one access path and nowhere to iterate. See docs/ctes.md"
+                ),
+                at: self.at(),
+            });
+        }
+        let base = self.table()?;
+        let visible = if star {
+            None
+        } else {
+            let mut shown = Vec::new();
+            for (raw, column_at) in &projected {
+                shown.push(self.resolve_named(raw, &base, base.name(), *column_at)?);
+            }
+            Some(shown)
+        };
+        let filter = if self.eat("where") {
+            Some(self.disjunction(&base)?)
+        } else {
+            None
+        };
+        for clause in [
+            "join", "inner", "group", "order", "limit", "offset", "having",
+        ] {
+            if self.peek_word().as_deref() == Some(clause) {
+                return Err(Self::beyond_a_cte_body(clause, self.at()));
+            }
+        }
+        self.expect_symbol(")")?;
+        Ok(Cte {
+            name,
+            base,
+            filter,
+            visible,
+            read: false,
+        })
+    }
+
+    /// The refusal for a clause a CTE body may not have.
+    ///
+    /// One message with the clause substituted rather than seven, because the
+    /// reason is one reason — the merge conjoins the body's `WHERE` onto the
+    /// outer query's and carries nothing else — and seven wordings of it would
+    /// drift into implying that some of them are closer to working than
+    /// others. They are not; the two that differ are named inside it.
+    fn beyond_a_cte_body(clause: &str, at: usize) -> SqlError {
+        SqlError {
+            message: format!(
+                "`{}` in a CTE body is not supported. The body is a projection, one table \
+                 and an optional WHERE, because the expansion merges that WHERE into the \
+                 outer query's and carries nothing else — so anything the body does after \
+                 filtering would land on the wrong side of the outer clauses. Two are wrong \
+                 rather than merely absent: a LIMIT would be applied after the outer WHERE \
+                 instead of before it, and a JOIN or a GROUP BY changes what a row is, so \
+                 the outer query would be projecting in an ordinal space it cannot address \
+                 — which is the refusal an ungrouped join already makes for `SELECT *`. Run \
+                 it as its own statement if you need more. See docs/ctes.md",
+                match clause {
+                    "group" | "order" => format!("{} BY", clause.to_uppercase()),
+                    other => other.to_uppercase(),
+                }
+            ),
+            at,
         }
     }
 
@@ -1185,7 +1665,15 @@ impl Parser<'_> {
         self.expect("from")?;
         let first = self.first_input()?;
 
+        let join_at = self.at();
         if self.eat_join() {
+            // The CTE is the join's *left* input here, which is the one
+            // `first_input` has already read — so `table` never sees the name
+            // and cannot make the refusal. `FROM books JOIN recent` does reach
+            // `table`, and gets the same sentence from the same function.
+            if let Some(name) = self.reading_cte() {
+                return Err(Self::cte_read_elsewhere(&name, join_at));
+            }
             return self.join_tail(first, &list, star, distinct);
         }
 
@@ -1228,13 +1716,19 @@ impl Parser<'_> {
         // eagerly here is how the first version came to accept
         // `SELECT title, count(*) ... GROUP BY author_id` and quietly drop the
         // title.
-        if self.eat("where") {
-            match self.where_clause(&table)? {
-                Where::All(conditions) => spec.filters = conditions,
-                Where::Any(conditions) => spec.any_of = conditions,
-                Where::Nested(tree) => spec.predicate = Some(tree),
-            }
-        }
+        // Kept as a tree and flattened at the very end rather than here,
+        // because a `WITH` has a second `WHERE` to conjoin onto it and
+        // flattening twice cannot produce what flattening once does: the
+        // merged `(a OR b) AND c` would have been flattened into an `Any`
+        // already and there is no field that holds the conjunction of one.
+        // Nothing between here and there reads the filter fields — GROUP BY,
+        // HAVING and ORDER BY are about group space and computed columns — so
+        // the delay is invisible to every other clause.
+        let mut clause = if self.eat("where") {
+            Some(self.disjunction(&table)?)
+        } else {
+            None
+        };
         if distinct {
             if self.peek_word().as_deref() == Some("group") {
                 return Err(SqlError {
@@ -1473,6 +1967,41 @@ impl Parser<'_> {
         }
         if self.eat("offset") {
             spec.offset = self.count("OFFSET")?;
+        }
+        if let Some(cte) = self.cte.as_mut().filter(|cte| cte.read) {
+            // `SELECT *` over a CTE is the CTE's columns and not the base
+            // table's: the body said which ones exist. Expanding it to the
+            // spec's empty projection — "every column" — would hand back the
+            // columns the body removed, with nothing anywhere saying so.
+            //
+            // Only when nothing else filled the projection. A grouping already
+            // decides the shape and a star beside one projects nothing either
+            // way, so there is no second answer to give.
+            if star
+                && spec.columns.is_empty()
+                && spec.group_by.is_empty()
+                && let Some(shown) = &cte.visible
+            {
+                spec.columns.clone_from(shown);
+            }
+            // The body's `WHERE` first, so the conjunction reads in the order
+            // it was written and the spec is the one the inlined statement
+            // compiles to rather than a permutation of it. `filters` is a
+            // list and `Vec` has an order, so "the same spec" is a claim about
+            // this line.
+            if let Some(body) = cte.filter.take() {
+                clause = Some(match clause {
+                    Some(outer) => conjoin(body, outer),
+                    None => body,
+                });
+            }
+        }
+        if let Some(tree) = clause {
+            match Self::flatten(tree) {
+                Where::All(conditions) => spec.filters = conditions,
+                Where::Any(conditions) => spec.any_of = conditions,
+                Where::Nested(nested) => spec.predicate = Some(nested),
+            }
         }
         // Last, because `compute` cannot grow any more: ORDER BY above is the
         // final clause that can register a computed column, and a window's
@@ -1973,9 +2502,16 @@ impl Parser<'_> {
         input: &Input,
         at: usize,
     ) -> Result<AggregateSpec, SqlError> {
-        self.aggregate_on(kind, argument, &input.table, input.name(), at)
+        self.aggregate_on(kind, argument, &input.table, input.name(), None, at)
     }
 
+    /// The single-table `count(x)`, which resolves `x` in whatever is in
+    /// scope — the CTE's projection, where the statement reads one.
+    ///
+    /// It went through `table.name()` and no visibility until a `WITH` could
+    /// be in scope, and that was the one path around [`Self::resolve`]:
+    /// `SELECT count(year) FROM recent` would have read a column the body
+    /// projected away, silently, while `SELECT year FROM recent` was refused.
     fn aggregate(
         &self,
         kind: &str,
@@ -1983,7 +2519,8 @@ impl Parser<'_> {
         table: &TableDef,
         at: usize,
     ) -> Result<AggregateSpec, SqlError> {
-        self.aggregate_on(kind, argument, table, table.name(), at)
+        let (name, visible) = self.scope(table);
+        self.aggregate_on(kind, argument, table, name, visible, at)
     }
 
     fn aggregate_on(
@@ -1992,6 +2529,7 @@ impl Parser<'_> {
         argument: Option<&str>,
         table: &TableDef,
         name: &str,
+        visible: Option<&[u32]>,
         at: usize,
     ) -> Result<AggregateSpec, SqlError> {
         let (kind, argument) = match (kind, argument) {
@@ -2006,7 +2544,7 @@ impl Parser<'_> {
         };
         let column = match argument {
             None => 0,
-            Some(raw) => self.resolve_named(raw, table, name, at)?,
+            Some(raw) => self.resolve_within(raw, table, name, visible, at)?,
         };
         let input = 0;
         if !matches!(
@@ -2613,6 +3151,30 @@ impl Parser<'_> {
     /// column's and is not worth a second table here; the run-time parse still
     /// catches a mismatch there, with the offending value in the message.
     fn subquery(&mut self) -> Result<(QuerySpec, Option<ValueType>), SqlError> {
+        // A subquery names its own table after its own `FROM`, so a `WITH`
+        // binding the outer query is reading is not what its columns resolve
+        // against — not even when it reads the CTE's *base* table, which is
+        // the case the two namespaces cannot be told apart in:
+        // `WITH r AS (SELECT id FROM books) SELECT id FROM r WHERE id IN
+        // (SELECT year FROM books)` names `books` directly and `year` is one
+        // of its columns, however few `r` projects.
+        //
+        // Restored in one place rather than at each exit: the body has nine
+        // of them, five written as a `?`, and a restore that has to be
+        // remembered at each is a restore that will be missed at the tenth.
+        let held = self
+            .cte
+            .as_mut()
+            .map(|cte| std::mem::replace(&mut cte.read, false));
+        let out = self.subquery_within();
+        if let (Some(cte), Some(held)) = (self.cte.as_mut(), held) {
+            cte.read = held;
+        }
+        out
+    }
+
+    /// [`Self::subquery`]'s body, with the CTE already out of scope.
+    fn subquery_within(&mut self) -> Result<(QuerySpec, Option<ValueType>), SqlError> {
         self.expect("select")?;
         if self.peek_word().as_deref() == Some("distinct") {
             // Harmless and redundant: `Expr::In` compares against a list, and a
@@ -3816,7 +4378,17 @@ mod grammar {
             .take_while(|line| line.starts_with("//!") || line.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-        for name in ["UNION", "INTERSECT", "EXCEPT", "EXISTS", "NOT EXISTS"] {
+        // `WITH RECURSIVE` joined the list when the rest of `WITH` stopped
+        // being refused: a keyword that is half accepted is exactly the case
+        // where a reader needs the documentation to say which half.
+        for name in [
+            "UNION",
+            "INTERSECT",
+            "EXCEPT",
+            "EXISTS",
+            "NOT EXISTS",
+            "WITH RECURSIVE",
+        ] {
             assert!(
                 doc.contains(name),
                 "`{name}` is refused by name in this parser and the module documentation \

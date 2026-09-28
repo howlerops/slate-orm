@@ -765,3 +765,464 @@ fn two_bracketed_conjunctions_ored_together() {
     assert!(!admits(text, 2, 1995), "and the other way round");
     assert!(!admits(text, 3, 1970), "neither");
 }
+
+// --- WITH: a non-recursive CTE referenced once -----------------------------
+//
+// `docs/ctes.md` splits `WITH` into three shapes with three answers, and the
+// one that is buildable is a non-recursive CTE read exactly once: it inlines
+// into the outer spec, which is the same expansion `docs/views.md` says a view
+// must be. These cases pin the expansion and the four questions the note left
+// open — a name that collides with a table, a column the body projected away,
+// a body that joins, and a second CTE in one `WITH` — each of which is
+// answered by a refusal and has to stay one.
+//
+// The property worth the most is the first: the CTE's spec and the inlined
+// query's spec are *equal*, not merely equivalent. Anything weaker would let
+// the two drift into two plans for one query, which is the whole thing this
+// front end exists not to do.
+
+/// The message a statement is refused with, against `books` alone.
+fn refuse(text: &str) -> String {
+    let tables = [books()];
+    parse(text, &Schema(&tables))
+        .err()
+        .unwrap_or_else(|| panic!("{text} was accepted and it must be refused"))
+        .message
+}
+
+#[test]
+fn a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to() {
+    // `docs/ctes.md` §3, verbatim: the note asserts these two are the same
+    // query and could not run it. They are the same *spec*, which is stronger
+    // than "the same answer" — one plan, byte for byte.
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) \
+             SELECT title FROM recent WHERE id > 5"
+        ),
+        select("SELECT title FROM books WHERE year > 2000 AND id > 5"),
+    );
+}
+
+#[test]
+fn the_expanded_spec_names_the_base_table_and_never_the_cte() {
+    // The security property, checked rather than argued. A `QuerySpec` is what
+    // leaves this crate, and `slate-serverd` resolves `spec.table` against
+    // `Catalog::table_by_name` — so if the CTE's name could reach that field,
+    // a grant and a policy would key on a name the catalog does not have.
+    // `docs/ctes.md` names registering one under a synthetic `TableId` as the
+    // hazard; this is the assertion that the expansion never gets near it.
+    let spec = select(
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) \
+         SELECT title FROM recent WHERE id > 5",
+    );
+    assert_eq!(spec.table, "books");
+    let json = serde_json::to_string(&spec).expect("a serializable spec");
+    assert!(
+        !json.contains("recent"),
+        "the CTE's name reached the spec: {json}"
+    );
+}
+
+#[test]
+fn the_expanded_spec_lowers_to_a_kernel_query_with_both_filters() {
+    // "Nothing new reaches the kernel" — the note's claim, run. The expansion
+    // adds no plan node: it is the `Query` the inlined statement builds.
+    let spec = select(
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) \
+         SELECT title FROM recent WHERE id > 5",
+    );
+    let query = lower::build(&spec, &books()).expect("a valid lowering");
+    let inlined = lower::build(
+        &select("SELECT title FROM books WHERE year > 2000 AND id > 5"),
+        &books(),
+    )
+    .expect("a valid lowering");
+    assert_eq!(query.filter, inlined.filter);
+    assert_eq!(
+        query.filter,
+        Expr::all([
+            Expr::compare(Ordinal(3), CmpOp::Gt, Value::I64(2000)),
+            Expr::compare(Ordinal(0), CmpOp::Gt, Value::U64(5)),
+        ])
+    );
+}
+
+#[test]
+fn a_cte_body_with_no_where_contributes_nothing_to_the_filter() {
+    assert_eq!(
+        select(
+            "WITH all_books AS (SELECT id, title FROM books) SELECT title FROM all_books WHERE id > 5"
+        ),
+        select("SELECT title FROM books WHERE id > 5"),
+    );
+}
+
+#[test]
+fn an_outer_query_with_no_where_of_its_own_keeps_the_ctes() {
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) SELECT title FROM recent"
+        ),
+        select("SELECT title FROM books WHERE year > 2000"),
+    );
+}
+
+#[test]
+fn a_disjunction_in_a_cte_body_is_bracketed_by_the_merge() {
+    // The merge is a conjunction and the CTE's `WHERE` may be a disjunction,
+    // so the result has to be `(a OR b) AND c` and not `a OR b AND c` — which
+    // this front end refuses to read at all, and which SQL reads the other
+    // way. Equality against the bracketed spelling is what says the merge
+    // bracketed rather than concatenated.
+    assert_eq!(
+        select(
+            "WITH odd AS (SELECT id, title, year FROM books WHERE author_id = 1 OR year >= 1990) \
+             SELECT title FROM odd WHERE year < 2000"
+        ),
+        select("SELECT title FROM books WHERE (author_id = 1 OR year >= 1990) AND year < 2000"),
+    );
+    // And the other way round: a flat CTE body under a bracketed outer clause.
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title, year, author_id FROM books WHERE year > 2000) \
+             SELECT title FROM recent WHERE author_id = 1 OR year >= 1990"
+        ),
+        select("SELECT title FROM books WHERE year > 2000 AND (author_id = 1 OR year >= 1990)"),
+    );
+}
+
+#[test]
+fn the_outer_query_may_order_group_and_limit_through_a_cte() {
+    // Everything after the `WHERE` belongs to the outer query and is untouched
+    // by the merge, which is only true because a CTE body may not itself sort,
+    // group or limit — see the refusal below.
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title, author_id FROM books WHERE year > 2000) \
+             SELECT author_id, count(*) FROM recent GROUP BY author_id ORDER BY count(*) DESC LIMIT 3"
+        ),
+        select(
+            "SELECT author_id, count(*) FROM books WHERE year > 2000 \
+             GROUP BY author_id ORDER BY count(*) DESC LIMIT 3"
+        ),
+    );
+}
+
+#[test]
+fn a_star_over_a_cte_is_the_columns_the_cte_projects() {
+    // `SELECT *` from a CTE is the CTE's columns, which are not the base
+    // table's. Expanding it to an empty projection — "every column" — would
+    // hand back two columns the CTE had removed, silently.
+    let spec = select(
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) SELECT * FROM recent",
+    );
+    assert_eq!(
+        spec.columns,
+        vec![0, 2],
+        "id and title, and not year or author_id"
+    );
+    assert_eq!(
+        spec,
+        select("SELECT id, title FROM books WHERE year > 2000"),
+    );
+    // A body that projects nothing means every column there too, so the outer
+    // star is still an empty projection.
+    let star = select("WITH everything AS (SELECT * FROM books) SELECT * FROM everything");
+    assert!(star.columns.is_empty(), "{:?}", star.columns);
+}
+
+#[test]
+fn a_column_the_cte_projected_away_is_not_in_scope() {
+    // Decision 2. The CTE's projection *is* the outer query's namespace, which
+    // is what SQL says and the only reading under which `SELECT *` above has
+    // an answer. Refused rather than resolved against the base table, because
+    // resolving it would make the projection a suggestion.
+    for text in [
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) SELECT year FROM recent",
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) SELECT title FROM recent WHERE year > 2010",
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) SELECT title FROM recent ORDER BY year",
+    ] {
+        let message = refuse(text);
+        assert!(
+            message.contains("recent") && message.contains("year"),
+            "the refusal should name the CTE and the column: {message}"
+        );
+        // And it lists what the CTE *does* have, rather than the base table's
+        // columns — naming `year` as available is exactly the confusion.
+        assert!(
+            !message.contains("author_id"),
+            "the refusal listed a column the CTE does not project: {message}"
+        );
+    }
+    // A name that is nowhere at all is still refused against the CTE's name.
+    let message = refuse("WITH recent AS (SELECT id FROM books) SELECT nosuch FROM recent");
+    assert!(message.contains("recent"), "{message}");
+}
+
+#[test]
+fn the_ctes_name_is_the_qualifier_and_the_base_tables_is_not() {
+    // After `FROM recent`, `recent` is what is in scope: `recent.title` is the
+    // column and `books.title` is a table this statement never named.
+    assert_eq!(
+        select("WITH recent AS (SELECT id, title FROM books) SELECT recent.title FROM recent"),
+        select("SELECT title FROM books"),
+    );
+    let message =
+        refuse("WITH recent AS (SELECT id, title FROM books) SELECT books.title FROM recent");
+    assert!(message.contains("books.title"), "{message}");
+}
+
+#[test]
+fn a_cte_name_that_is_already_a_table_is_refused() {
+    // Decision 1. SQL would shadow the table; here the expansion leaves
+    // `spec.table` saying `books` either way, so a reader looking at the one
+    // artifact this front end shows them could not tell which they got.
+    let message =
+        refuse("WITH books AS (SELECT id FROM books WHERE year > 2000) SELECT id FROM books");
+    assert!(message.contains("books"), "{message}");
+    assert!(
+        message.contains("table"),
+        "the refusal should say the name is a table's: {message}"
+    );
+}
+
+#[test]
+fn a_cte_whose_body_is_a_join_is_refused() {
+    // Decision 3, which `docs/ctes.md` left explicitly unexamined. An
+    // ungrouped join returns whole rows and takes `SELECT *` and nothing else
+    // — so a projection over a joined body is a projection in the joined row's
+    // ordinal space, which is the refusal the join path already makes.
+    let message = refuse_two(
+        "WITH pairs AS (SELECT * FROM books JOIN authors ON books.author_id = authors.id) \
+         SELECT * FROM pairs",
+    );
+    assert!(message.contains("one table"), "{message}");
+    assert!(message.contains("docs/ctes.md"), "{message}");
+}
+
+#[test]
+fn a_second_cte_in_one_with_is_refused() {
+    // Decision 4. The outer query reads one table, so at most one CTE can be
+    // the one it reads: a second is either never read, or read by the first —
+    // which is a CTE over a CTE, the nesting `docs/views.md` §5 refuses for
+    // views and for the same reasons.
+    for text in [
+        "WITH a AS (SELECT id FROM books), b AS (SELECT id FROM books) SELECT id FROM a",
+        "WITH a AS (SELECT id FROM books) WITH b AS (SELECT id FROM books) SELECT id FROM b",
+    ] {
+        let message = refuse(text);
+        assert!(
+            message.contains("one CTE"),
+            "the refusal should say only one CTE is read: {message}"
+        );
+        assert!(message.contains("docs/ctes.md"), "{message}");
+    }
+}
+
+#[test]
+fn a_cte_nobody_reads_is_refused() {
+    // The same argument decision 4 rests on, in its smallest form: a `WITH`
+    // whose binding the statement never names is dead text that reads as
+    // meaningful. Silently ignoring it is how a typo in the reference becomes
+    // a full-table scan that looks deliberate.
+    let message =
+        refuse("WITH recent AS (SELECT id FROM books WHERE year > 2000) SELECT id FROM books");
+    assert!(message.contains("recent"), "{message}");
+    assert!(
+        message.contains("never read") || message.contains("not read"),
+        "{message}"
+    );
+}
+
+#[test]
+fn with_recursive_is_still_refused_and_the_reason_is_the_fixpoint() {
+    // The refusal `docs/ctes.md` §1 argues, kept intact: a fixpoint's trip
+    // count is in the data and a statement compiles to one plan.
+    let message = refuse("WITH RECURSIVE t AS (SELECT id FROM books) SELECT id FROM t");
+    assert!(message.contains("fixpoint"), "{message}");
+    assert!(message.contains("docs/ctes.md"), "{message}");
+}
+
+#[test]
+fn a_cte_read_anywhere_but_the_statements_own_from_is_refused() {
+    // The other refusal kept: §2's read-it-twice, and the reads that are once
+    // but not from the top-level `FROM`. Both would need the CTE materialised
+    // or its `WHERE` merged into a side of a join, which is a second plan.
+    for text in [
+        // Read twice — the note's own example.
+        "WITH recent AS (SELECT id FROM books WHERE year > 2000) \
+         SELECT * FROM recent JOIN recent AS other ON recent.id = other.id",
+        // Read once, from a join input on the right.
+        "WITH recent AS (SELECT id FROM books WHERE year > 2000) \
+         SELECT * FROM books JOIN recent ON books.id = recent.id",
+        // And on the *left*, which is the case that reaches no other guard:
+        // `first_input` has already consumed the name, so `table` never sees
+        // it, and without the refusal in `select` the statement would be
+        // planned as an ordinary join with the CTE's WHERE silently dropped.
+        "WITH recent AS (SELECT id FROM books WHERE year > 2000) \
+         SELECT * FROM recent JOIN authors ON recent.author_id = authors.id",
+        // Read once, from a subquery.
+        "WITH recent AS (SELECT id FROM books WHERE year > 2000) \
+         SELECT id FROM books WHERE id IN (SELECT id FROM recent)",
+    ] {
+        // Two tables, so the join cases are refused for being a CTE read
+        // rather than for naming a table this schema does not have.
+        let message = refuse_two(text);
+        assert!(message.contains("recent"), "{text}: {message}");
+        assert!(message.contains("docs/ctes.md"), "{text}: {message}");
+    }
+}
+
+#[test]
+fn a_subquery_beside_a_cte_resolves_against_its_own_table() {
+    // The CTE's namespace is the *outer* query's and does not reach inside an
+    // `IN (SELECT …)`, even when the subquery reads the CTE's own base table.
+    // Without that, `year` below would be checked against what the CTE
+    // projects and refused for being a column of a table the subquery named
+    // directly.
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) \
+             SELECT title FROM recent WHERE id IN (SELECT year FROM books)"
+        ),
+        select("SELECT title FROM books WHERE year > 2000 AND id IN (SELECT year FROM books)"),
+    );
+}
+
+#[test]
+fn a_cte_body_may_not_sort_group_or_page() {
+    // Everything the merge cannot carry, refused by name. A `LIMIT` is the one
+    // that would be wrong rather than merely unsupported: the outer `WHERE`
+    // merges *into* the body, so it would filter before the limit rather than
+    // after it, and the query would quietly mean something else.
+    for clause in [
+        "WITH recent AS (SELECT id FROM books WHERE year > 2000 LIMIT 10) SELECT id FROM recent",
+        "WITH recent AS (SELECT id FROM books ORDER BY year) SELECT id FROM recent",
+        "WITH recent AS (SELECT author_id FROM books GROUP BY author_id) SELECT author_id FROM recent",
+        "WITH recent AS (SELECT id FROM books OFFSET 4) SELECT id FROM recent",
+        "WITH recent AS (SELECT count(*) FROM books) SELECT * FROM recent",
+    ] {
+        let message = refuse(clause);
+        assert!(message.contains("docs/ctes.md"), "{clause}: {message}");
+    }
+}
+
+#[test]
+fn the_with_line_parses_what_the_grammar_block_describes() {
+    // The grammar block's `WITH` production, exercised the way every other
+    // line of it is: a case that parses the thing the prose claims.
+    select(
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) SELECT title FROM recent WHERE id > 5",
+    );
+    select("WITH everything AS (SELECT * FROM books) SELECT id FROM everything");
+    // Lower case, because the dispatcher matches a normalised word.
+    select("with recent as (select id from books) select id from recent");
+}
+
+#[test]
+fn an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too() {
+    // The one path that went round `resolve`: the single-table aggregate
+    // resolved its argument against the table's name with no visibility, so
+    // `count(year)` would have read a column the body projected away while
+    // the bare `year` beside it was refused. A namespace with one hole in it
+    // is worse than none, because the hole is where somebody stops looking.
+    let message = refuse(
+        "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) \
+         SELECT count(year) FROM recent",
+    );
+    assert!(message.contains("recent"), "{message}");
+    assert!(message.contains("year"), "{message}");
+    // And the aggregate over a column the CTE *does* project is the inlined
+    // query's spec, so the fix did not close the path along with the hole.
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title FROM books WHERE year > 2000) \
+             SELECT count(id) FROM recent"
+        ),
+        select("SELECT count(id) FROM books WHERE year > 2000"),
+    );
+}
+
+#[test]
+fn a_cte_that_reads_itself_is_a_recursive_cte_without_the_word() {
+    // Refused before the name reaches the catalog, which would report a
+    // declared binding as an unknown table — the one thing it certainly is
+    // not. `docs/views.md` §5 makes the same refusal for a view that reads
+    // itself and for the same reason.
+    let message = refuse("WITH loop_ AS (SELECT id FROM loop_) SELECT id FROM loop_");
+    assert!(message.contains("reads itself"), "{message}");
+    assert!(message.contains("fixpoint"), "{message}");
+}
+
+#[test]
+fn a_cte_reference_takes_no_alias_and_the_name_takes_no_column_list() {
+    // Both refusals name what the reader gets instead, because both are
+    // things SQL allows and this does not.
+    let aliased = refuse("WITH recent AS (SELECT id FROM books) SELECT id FROM recent AS r");
+    assert!(aliased.contains("alias"), "{aliased}");
+    let renamed = refuse("WITH recent(a) AS (SELECT id FROM books) SELECT a FROM recent");
+    assert!(renamed.contains("select list"), "{renamed}");
+}
+
+#[test]
+fn a_with_in_front_of_a_write_is_refused_and_says_why_there_is_nothing_to_read() {
+    let message = refuse("WITH recent AS (SELECT id FROM books) DELETE FROM books WHERE id = 1");
+    assert!(message.contains("one SELECT"), "{message}");
+}
+
+#[test]
+fn a_conjunction_on_either_side_of_the_merge_stays_flat() {
+    // Found by a surviving mutation, and it is the mutation the merge exists
+    // for. Every case above has a single condition on each side, so the merge
+    // was only ever joining two leaves — and a version that wrapped each side
+    // instead of splicing it produced the same specs and passed all of them.
+    // Two ANDed conditions on either side is what tells the two apart: spliced
+    // they are one `filters` list, wrapped they are an `All` of `All`s, which
+    // is the one shape `flatten` cannot flatten and which lands in
+    // `predicate` instead. Same query, different spec, and this front end's
+    // whole claim is that there is one spec per query.
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title, year, author_id FROM books \
+             WHERE year > 2000 AND author_id = 1) \
+             SELECT title FROM recent WHERE id > 5"
+        ),
+        select("SELECT title FROM books WHERE year > 2000 AND author_id = 1 AND id > 5"),
+    );
+    assert_eq!(
+        select(
+            "WITH recent AS (SELECT id, title, year, author_id FROM books WHERE year > 2000) \
+             SELECT title FROM recent WHERE id > 5 AND author_id = 1"
+        ),
+        select("SELECT title FROM books WHERE year > 2000 AND id > 5 AND author_id = 1"),
+    );
+    // And the flat list really is flat, rather than the two nesting the same
+    // way and comparing equal.
+    let spec = select(
+        "WITH recent AS (SELECT id, title, year, author_id FROM books \
+         WHERE year > 2000 AND author_id = 1) \
+         SELECT title FROM recent WHERE id > 5",
+    );
+    assert_eq!(spec.filters.len(), 3, "{:?}", spec.filters);
+    assert!(spec.predicate.is_none(), "{:?}", spec.predicate);
+}
+
+// A repeated column in a CTE's projection is accepted, and projects that column
+// twice — which is what the same projection does without a CTE. `SELECT id, id`
+// is legal SQL returning two columns, so the expansion agreeing with the direct
+// form is the answer, not a shape that needed refusing.
+//
+// The implementation left this undecided and nothing had established what it
+// did. Establishing it is what made the question answerable: the two forms are
+// equal, so there is one rule here rather than two.
+#[test]
+fn a_repeated_column_in_a_cte_projects_it_twice_just_as_it_does_directly() {
+    let through_cte = select("WITH d AS (SELECT id, id FROM books) SELECT * FROM d");
+    assert_eq!(through_cte.columns, vec![0, 0], "id, twice");
+    assert_eq!(
+        through_cte,
+        select("SELECT id, id FROM books"),
+        "the expansion is the query it inlines into, repeated column and all"
+    );
+}

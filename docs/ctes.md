@@ -82,7 +82,11 @@ what "a statement compiles to one query spec" rules out. Refused, and the
 message should say *referenced more than once* rather than "CTEs", because the
 single-reference case is a different answer.
 
-## 3. A single-reference CTE is Missing, and it is the views row
+## 3. ~~A single-reference CTE is Missing~~ — built, and it was the views row
+
+**Built on 2026-09-28**, as this section specified and for the reason it gives. The
+rest of the section is kept as the argument that produced it. See
+`ledger/2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md`.
 
 ```sql
 WITH recent AS (SELECT id, title FROM books WHERE year > 2000)
@@ -124,22 +128,27 @@ only shape that is safe.
 
 ## What this note does not do
 
-**It does not design the expansion.** Where it happens, what it does about
-name collisions with real tables, whether an expanded spec keeps the CTE's name
-anywhere for `EXPLAIN` to show, and what happens when the outer query's
-`ORDER BY` names a column the CTE projected away — none of that is decided
-here. That belongs with the views design, which is the point.
+~~**It does not design the expansion.**~~ **Designed and built.** It happens in
+`slate-sql`, before anything resolves a table name. A name that collides with a real
+table is **refused** — the expanded spec says `books` either way, so the compiled-spec
+panel could not tell the shadow from the table. A column the body projected away is
+**out of scope**, because the body's projection *is* the outer namespace, which is
+SQL's own answer and the only reading under which `SELECT *` over the CTE means
+anything; the CTE's name becomes the only qualifier. What `EXPLAIN` discloses is
+still open, and lands exactly where `views.md` leaves the same question — the plan
+names `books`.
 
-**It does not decide what a CTE over a join does.** The inlining above is
-single-table on both sides. A CTE whose body is a join, referenced once from a
-query that also joins, is a chain — and whether that composes or has its own
-refusal is unexamined.
+~~**It does not decide what a CTE over a join does.**~~ **Decided: refused.** An
+ungrouped join takes `SELECT *` and nothing else, because a projection there lives in
+the joined row's ordinal space — so a projection over a joined body names columns the
+outer query cannot address. That is the existing join refusal's argument, reused
+rather than restated.
 
 **It does not measure anything.** The `IN (SELECT …)` contrast above was run;
 the inlining equivalence in §3 was reasoned from the grammar and not executed,
 because there is nothing to execute it with.
 
-**It does not count how much of the row this closes.** Of the three shapes,
-two are now Refused with reasons and one is Missing with its work named. The
-row can stop claiming all three are Missing; it cannot yet claim any of them is
-built.
+~~**It does not count how much of the row this closes.**~~ It closes it. Two shapes
+are Refused with reasons and the third is built, so the row claims neither too much
+nor too little. Seven narrower shapes inside the built third are refused by name,
+each with its own reason, and `crates/slate-sql/tests/front_end.rs` carries 24 cases.

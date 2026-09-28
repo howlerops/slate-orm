@@ -321,7 +321,7 @@ has checked whether a plan over an expanded view says anything a caller with
 ## What this note does not do
 
 **It builds nothing**, and it deliberately does not decide the CTE half either.
-`ctes.md` establishes that a single-reference, non-recursive CTE is the same
+`ctes.md` established that a single-reference, non-recursive CTE is the same
 expansion, so whichever is built first sets the shape for both — which is the
 argument for designing before building, and for designing the *view* case,
 because it is the one with the security question in it.

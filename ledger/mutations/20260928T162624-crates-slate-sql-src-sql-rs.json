@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-28T16:26:24+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "cb8caa8",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "conjoin nests instead of flattening, so the merged WHERE lands in `predicate`",
+      "old": "            PredicateSpec::All(parts) => parts,",
+      "new": "            PredicateSpec::All(parts) => vec![PredicateSpec::All(parts)],",
+      "verdict": "caught",
+      "caught_by": [
+        "a_conjunction_on_either_side_of_the_merge_stays_flat"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "conjoin drops the right-hand side entirely",
+      "old": "    all.extend(parts(right));",
+      "new": "    let _ = right;",
+      "verdict": "caught",
+      "caught_by": [
+        "a_conjunction_on_either_side_of_the_merge_stays_flat",
+        "a_disjunction_in_a_cte_body_is_bracketed_by_the_merge",
+        "a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to",
+        "a_subquery_beside_a_cte_resolves_against_its_own_table",
+        "the_expanded_spec_lowers_to_a_kernel_query_with_both_filters"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
