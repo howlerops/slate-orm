@@ -156,6 +156,8 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  'sql-lowering': (None, 'crates/slate-sql/src/lower.rs'),
  'views-doc': (None, 'docs/views.md'),
  'site-html-citations': ('.html', 'scripts/check_cited_docs.py'),
+ # --- the scale hole, closed on 2026-09-18 and noticed on the 28th
+ 'scale-in-fingerprint': ('column.scale()', 'crates/slate-server/src/fingerprint.rs'),
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
  "full-join-unmatched": ("BothUnmatchedSidesOfAFullJoin", "clients/go/slate/scalar_test.go"),
@@ -452,6 +454,22 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # --- the scale hole, closed on 2026-09-18 and noticed on the 28th
+    ('2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md',
+     "Nothing checks a client's declared scale against the server'"):
+        'scale-in-fingerprint',
+    ('2026-09-18-decimals-and-conditional-updates-in-three-clients.md',
+     "Nothing checks a client's declared scale against the server'"):
+        'scale-in-fingerprint',
+    ('2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md',
+     "Nothing checks a client's idea of a column's scale against t"):
+        'scale-in-fingerprint',
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     "Nothing here checks a client's declared scale against the se"):
+        'scale-in-fingerprint',
+    ('2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md',
+     'No client-side knowledge of scale.'):
+        'scale-in-fingerprint',
     # --- the last of the invisible backlog, triaged 2026-09-28
     ('2026-09-18-ty-resolves-against-whatever-you-happen-to-have.md',
      'It does not make the two environments agree.'):

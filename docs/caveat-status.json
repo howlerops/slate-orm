@@ -8718,10 +8718,8 @@
     {
       "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
       "key": "Nothing checks a client's declared scale against the server'",
-      "verdict": "narrowed",
-      "by": "scripts/codegen.py writes a decimal's scale out of the catalog for all three languages — `scale=`, `Scale:` and `scale:` at lines 1364, 1495 and 1619 — and .github/workflows/ci.yml runs `codegen.py --check` twice, so a generated declaration cannot disagree with the catalog it came from. ledger/2026-09-28-the-scale-hole-is-narrower-than-three-entries-said.md",
-      "checked": "2026-09-28",
-      "residual": "a hand-written declaration is still unchecked, and so is a generated one against a server whose catalog has changed scale since: `--check` compares against a local catalog at build time, not against the server's at connect time. The fingerprint deliberately does not hash a scale, so such a client reaches the right column and renders every value wrong with no error at any layer."
+      "verdict": "closed",
+      "by": "crates/slate-server/src/fingerprint.rs hashes a decimal's scale — `if let Some(scale) = column.scale()` — with a module docstring arguing the exception: it addresses no column, and it is there anyway because a client with a scale wrong reads the right column and renders every value a power of ten out with nothing downstream able to notice. Safe because a scale cannot change under a running client: `changing_a_scale_is_a_migration_refusal` in crates/slate-kernel/tests/decimals.rs. Closed by commit 35d9182 on 2026-09-18, the same day these five were written. ledger/2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md"
     },
     {
       "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
@@ -8740,10 +8738,8 @@
     {
       "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
       "key": "Nothing checks a client's declared scale against the server'",
-      "verdict": "narrowed",
-      "by": "scripts/codegen.py writes a decimal's scale out of the catalog for all three languages — `scale=`, `Scale:` and `scale:` at lines 1364, 1495 and 1619 — and .github/workflows/ci.yml runs `codegen.py --check` twice, so a generated declaration cannot disagree with the catalog it came from. ledger/2026-09-28-the-scale-hole-is-narrower-than-three-entries-said.md",
-      "checked": "2026-09-28",
-      "residual": "a hand-written declaration is still unchecked, and so is a generated one against a server whose catalog has changed scale since: `--check` compares against a local catalog at build time, not against the server's at connect time. The fingerprint deliberately does not hash a scale, so such a client reaches the right column and renders every value wrong with no error at any layer."
+      "verdict": "closed",
+      "by": "crates/slate-server/src/fingerprint.rs hashes a decimal's scale — `if let Some(scale) = column.scale()` — with a module docstring arguing the exception: it addresses no column, and it is there anyway because a client with a scale wrong reads the right column and renders every value a power of ten out with nothing downstream able to notice. Safe because a scale cannot change under a running client: `changing_a_scale_is_a_migration_refusal` in crates/slate-kernel/tests/decimals.rs. Closed by commit 35d9182 on 2026-09-18, the same day these five were written. ledger/2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md"
     },
     {
       "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
@@ -8816,10 +8812,8 @@
     {
       "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
       "key": "Nothing checks a client's idea of a column's scale against t",
-      "verdict": "narrowed",
-      "by": "scripts/codegen.py writes a decimal's scale out of the catalog for all three languages — `scale=`, `Scale:` and `scale:` at lines 1364, 1495 and 1619 — and .github/workflows/ci.yml runs `codegen.py --check` twice, so a generated declaration cannot disagree with the catalog it came from. ledger/2026-09-28-the-scale-hole-is-narrower-than-three-entries-said.md",
-      "checked": "2026-09-28",
-      "residual": "a hand-written declaration is still unchecked, and so is a generated one against a server whose catalog has changed scale since: `--check` compares against a local catalog at build time, not against the server's at connect time. The fingerprint deliberately does not hash a scale, so such a client reaches the right column and renders every value wrong with no error at any layer."
+      "verdict": "closed",
+      "by": "crates/slate-server/src/fingerprint.rs hashes a decimal's scale — `if let Some(scale) = column.scale()` — with a module docstring arguing the exception: it addresses no column, and it is there anyway because a client with a scale wrong reads the right column and renders every value a power of ten out with nothing downstream able to notice. Safe because a scale cannot change under a running client: `changing_a_scale_is_a_migration_refusal` in crates/slate-kernel/tests/decimals.rs. Closed by commit 35d9182 on 2026-09-18, the same day these five were written. ledger/2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md"
     },
     {
       "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
@@ -10043,10 +10037,8 @@
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
       "key": "Nothing here checks a client's declared scale against the se",
-      "verdict": "narrowed",
-      "by": "scripts/codegen.py writes a decimal's scale out of the catalog for all three languages — `scale=`, `Scale:` and `scale:` at lines 1364, 1495 and 1619 — and .github/workflows/ci.yml runs `codegen.py --check` twice, so a generated declaration cannot disagree with the catalog it came from. ledger/2026-09-28-the-scale-hole-is-narrower-than-three-entries-said.md",
-      "checked": "2026-09-28",
-      "residual": "a hand-written declaration is still unchecked, and so is a generated one against a server whose catalog has changed scale since: `--check` compares against a local catalog at build time, not against the server's at connect time. The fingerprint deliberately does not hash a scale, so such a client reaches the right column and renders every value wrong with no error at any layer."
+      "verdict": "closed",
+      "by": "crates/slate-server/src/fingerprint.rs hashes a decimal's scale — `if let Some(scale) = column.scale()` — with a module docstring arguing the exception: it addresses no column, and it is there anyway because a client with a scale wrong reads the right column and renders every value a power of ten out with nothing downstream able to notice. Safe because a scale cannot change under a running client: `changing_a_scale_is_a_migration_refusal` in crates/slate-kernel/tests/decimals.rs. Closed by commit 35d9182 on 2026-09-18, the same day these five were written. ledger/2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md"
     },
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
@@ -10058,10 +10050,8 @@
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
       "key": "No client-side knowledge of scale.",
-      "verdict": "narrowed",
-      "by": "scripts/codegen.py writes a decimal's scale out of the catalog for all three languages — `scale=`, `Scale:` and `scale:` at lines 1364, 1495 and 1619 — and .github/workflows/ci.yml runs `codegen.py --check` twice, so a generated declaration cannot disagree with the catalog it came from. ledger/2026-09-28-the-scale-hole-is-narrower-than-three-entries-said.md",
-      "checked": "2026-09-28",
-      "residual": "a hand-written declaration is still unchecked, and so is a generated one against a server whose catalog has changed scale since: `--check` compares against a local catalog at build time, not against the server's at connect time. The fingerprint deliberately does not hash a scale, so such a client reaches the right column and renders every value wrong with no error at any layer."
+      "verdict": "closed",
+      "by": "crates/slate-server/src/fingerprint.rs hashes a decimal's scale — `if let Some(scale) = column.scale()` — with a module docstring arguing the exception: it addresses no column, and it is there anyway because a client with a scale wrong reads the right column and renders every value a power of ten out with nothing downstream able to notice. Safe because a scale cannot change under a running client: `changing_a_scale_is_a_migration_refusal` in crates/slate-kernel/tests/decimals.rs. Closed by commit 35d9182 on 2026-09-18, the same day these five were written. ledger/2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md"
     },
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
@@ -10456,18 +10446,25 @@
       "by": "most are about a missing test or an unmeasured number, which is this repository's business rather than a reader's; putting all 118 on the page would bury the ones that change what a caller writes. The two chosen are the two that do, which is the line the page's other paragraphs are drawn on and is a judgement rather than a rule."
     },
     {
-      "entry": "2026-09-28-the-scale-hole-is-narrower-than-three-entries-said.md",
-      "key": "It does not check a scale at connect time",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "the thing that would close the class. Hashing the scale into the fingerprint is the decision that would do it, and the argument against — a scale addresses no column, so hashing it refuses a request that reaches exactly the right row — is written down and has not been rebutted."
+      "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
+      "key": "It does not make a schema check mandatory.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "the check is optional on the wire and every protection the fingerprint offers is opt-in the same way — ordinals, types, the primary key, a decimal's scale, an array's element type. Making it mandatory means every caller must hold a catalog, which reverses the protocol's publishes-no-schema decision. Recorded once against ledger/2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md rather than five times."
     },
     {
-      "entry": "2026-09-28-the-scale-hole-is-narrower-than-three-entries-said.md",
-      "key": "It does not re-read the other 117 open caveats for the same ",
+      "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
+      "key": "It does not re-read the other 113 open caveats against the t",
       "verdict": "open",
       "checked": "2026-09-28",
-      "by": "five entries said the same false thing and nothing looks for a sixth. The odds that this is the only claim in the backlog overtaken by work on its own day are not good."
+      "by": "five of them were false and that was found by accident, twice removed. The population they came from has not been re-examined, and nothing counts how many more were overtaken by work on their own day."
+    },
+    {
+      "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
+      "key": "Nothing stops the fourth time.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "the habit this wants — when a caveat says a thing is unbuilt, grep for it before writing the verdict — is a habit, and the three wrong verdicts were written by somebody who would have said they had it. No guard is proposed, because matching a prose caveat to the commit that closed it is the existence-not-aptness problem ledger/2026-09-26-the-citation-nobody-could-follow.md already records."
     }
   ]
 }

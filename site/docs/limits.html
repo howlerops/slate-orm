@@ -119,19 +119,14 @@
         top of it rather than under it.
       </p>
       <p>
-        <strong>A decimal's scale is checked at build time, not at
-        connect time.</strong> <code>Value::Decimal</code> carries units and the
-        scale lives on the column, so a client renders <code>1999</code> as
-        <code>19.99</code> from the scale its own declaration states. The
-        generator writes that scale out of the catalog for all three languages
-        and CI runs <code>codegen.py --check</code>, so a generated declaration
-        cannot disagree with the schema it was generated from. What is
-        unchecked is a <em>hand-written</em> declaration, and a generated one
-        against a server whose catalog has changed scale since: the schema
-        fingerprint deliberately does not hash a scale, because a scale
-        addresses no column, so such a client reaches the right column and
-        prints every value a hundred times wrong with no error at any layer.
-        Use the generator, and regenerate when the schema moves.
+        <strong>A schema check is optional, so its protections are too.</strong>
+        The fingerprint a client sends covers each column's name, type and
+        ordinal, the primary key, a decimal's <em>scale</em> and an array's
+        element type — the last two deliberately, because a client with either
+        wrong reads the <em>right</em> column and renders every value wrong
+        consistently, with the wire carrying neither. A request that carries a
+        check and disagrees is refused. A request that carries none is served
+        as before, and nothing obliges a client to send one.
       </p>
       <p>
         <strong>A streamed read's rows are in no measurement.</strong> Every
