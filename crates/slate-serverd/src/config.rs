@@ -423,13 +423,33 @@ pub(crate) struct LimitSettings {
     /// limit exists to prevent.
     #[serde(default)]
     pub(crate) max_returned_rows: Option<usize>,
-    /// How many requests may be in flight at once across all connections.
+    /// How many requests may be in flight at once **on one connection**.
+    ///
+    /// Not node-wide, though the name reads that way: it becomes tonic's
+    /// `concurrency_limit_per_connection`, so a caller who opens a second
+    /// socket gets a second allowance. A node-wide bound needs a semaphore in
+    /// the service and this is not it. The name is kept because renaming a
+    /// shipped TOML key breaks every file that sets it, and because the
+    /// per-connection bound is still the one worth having against a single
+    /// client hammering one channel.
     ///
     /// Unset means unbounded, which is what shipped: a caller could open as
     /// many concurrent requests as they had sockets.
     #[serde(default)]
     pub(crate) max_concurrent_requests: Option<usize>,
-    /// How long one request may run before it is cancelled.
+    /// How long one request may **wait** before it is cancelled.
+    ///
+    /// Not a latency bound, though it is easy to read as one. It becomes
+    /// tonic's `Server::timeout`, whose `GrpcTimeout` future polls the handler
+    /// *before* it polls the sleep — so a handler that returns without ever
+    /// pending is never cancelled, whatever this says. Measured: a query
+    /// answered from the memory backend with `request_timeout = "0ms"` returns
+    /// both its rows. What this bounds is a request that actually waits on
+    /// something: a slow object store, a lease, a large scan that yields.
+    ///
+    /// `crates/slate-serverd/tests/ceilings.rs` pins both halves — the zero
+    /// timeout that does not cancel, and the same query with no timeout set.
+    /// The smallest unit the parser accepts is `ms`.
     #[serde(default)]
     pub(crate) request_timeout: Option<String>,
     /// Distinct `GROUP BY` keys one request may hold.

@@ -491,6 +491,20 @@ Having no way to *say* one was the defect. Zero is refused for every one of
 these settings rather than read as "no limit", because a config that disables
 the feature it appears to configure is worse than one that will not start.
 
+Both are weaker than their names, and that was established after this was
+written — by `crates/slate-serverd/tests/ceilings.rs`, which set out to prove
+they take effect and found the shape of what they do instead.
+`max_concurrent_requests` becomes tonic's `concurrency_limit_per_connection`,
+so a caller who opens a second socket gets a second allowance; it bounds one
+channel, not the node. `request_timeout` becomes `Server::timeout`, whose
+`GrpcTimeout` future polls the handler before it polls the sleep, so a handler
+that returns without ever pending is never cancelled — measured, a query
+answered from the memory backend with `request_timeout = "0ms"` returns both
+its rows. What it bounds is a request that *waits*. Against the impact below —
+one authenticated caller pinning the node — the per-request ceilings in
+`slate-kernel` are what does the work; these two help with a slow dependency
+and a single noisy channel.
+
 **Impact: medium — one authenticated caller can pin the node.**
 `crates/slate-kernel/src/{expr,aggregate,exec}.rs`,
 `crates/slate-serverd/src/serve.rs`.

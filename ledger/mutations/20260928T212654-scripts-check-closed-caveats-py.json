@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-28T21:26:54+00:00",
+  "file": "scripts/check_closed_caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_closed_caveats.py"
+  ],
+  "commit": "0a9a820",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a progress marker's roster row is dropped, so a closure has no witness",
+      "old": "    ('2026-09-28-the-invisible-backlog-part-two.md', '283 remain'): '=stamped',\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every closed verdict names a witness or an exemption",
+        "the real roster: no reason outlives the exemption it explains"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a reason outlives its exemption",
+      "old": "    ('2026-09-28-the-invisible-backlog-part-three.md', '130 remain'): '=stamped',\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every closed verdict names a witness or an exemption",
+        "the real roster: no reason outlives the exemption it explains"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the exemption names a kind EXEMPT does not explain",
+      "old": "'The 468 are untriaged, and that is the work this surfaced ra'): '=stamped',",
+      "new": "'The 468 are untriaged, and that is the work this surfaced ra'): '=counted',",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every exemption used is one EXEMPT explains"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

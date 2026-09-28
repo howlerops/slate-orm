@@ -7232,9 +7232,8 @@
     {
       "entry": "2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md",
       "key": "The 468 are untriaged, and that is the work this surfaced ra",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. This is the backlog the widening revealed and it is real work, not a decision: 468 caveats written between 2026-09-13 and 2026-09-27 that no verdict has ever been given."
+      "verdict": "closed",
+      "by": "closed by triaging all 468. docs/caveat-status.json now reports 0 untriaged"
     },
     {
       "entry": "2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md",
@@ -7939,9 +7938,8 @@
     {
       "entry": "2026-09-28-the-first-two-days-of-the-invisible-backlog.md",
       "key": "364 remain, and they are the 2026-09-15 to 2026-09-27 entrie",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The same work at the same rate, recorded against this entry so the remainder is a caveat with a verdict rather than only a count in a tool's output."
+      "verdict": "closed",
+      "by": "closed by triaging the 364. docs/caveat-status.json now reports 0 untriaged"
     },
     {
       "entry": "2026-09-28-the-first-two-days-of-the-invisible-backlog.md",
@@ -8485,9 +8483,8 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-part-two.md",
       "key": "283 remain",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Same work at the same rate, over the densest part of the ledger."
+      "verdict": "closed",
+      "by": "closed by triaging the 283. docs/caveat-status.json now reports 0 untriaged"
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-part-two.md",
@@ -9521,9 +9518,8 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
       "key": "130 remain",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. 2026-09-20 to 2026-09-27 remain."
+      "verdict": "closed",
+      "by": "closed by triaging the 130. docs/caveat-status.json now reports 0 untriaged"
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
@@ -10465,6 +10461,26 @@
       "verdict": "open",
       "checked": "2026-09-28",
       "by": "the habit this wants — when a caveat says a thing is unbuilt, grep for it before writing the verdict — is a habit, and the three wrong verdicts were written by somebody who would have said they had it. No guard is proposed, because matching a prose caveat to the commit that closed it is the existence-not-aptness problem ledger/2026-09-26-the-citation-nobody-could-follow.md already records."
+    },
+    {
+      "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
+      "key": "It does not measure `max_concurrent_requests` binding.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The per-connection claim rests on the name of the tonic method called, which is a reading. Demonstrating it needs two connections and a handler that blocks on command, and the node ships no such handler — the same wall crates/slate-serverd/tests/ceilings.rs hit."
+    },
+    {
+      "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
+      "key": "It does not re-read the rest of the open caveats.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The open population has not been re-examined against the tree; five were found false by accident and four more survived a grep, which is evidence about those four only. Deliberately phrased without a count — the four caveats closed in this same commit were progress markers, false the moment the next batch landed."
+    },
+    {
+      "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
+      "key": "It does not touch the `1ms` floor.",
+      "verdict": "deliberate",
+      "by": "this entry: the floor is config::optional_duration's smallest unit and the error message names it. Documenting a sub-millisecond refusal beside a setting whose timeout does not fire on a fast request at all would put the reader's attention on the wrong limit."
     }
   ]
 }

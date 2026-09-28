@@ -347,8 +347,12 @@ EXEMPT: dict[str, str] = {
     ),
     "stamped": (
         "closed by the state of `docs/caveat-status.json` itself — a count of "
-        "unread caveats, answered by every open verdict carrying a `checked` "
-        "date. `caveats.py --unread` is the check, and `check.sh` runs it"
+        "caveats in some state, answered by the file reaching a different "
+        "count. Unread ones are answered by every open verdict carrying a "
+        "`checked` date and untriaged ones by every caveat carrying a verdict "
+        "at all; `caveats.py --unread` and `caveats.py` are the two checks, "
+        "and `check.sh` runs both. A witness pointing at the file this guard "
+        "already parses would be circular"
     ),
 }
 
@@ -445,6 +449,21 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
      '267 open caveats are still unread'):
         'same as the row above: closed by the reading pass, whose artifact is '
         'the status file this guard parses',
+    ('2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md',
+     'The 468 are untriaged, and that is the work this surfaced ra'):
+        'closed by triaging all 468 over four commits on the same day. The '
+        'artifact is docs/caveat-status.json, which this guard already parses; '
+        'a witness pointing at it would be circular',
+    ('2026-09-28-the-first-two-days-of-the-invisible-backlog.md',
+     '364 remain, and they are the 2026-09-15 to 2026-09-27 entrie'):
+        'same as the row above: a progress marker in a batch, retired by the '
+        'batch after it. The count it names is a state of the status file',
+    ('2026-09-28-the-invisible-backlog-part-two.md', '283 remain'):
+        'same as the row above: a progress marker retired by the next batch',
+    ('2026-09-28-the-invisible-backlog-part-three.md', '130 remain'):
+        'same as the row above, and the last of the four. A caveat that counts '
+        'how much of itself is left is true only until the next commit, which '
+        'is an argument for writing fewer of them rather than for a witness',
 }
 
 #: Every `closed` caveat, and the witness that must still be in the tree.
@@ -454,6 +473,13 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # --- four progress markers, each retired by the batch after it
+    ('2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md',
+     'The 468 are untriaged, and that is the work this surfaced ra'): '=stamped',
+    ('2026-09-28-the-first-two-days-of-the-invisible-backlog.md',
+     '364 remain, and they are the 2026-09-15 to 2026-09-27 entrie'): '=stamped',
+    ('2026-09-28-the-invisible-backlog-part-two.md', '283 remain'): '=stamped',
+    ('2026-09-28-the-invisible-backlog-part-three.md', '130 remain'): '=stamped',
     # --- the scale hole, closed on 2026-09-18 and noticed on the 28th
     ('2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md',
      "Nothing checks a client's declared scale against the server'"):

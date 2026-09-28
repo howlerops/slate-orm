@@ -64,7 +64,8 @@ pub(crate) struct Serving {
     pub(crate) grace: Duration,
     /// Requests in flight per connection, unset for unbounded.
     pub(crate) concurrency: Option<usize>,
-    /// How long one request may run, unset for no timeout.
+    /// How long one request may *wait*, unset for no timeout. Not a latency
+    /// bound — see the setting it comes from in [`crate::config`].
     pub(crate) request_timeout: Option<Duration>,
     /// What the node says about the requests it serves. See [`crate::observe`].
     pub(crate) observing: crate::observe::Observing,
@@ -161,9 +162,15 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     let serving_counters = Arc::clone(&counters);
     let server = tokio::spawn(async move {
         let mut builder = tonic::transport::Server::builder();
-        // Applied to the builder rather than per handler: these bound the node
-        // as a whole, and a caller's leverage here is the number of requests
-        // they can have in flight, not the number per connection.
+        // Applied to the builder rather than per handler, which is the only
+        // place tonic offers — and is weaker than it looks in both cases. The
+        // concurrency limit is *per connection*, by the name of the method
+        // called, so a caller who opens a second socket gets a second
+        // allowance; the timeout only fires on a handler that pends, because
+        // `GrpcTimeout::poll` polls the inner future first. Both are written
+        // up on the settings above, and `tests/ceilings.rs` pins the timeout's
+        // half. Stated here rather than only there because this is where a
+        // reader arrives believing the names.
         //
         // Left unset by default. A concurrency limit low enough to protect a
         // small node is low enough to break a large one, and there is no
