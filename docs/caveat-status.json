@@ -10579,6 +10579,27 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "this entry: the per-connection claim is a reading of the tonic method's name, never a timing measurement, so a finding about a racing timeout does not bear on it. Why it stays unmeasured is unchanged and recorded against 2026-09-13-per-request-ceilings.md."
+    },
+    {
+      "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
+      "key": "It does not examine the other ninety-one.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Twenty-five of 116 have been read adversarially; the rest carry a verdict and a date and nobody has tried to falsify them."
+    },
+    {
+      "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
+      "key": "It does not explain why the four clustered.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Two hypotheses fit four points equally well and distinguishing them needs a random sample of twenty-five, which neither pass drew."
+    },
+    {
+      "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
+      "key": "It leaves the grep table as advice rather than a guard.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry and the one before it: deciding whether a hit bears on a claim is the reading itself, so no guard can do it. The accumulating table is the only mechanism on offer and is stated as such."
     }
   ]
 }
