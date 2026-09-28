@@ -145,6 +145,17 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  'purge-counted': ('purge', 'crates/slate-serverd/src/observe.rs'),
  'published-checks': ('column', 'crates/slate-kernel/src/security.rs'),
  'must-differ-pairs': ('MUST_DIFFER', 'examples/explorer/conformance/conformance.py'),
+ # --- the 2026-09-20/21 backlog, triaged 2026-09-28
+ 'four-paths-probed': ('retired', 'ledger/2026-09-20-four-say-absent-one-says-present.md'),
+ # --- the last of the invisible backlog, triaged 2026-09-28
+ 'check-sh-venv': ('venv', 'scripts/check.sh'),
+ 'latency-quantiles': ('quantile', 'crates/slate-serverd/src/observe.rs'),
+ 'request-id': ('request_id', 'crates/slate-serverd/src/observe.rs'),
+ 'views-toml-declared': ('views', 'crates/slate-serverd/src/config.rs'),
+ 'sql-own-tests': (None, 'crates/slate-sql/tests/front_end.rs'),
+ 'sql-lowering': (None, 'crates/slate-sql/src/lower.rs'),
+ 'views-doc': (None, 'docs/views.md'),
+ 'site-html-citations': ('.html', 'scripts/check_cited_docs.py'),
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
  "full-join-unmatched": ("BothUnmatchedSidesOfAFullJoin", "clients/go/slate/scalar_test.go"),
@@ -441,6 +452,68 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # --- the last of the invisible backlog, triaged 2026-09-28
+    ('2026-09-18-ty-resolves-against-whatever-you-happen-to-have.md',
+     'It does not make the two environments agree.'):
+        'check-sh-venv',
+    ('2026-09-18-what-the-node-says-about-its-requests.md',
+     'No histogram, so no percentiles.'):
+        'latency-quantiles',
+    ('2026-09-18-what-the-node-says-about-its-requests.md',
+     'A failure raised in a trailer counts as a success.'):
+        'trailer-counted',
+    ('2026-09-18-what-the-node-says-about-its-requests.md',
+     'No request id.'):
+        'request-id',
+    ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
+     'It builds no view.'):
+        'views-toml-declared',
+    ('2026-09-21-slate-sql-gets-its-own-tests.md',
+     "`Schema<'_>` is the only way in, and it takes a slice of `Ta"):
+        'views-toml-declared',
+    ('2026-09-21-slate-sql-is-its-own-crate.md',
+     'The lowering has not moved.'):
+        'sql-lowering',
+    ('2026-09-21-slate-sql-is-its-own-crate.md',
+     'No view exists yet'):
+        'views-toml-declared',
+    ('2026-09-21-slate-sql-is-its-own-crate.md',
+     '`slate-sql` has no tests of its own.'):
+        'sql-own-tests',
+    ('2026-09-21-the-lowering-follows-the-parser.md',
+     'No view exists yet.'):
+        'views-toml-declared',
+    ('2026-09-21-the-lowering-follows-the-parser.md',
+     '`slate-sql` still has no tests of its own.'):
+        'sql-own-tests',
+    ('2026-09-21-the-views-blocker-was-a-crate-name.md',
+     'It builds no view.'):
+        'views-toml-declared',
+    ('2026-09-21-the-views-blocker-was-a-crate-name.md',
+     'It does not prove the extraction is clean.'):
+        'sql-lowering',
+    ('2026-09-21-the-views-blocker-was-a-crate-name.md',
+     'It leaves the other two open questions open'):
+        'views-doc',
+    ('2026-09-22-four-dependencies-and-a-tool-that-was-lying.md',
+     'What survives the audit is narrower and worth more: **a muta'):
+        'mutation-records',
+    ('2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md',
+     'What the grep cannot say is whether a guard *should* read th'):
+        'site-html-citations',
+    # --- the 2026-09-20/21 backlog, triaged 2026-09-28
+    ('2026-09-20-the-accessor-three-adapters-now-call.md',
+     'Still no `restore`.'):
+        'soft-delete-restore',
+    ('2026-09-20-the-attribute-the-builder-already-had.md',
+     'No `restore`.'):
+        'soft-delete-restore',
+    ('2026-09-20-the-column-the-catalog-knew-about.md',
+     'There is still no `restore`.'):
+        'soft-delete-restore',
+    ('2026-09-20-the-row-that-is-both-there-and-not.md',
+     'It does not check the other write paths.'):
+        'four-paths-probed',
     # --- the 2026-09-19 backlog, triaged 2026-09-28
     ('2026-09-19-a-check-that-names-its-field.md',
      'The write path still stops at the first failing check, so a '):

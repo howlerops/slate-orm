@@ -9541,6 +9541,879 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "the alternative is re-deriving every decision the ledger has already argued, which is the work the ledger exists to avoid repeating — and a re-derivation by the same kind of reader is not independent either. What the tracker offers instead is the `reviewed` date, which records that somebody read the reasoning against today's tree, and `caveats.py --unread` is what finds the ones nobody has."
+    },
+    {
+      "entry": "2026-09-20-a-message-that-says-nothing.md",
+      "key": "This is a behaviour change to catalog validation.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-a-message-that-says-nothing.md",
+      "key": "\"Is a sentence\" is still unchecked",
+      "verdict": "deliberate",
+      "by": "and not checkable, as the entry says: a message of \"x\" passes any rule a machine can state. What is checkable is that the message exists, which is what the builder now refuses without.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-a-message-that-says-nothing.md",
+      "key": "\"Free of the row's data\" is still unchecked",
+      "verdict": "deliberate",
+      "by": "same reason: no rule distinguishes a message that quotes a value from one that describes a constraint. The convention is documented and the refusal covers the case a machine can see.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-a-message-that-says-nothing.md",
+      "key": "Nothing checks the message at the *wire* boundary.",
+      "verdict": "open",
+      "by": "the builder is the only constructor TableDef exposes, which is a strong hint no bypass exists — and the entry is explicit that a hint is not a check. Nobody has looked for such a path.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
+      "key": "---",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-four-say-absent-one-says-present.md",
+      "key": "Still no fix",
+      "verdict": "open",
+      "by": "whether restoring requires ReadDeleted is a policy decision nobody has made, so the five paths still disagree about a retired row.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-four-say-absent-one-says-present.md",
+      "key": "Three paths remain unprobed",
+      "verdict": "open",
+      "by": "a cascade delete into a retired child, a write to a retired row inside an atomic batch, and purge_deleted on a table whose rows a policy hides. The first two go through the same write_many, which is an expectation rather than a measurement.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-four-say-absent-one-says-present.md",
+      "key": "No test pins any of this.",
+      "verdict": "deliberate",
+      "by": "a test of the current behaviour would pin the defect, which is the reason the entry gives and is still right: the five paths disagree, and the disagreement is what wants fixing rather than recording.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-four-say-absent-one-says-present.md",
+      "key": "The predicate paths were probed at one shape.",
+      "verdict": "open",
+      "by": "a predicate matching only the retired row would report affected=0, which was not run and is the case where 'silently skipped' is most likely to surprise somebody.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-nine-pushes-over-a-red-branch.md",
+      "key": "It does not prove the rest of the branch is green.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-nine-pushes-over-a-red-branch.md",
+      "key": "It does not fix the watching.",
+      "verdict": "deliberate",
+      "by": "a property of how a session works rather than of this repository, so there is nothing to commit. CLAUDE.md now carries the answer this entry reached — read the run's conclusion with mcp__github__actions_list rather than setting a watch that can expire.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-nine-pushes-over-a-red-branch.md",
+      "key": "No new guard.",
+      "verdict": "deliberate",
+      "by": "a check comparing two rustfmt versions needs two rustfmt versions, which the disk note rules out on this container. The mitigation is the CLAUDE.md paragraph and the habit of letting the formatter wrap.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-nine-pushes-over-a-red-branch.md",
+      "key": "Nothing measured.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-accessor-three-adapters-now-call.md",
+      "key": "The case count did not change.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-accessor-three-adapters-now-call.md",
+      "key": "Still no `restore`.",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/record.rs has `restore`"
+    },
+    {
+      "entry": "2026-09-20-the-accessor-three-adapters-now-call.md",
+      "key": "Nothing outside the demo calls it.",
+      "verdict": "deliberate",
+      "by": "the accessor is on a generated type and the three clients' own suites test the hand-written client, which is the right division. Its only live caller being the demo is what the demo is for.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-accessor-three-adapters-now-call.md",
+      "key": "No measurement.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-attribute-the-builder-already-had.md",
+      "key": "No `restore`.",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/record.rs has `restore`"
+    },
+    {
+      "entry": "2026-09-20-the-attribute-the-builder-already-had.md",
+      "key": "No reaper.",
+      "verdict": "narrowed",
+      "by": "crates/slate-serverd carries purge_deleted and scripts has a sweep script an operator can schedule",
+      "residual": "nothing calls it periodically by itself — the script's docstring names --once and --every and stops there, deliberately, because a shipped systemd unit or CronJob manifest would date faster than the argument.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-attribute-the-builder-already-had.md",
+      "key": "Nothing measures the cost.",
+      "verdict": "open",
+      "by": "every read of a soft-deleting table still carries an extra IsNull conjunct and nothing has timed it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-attribute-the-builder-already-had.md",
+      "key": "The attribute is Rust-only, which is correct but worth sayin",
+      "verdict": "deliberate",
+      "by": "a client in Go, Python or TypeScript learns about soft delete from the catalog the server publishes, not from a derive. Giving them an attribute would mean a second declaration to keep in step with the first.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-attribute-the-builder-already-had.md",
+      "key": "No compile-fail case for `soft_delete` on a field that is al",
+      "verdict": "deliberate",
+      "by": "the combination is already impossible — a key column may not be nullable and a soft-delete column must be — so the refusal comes from NullablePrimaryKey, which the schema layer's own suite covers. Named because the entry looked, not because it is missing.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-child-that-made-the-arm-reachable.md",
+      "key": "`transaction.delete` can still fail in ways no test produces",
+      "verdict": "open",
+      "by": "a storage error, a fence, a cascade over the limit. The arm's error branch is exercised, which is what the counting rule needed; the arm is not proved correct under every error the kernel can raise.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-child-that-made-the-arm-reachable.md",
+      "key": "`mentions` is a test fixture and nothing reads it.",
+      "verdict": "deliberate",
+      "by": "it exists to make one row undeletable, which is what the arm needed. A realistic child table would carry an index, a policy, a conformance case and a client, which is a fixture that has to be maintained to prove a property one row proves.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-child-that-made-the-arm-reachable.md",
+      "key": "No measurement of the cost it adds.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-child-that-made-the-arm-reachable.md",
+      "key": "The other six arms were not re-mutated.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-column-the-catalog-knew-about.md",
+      "key": "There is still no `restore`.",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/record.rs has `restore`"
+    },
+    {
+      "entry": "2026-09-20-the-column-the-catalog-knew-about.md",
+      "key": "`--print-schema`'s output is not versioned.",
+      "verdict": "open",
+      "by": "a consumer parsing it gets a new key without warning, and the shape has grown twice in two days.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-estimate-a-preview-cannot-make.md",
+      "key": "`--plan` still says nothing about size.",
+      "verdict": "deliberate",
+      "by": "this entry's own decision, with the argument stated for somebody to attack: a preview that scans to estimate pays the price of the thing it previews. What it prints instead is counts, which are free.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-estimate-a-preview-cannot-make.md",
+      "key": "No estimate from a persisted count.",
+      "verdict": "open",
+      "by": "named as the direction and not taken; it needs a format change to TableState.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-estimate-a-preview-cannot-make.md",
+      "key": "The per-index line has no timing.",
+      "verdict": "deliberate",
+      "by": "entries rather than seconds. A per-index duration means timing inside migrate::apply, which returns counts and lets the caller time the whole thing — a bigger change for a number an operator can mostly infer.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-estimate-a-preview-cannot-make.md",
+      "key": "Nothing was measured about the scan's cost",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-exit-code-a-deployment-now-uses.md",
+      "key": "I did not run `examples/deployed` itself.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-exit-code-a-deployment-now-uses.md",
+      "key": "The backfill estimate is still missing.",
+      "verdict": "open",
+      "by": "the item with the most value left in it, and a real change to the planner's output rather than a harness change. A table's statistics could answer it and --plan does not ask them.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-exit-code-a-deployment-now-uses.md",
+      "key": "`backend = \"memory\"` still prints no plan",
+      "verdict": "deliberate",
+      "by": "correct by design: a memory backend has no stored state a separate invocation can read, the flag says so in a paragraph, and a named test pins it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-exit-code-a-deployment-now-uses.md",
+      "key": "No measurement.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-other-three-decoders.md",
+      "key": "Still nothing decodes a value of the wrong *kind* from a liv",
+      "verdict": "deliberate",
+      "by": "the server does not produce an Int where the schema says Uint through any surface, so the case the decoders exist to catch cannot be staged live. What the live case proves is that they agree with the rows the server actually sends, and the hand-built cases cover the wrong kind.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-other-three-decoders.md",
+      "key": "No new table is covered by construction.",
+      "verdict": "open",
+      "by": "a sixth table in head.toml gets a generated decoder and no live row until somebody edits three handlers. The three unit suites have a coverage guard; this route has none, and building one means the adapters reading their generated module reflectively.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-other-three-decoders.md",
+      "key": "`rating` and the float formatter are untouched",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-other-three-decoders.md",
+      "key": "No measurement.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-row-that-is-both-there-and-not.md",
+      "key": "It does not fix the defect.",
+      "verdict": "narrowed",
+      "by": "crates/slate-kernel/src/record.rs has `restore`, so the row this entry found unrestorable has a named operation now",
+      "residual": "the five write paths still disagree about a retired row, which is what ledger/2026-09-20-four-say-absent-one-says-present.md records and what a policy decision — does restoring require ReadDeleted — would settle.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-row-that-is-both-there-and-not.md",
+      "key": "It does not establish how long this has been true.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-row-that-is-both-there-and-not.md",
+      "key": "It does not check the other write paths.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-20-four-say-absent-one-says-present.md probes exactly those paths and reports what each does"
+    },
+    {
+      "entry": "2026-09-20-the-row-that-is-both-there-and-not.md",
+      "key": "No test was added.",
+      "verdict": "deliberate",
+      "by": "a test asserting the current behaviour would pin the defect and one asserting the fixed behaviour would fail, so the reproduction is the record until the decision is made. That decision is still open.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
+      "key": "No offline tool.",
+      "verdict": "open",
+      "by": "a stopped node's keyspace still cannot be purged; the sweep needs a running server to talk to.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
+      "key": "The ceiling is still a count",
+      "verdict": "deliberate",
+      "by": "deliberate, with the reason in the entry: a sweep that runs until the backlog clears is a sweep that can hold a writer for an hour. An operator who sees 'hit the ceiling' raises --at-most or shortens the interval, and both are decisions somebody makes rather than a loop makes for them.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
+      "key": "Nothing measures a sweep's cost.",
+      "verdict": "open",
+      "by": "how long a purge of a million rows takes, and what it does to concurrent writes, is unknown and unasked.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
+      "key": "No `systemd` unit, `cron` line or `CronJob` manifest.",
+      "verdict": "deliberate",
+      "by": "a worked Kubernetes manifest would date faster than the argument. The docstring names which of --once and --every suits which arrangement and stops there.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
+      "key": "One language.",
+      "verdict": "deliberate",
+      "by": "the retention job is a script and Python is the client with a scripting ergonomic. Go and TypeScript can call purge_deleted and the conformance corpus covers that they agree, so a second and third copy of the example would demonstrate nothing new.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-third-decoder-test.md",
+      "key": "The decoders still never see a row the server sent.",
+      "verdict": "open",
+      "by": "the live-row coverage exists for books and shipments only; these build values by hand, like the Go and TypeScript cases.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-third-decoder-test.md",
+      "key": "No live-row case for `authors`, `sales` or `editions` in any",
+      "verdict": "open",
+      "by": "tracked separately from the language gap this entry closed, and still open.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-third-decoder-test.md",
+      "key": "The three test files do not share a corpus.",
+      "verdict": "deliberate",
+      "by": "each is hand-written against the same catalog, and the thing that would actually drift — the generated declarations — is diffed against that catalog. A fourth guard comparing the three test files would check that three hand-written fixtures agree, which is weaker than checking each against the source.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-third-decoder-test.md",
+      "key": "No measurement.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-20-the-write-side-of-the-same-mistake.md",
+      "key": "The encoders check nothing about values.",
+      "verdict": "deliberate",
+      "by": "the division docs/validation.md argues for: the server refuses, and a client-side copy of the rule is a second rule that can disagree. The generated Literal and union types catch an out-of-enumeration status at compile time in Python and TypeScript, and Go has no such type to generate.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-write-side-of-the-same-mistake.md",
+      "key": "Only one write path uses them.",
+      "verdict": "deliberate",
+      "by": "one converted path makes the encoders live; converting every write in the demo is churn with no new coverage, since the coverage guard already fails on a generated encoder no test calls.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-write-side-of-the-same-mistake.md",
+      "key": "No `to_row` for a join or a chain",
+      "verdict": "deliberate",
+      "by": "their rows belong to no single table, which is the same reason there is no decoder for one. Naming a type for a shape the catalog does not declare is the ordinal problem again.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-write-side-of-the-same-mistake.md",
+      "key": "Nothing generates the *test* cases.",
+      "verdict": "deliberate",
+      "by": "a test the generator emitted would agree with the generator. The round-trip tables are hand-written in three languages with a guard that fails when a generated encoder is missing from one, which is the same trade the decoder suites made.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-20-the-write-side-of-the-same-mistake.md",
+      "key": "No measurement.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
+      "key": "The demo cannot demonstrate the inverted shape",
+      "verdict": "deliberate",
+      "by": "a claim about storage belongs where the storage is: slate-serverd's schema.rs tests and the kernel's fulltext.rs. A demo that demonstrated the index shape would be asserting an implementation detail through a UI.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
+      "key": "No `CONTAINS` in the SQL front end and no search box in the ",
+      "verdict": "narrowed",
+      "by": "crates/slate-sql/src/sql.rs has CONTAINS",
+      "residual": "no search box in the web UI. The front end can express it and a visitor still cannot type it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
+      "key": "`access` is compared only for equality between two cases.",
+      "verdict": "open",
+      "by": "nothing asserts its content, so a server that renamed every plan would keep the corpus green.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
+      "key": "The distinction that matters is that the other three were al",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
+      "key": "The stubs are regenerated and committed here. `COPIES` is st",
+      "verdict": "open",
+      "by": "COPIES is still one pair and still has no completeness check, so a second literal copy added tomorrow is invisible to it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-annotate-the-contains-regression-seeds.md",
+      "key": "Nothing stops the next mutation run adding more unlabelled s",
+      "verdict": "open",
+      "by": "noticing is still a person's job and this is the second time it has fallen to one. A guard would need mutate.py snapshotting the file around each case — plausible, not attempted, and worth doing if it recurs a third time.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-ci-rustfmt-split-a-builder-chain.md",
+      "key": "Nothing prevents the next one. The gap is structural — CI tr",
+      "verdict": "deliberate",
+      "by": "the gap is structural — CI tracks stable and this container does not — and the only defence is reading the failing job's diff rather than re-running the local formatter. CLAUDE.md carries that, with this line as the worked example: it was already inside the default 100-column width.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
+      "key": "No case covers a search that matches nothing *through the in",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nor a multi-term search whose terms are in different rows — `\"solaris cyberiad\"` would be a sharper conjunction test than `\"the games\"` and is not there."
+    },
+    {
+      "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
+      "key": "Nothing here is *run* by the new job.",
+      "verdict": "deliberate",
+      "by": "it lints and type-checks; the harnesses are executed by the twelve jobs that already run them. A script that passes both tools and does the wrong thing is caught by the job that runs it, which is the division of labour rather than a gap in it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
+      "key": "`ruff format` is still unused",
+      "verdict": "deliberate",
+      "by": "and ledger/2026-09-18-the-formatter-and-the-file-that-is-laid-out-on-purpose.md is the decision: one file is laid out as a table on purpose, `ruff format` collapses it, and there is no 'assert unformatted' to run.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
+      "key": "`examples/deployed` was not run end to end here.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
+      "key": "No docstring, naming or complexity rules.",
+      "verdict": "deliberate",
+      "by": "`select` is the same families clients/python uses plus BLE, so a contributor moving between the two trees meets one set of rules. D, N and C901 would each be a decision about five thousand lines written before them.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-read-only-window-demonstrated.md",
+      "key": "The window is still open.",
+      "verdict": "deliberate",
+      "by": "in-place promotion of a replica is a restart, which docs/topology.md states and site/docs/limits.html repeats. The window this demonstrates is the consequence, and the README item points at the demonstration rather than a description.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-read-only-window-demonstrated.md",
+      "key": "It tests one shape of unmigrated.",
+      "verdict": "open",
+      "by": "a missing index, the case that returns no rows. A follower disagreeing about a column is refused earlier by the fingerprint; a follower mid-backfill on a partly-built index is a third case and is not constructed.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-read-only-window-demonstrated.md",
+      "key": "Nothing exercises the recovery.",
+      "verdict": "open",
+      "by": "no test watches the node become correct on its own. It needs the leader restarted with the wider catalog and the follower re-read, which is a longer test and a different claim.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-read-only-window-demonstrated.md",
+      "key": "Two nodes, one machine, a local directory.",
+      "verdict": "deliberate",
+      "by": "the lease contest is a file lock rather than a conditional PUT, so this isolates the catalog window from the storage one. The real-object-storage shape — where a manifest poll separates the leader's migration from the follower's view of it — is what examples/deployed exercises, over MinIO.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
+      "key": "The corpus compares renderers at one scale.",
+      "verdict": "open",
+      "by": "every adapter renders against 2, because that is what books.price declares. A disagreement showing only at scale 0 or a negative value would not appear; each client's own suite has its edge-case table, written independently rather than shared.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
+      "key": "The demo's UI does not show the conditional update.",
+      "verdict": "open",
+      "by": "the endpoint exists and the corpus drives it; no panel does.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
+      "key": "Nothing here checks a client's declared scale against the se",
+      "verdict": "open",
+      "by": "still true and still the sharpest edge in the feature: the fingerprint deliberately does not hash a scale, because a scale addresses no column, so a client declaring scale 2 against a scale 4 column reaches the right column and renders every value a hundred times wrong, for ever, with no error at any layer.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
+      "key": "`price` is not in any aggregate case.",
+      "verdict": "open",
+      "by": "SUM over a decimal is exact and that is the claim worth comparing across three clients; it is the obvious next case and is not there.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
+      "key": "No client-side knowledge of scale.",
+      "verdict": "open",
+      "by": "still true and still the sharpest edge in the feature: the fingerprint deliberately does not hash a scale, because a scale addresses no column, so a client declaring scale 2 against a scale 4 column reaches the right column and renders every value a hundred times wrong, for ever, with no error at any layer.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
+      "key": "The demo's UI does not show these groupings.",
+      "verdict": "open",
+      "by": "they are in the corpus and the contract; the web front end's grouping picker lists the older ones, so a reader clicking through will not meet a decimal expression.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
+      "key": "No `sum(price)` anywhere in the corpus.",
+      "verdict": "open",
+      "by": "/api/aggregate returns counts only, so the one aggregate that returns a decimal is compared by no client case. The SQL front end's HAVING sum(price) covers it in the browser; the three SDKs do not.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
+      "key": "`Value::decimal_to_string` is Rust-only.",
+      "verdict": "deliberate",
+      "by": "sharing one renderer means a code generator, and three short functions that a corpus compares are cheaper than that. The corpus's `rendered` field is what holds them together.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-ty-resolves-against-whatever-you-happen-to-have.md",
+      "key": "`make-trips.py` is not type-checked.",
+      "verdict": "deliberate",
+      "by": "eighty lines that run by hand, perhaps once a year, and the exclusion is stated in the config, in the script and in the entry. Type-checking it means carrying pyarrow in the checker's environment for a script nobody runs in CI.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-ty-resolves-against-whatever-you-happen-to-have.md",
+      "key": "It does not make the two environments agree.",
+      "verdict": "closed",
+      "by": "scripts/check.sh builds its own virtualenv on first use and runs ty against it, which is the `scripts` job that closes this — the recipe is no longer a thing somebody has to remember"
+    },
+    {
+      "entry": "2026-09-18-ty-resolves-against-whatever-you-happen-to-have.md",
+      "key": "Nothing prevents the next one.",
+      "verdict": "narrowed",
+      "by": "scripts/check.sh runs ty against a virtualenv built the way CI builds one, so a script importing a module CI lacks now fails here too.",
+      "residual": "the two environments still differ by everything this container happens to have installed outside that virtualenv, and only the checks that run inside it are protected.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-what-the-node-says-about-its-requests.md",
+      "key": "No histogram, so no percentiles.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/observe.rs carries the quantiles and crates/slate-serverd/src/metrics.rs exports the buckets"
+    },
+    {
+      "entry": "2026-09-18-what-the-node-says-about-its-requests.md",
+      "key": "A failure raised in a trailer counts as a success.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/observe.rs reads the trailer"
+    },
+    {
+      "entry": "2026-09-18-what-the-node-says-about-its-requests.md",
+      "key": "No request id.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/observe.rs carries one, and the three clients send it"
+    },
+    {
+      "entry": "2026-09-18-what-the-node-says-about-its-requests.md",
+      "key": "No per-tenant or per-principal breakdown.",
+      "verdict": "deliberate",
+      "by": "keying on identity makes the map unbounded in a caller's control, which is a different design from 'at most eighteen entries'. A per-tenant breakdown belongs in a scraper's labels, where the cardinality is the operator's problem rather than the node's.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-what-the-node-says-about-its-requests.md",
+      "key": "The summary goes to stderr and nowhere else.",
+      "verdict": "narrowed",
+      "by": "crates/slate-serverd/src/metrics.rs is the endpoint, so the counters are no longer stderr-only.",
+      "residual": "the human-readable summary line is still stderr with no file and no rotation; an operator who wants those pipes the process.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-which-guard-covers-which-field.md",
+      "key": "The probe covered `paged` and `returning`. Every other field",
+      "verdict": "open",
+      "by": "every other field — the access hints, build_limit, the freshness token — is unprobed, and each answer costs a full run. The runner says how to find out and nobody has.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-which-guard-covers-which-field.md",
+      "key": "`MUST_DIFFER` still compares whole answers. Two cases that d",
+      "verdict": "open",
+      "by": "two cases differing for a reason unrelated to the field under test would satisfy it, and nothing checks the difference is the right one.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-which-guard-covers-which-field.md",
+      "key": "The join tests use a self-join on one table, because the fix",
+      "verdict": "open",
+      "by": "the fixture has exactly one soft-deleting table, so a join between two of them — where each side's flag could be crossed with the other's — is untested.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-who-may-see-a-deleted-row.md",
+      "key": "No `read_deleted` grant appears in any example config, so th",
+      "verdict": "deliberate",
+      "by": "the demo's three personas are about row-level security rather than retention, so a read_deleted grant there would be a keyword with no story around it. The first person to want one finds it in security.rs or in this entry, which is where a grant nobody has asked for should live.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-in-the-sql-front-end.md",
+      "key": "No search box in the demo's web UI.",
+      "verdict": "open",
+      "by": "the last surface, and the only part of F6b left.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-in-the-sql-front-end.md",
+      "key": "The workbench takes a table scan for every `CONTAINS`",
+      "verdict": "deliberate",
+      "by": "there is no hint syntax in the SQL subset, and adding one means a dialect extension for a planner decision. The fixture states it beside the index, so a reader sees the scan rather than assuming the index.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-in-the-sql-front-end.md",
+      "key": "No `NOT CONTAINS`.",
+      "verdict": "deliberate",
+      "by": "the grammar's negation does not reach a comparison, for CONTAINS or for any other operator, so this adds no new gap. Reaching it means negation in the comparison tail, which is a grammar change rather than an operator.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-in-the-sql-front-end.md",
+      "key": "The SQL operator list has the weakness the wire's had.",
+      "verdict": "open",
+      "by": "filter_strategy names its operators by hand and nothing holds that list to the parser. Unlike Expr there is no enum to pin it to, so an operator added to the parser and to neither is invisible.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-on-the-wire.md",
+      "key": "No `CONTAINS` in the SQL front end and no search box in the ",
+      "verdict": "narrowed",
+      "by": "crates/slate-sql/src/sql.rs has CONTAINS",
+      "residual": "no search box in the demo's web UI, which is the last surface.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-on-the-wire.md",
+      "key": "No conformance case.",
+      "verdict": "open",
+      "by": "the demo's catalog still has no text index to point one at, which is the same follow-up as the search box.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-on-the-wire.md",
+      "key": "The planner still prefers a table scan",
+      "verdict": "open",
+      "by": "docs/full-text.md's finding, unchanged, and the reason every test here hints.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-on-the-wire.md",
+      "key": "The Go and TypeScript hints are untested beyond this file.",
+      "verdict": "open",
+      "by": "nothing checks that a hint naming an index the table does not have produces a warning, which Python's test_explain.py does check.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-contains-on-the-wire.md",
+      "key": "`slate-serverd`'s fixture `python-client.toml` gained no tex",
+      "verdict": "deliberate",
+      "by": "it mirrors the first six testserver tables and posts is not among them, so the fixture stays a mirror rather than growing a table the thing it mirrors does not have. The three schema.rs unit tests and the Go and TypeScript TOML exercise `text = true`.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-refusing-a-view-everywhere-else-is-free.md",
+      "key": "It builds no view.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/config.rs declares [[views]] and the read path substitutes one before planning"
+    },
+    {
+      "entry": "2026-09-21-refusing-a-view-everywhere-else-is-free.md",
+      "key": "It does not check the property it relies on.",
+      "verdict": "open",
+      "by": "nothing fails if a future Catalog gains a second name-to-TableDef lookup a view could satisfy. check_handlers.py rule 1 covers the handlers and not the catalog; the guard is writable and was not written.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-refusing-a-view-everywhere-else-is-free.md",
+      "key": "It leaves the refusal's wording wrong",
+      "verdict": "open",
+      "by": "\"no table named `recent_books`\" about a view that does exist, now that views do.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-slate-sql-gets-its-own-tests.md",
+      "key": "It covers the read path and nothing else.",
+      "verdict": "deliberate",
+      "by": "a view is a single-table read, so this covers what the next caller needs and stops; the browser's 226 cover joins, chains, writes, aggregates, windows and computes through the browser. Duplicating them here would be a second suite over the same parser.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-slate-sql-gets-its-own-tests.md",
+      "key": "`Schema<'_>` is the only way in, and it takes a slice of `Ta",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/config.rs is the daemon-side code that builds that slice from a TOML catalog"
+    },
+    {
+      "entry": "2026-09-21-slate-sql-gets-its-own-tests.md",
+      "key": "Nothing checks the crate builds without `slate-wasm` in the ",
+      "verdict": "deliberate",
+      "by": "a real check builds the crate alone in a scratch workspace, which is more machinery than the claim is worth. The independence rests on the file not naming slate-wasm, which a reader can verify.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-slate-sql-is-its-own-crate.md",
+      "key": "The lowering has not moved.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-21-the-lowering-follows-the-parser.md is the next commit, and crates/slate-sql/src/lower.rs is where it landed"
+    },
+    {
+      "entry": "2026-09-21-slate-sql-is-its-own-crate.md",
+      "key": "No view exists yet",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/config.rs declares [[views]] and the read path substitutes one before planning"
+    },
+    {
+      "entry": "2026-09-21-slate-sql-is-its-own-crate.md",
+      "key": "`slate-sql` has no tests of its own.",
+      "verdict": "closed",
+      "by": "crates/slate-sql/tests/front_end.rs is the crate's own suite, reached without a browser"
+    },
+    {
+      "entry": "2026-09-21-slate-sql-is-its-own-crate.md",
+      "key": "The re-export means nothing has been forced to move.",
+      "verdict": "deliberate",
+      "by": "`slate_wasm::sql` resolving is what stops the extraction being a breaking change for the one caller there was. Nothing guards against a future caller reaching through the binding, and the crate's own suite is what makes reaching directly worth doing.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-the-browser-check-counts-the-new-index-too.md",
+      "key": "Nothing stops the next fixture change from missing this file",
+      "verdict": "deliberate",
+      "by": "a single entry point running the browser checks needs a browser in scripts/check.sh, which that script exists not to require — it runs with no built binary, no browser, no container and no network, which is what makes it worth running before every commit. CI runs all three.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-the-lowering-follows-the-parser.md",
+      "key": "No view exists yet.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/config.rs declares [[views]] and the read path substitutes one before planning"
+    },
+    {
+      "entry": "2026-09-21-the-lowering-follows-the-parser.md",
+      "key": "`slate-sql` still has no tests of its own.",
+      "verdict": "closed",
+      "by": "crates/slate-sql/tests/front_end.rs is the crate's own suite, reached without a browser"
+    },
+    {
+      "entry": "2026-09-21-the-lowering-follows-the-parser.md",
+      "key": "The re-exports still hide the move.",
+      "verdict": "deliberate",
+      "by": "as above: the re-export is what kept the extraction non-breaking, and nothing stops a new caller reaching through the binding. The crate's own suite is the reason to reach directly.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-the-lowering-follows-the-parser.md",
+      "key": "`compute_scalar`, `computes`, `base_of`, `comparison` and `w",
+      "verdict": "deliberate",
+      "by": "public because the module is the seam a daemon will use, and guessing which five it will not want is how a seam gets reopened. They are unexercised as public API until something outside calls them, which the entry states rather than glosses.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-the-rust-seeding-entry-point-was-never-missing.md",
+      "key": "It does not build a factory, which is the half of the row th",
+      "verdict": "open",
+      "by": "nothing generates a plausible row, sequences an id, or builds a graph of related records; the two rows in the test are written out by hand. That is the genuinely open half of the row.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-the-rust-seeding-entry-point-was-never-missing.md",
+      "key": "It does not give the Python, Go or TypeScript clients a seed",
+      "verdict": "deliberate",
+      "by": "refused rather than open: seeding is a superuser write and seed.rs designs a superuser write path out of the wire. Giving a client one means giving the wire one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-the-rust-seeding-entry-point-was-never-missing.md",
+      "key": "It does not add a `seed` helper to `slate-orm`. The entry po",
+      "verdict": "deliberate",
+      "by": "the entry point is insert_records with a superuser context, spelled out at the call site, which is what security.rs's 'one grep away' argument asks for. A helper would hide the superuser part.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-21-the-views-blocker-was-a-crate-name.md",
+      "key": "It builds no view.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/config.rs declares [[views]] and the read path substitutes one before planning"
+    },
+    {
+      "entry": "2026-09-21-the-views-blocker-was-a-crate-name.md",
+      "key": "It does not prove the extraction is clean.",
+      "verdict": "closed",
+      "by": "the extraction happened and the compiler is the evidence: crates/slate-sql/src/lower.rs holds the lowering and crates/slate-sql/tests/front_end.rs reaches the parser without a browser"
+    },
+    {
+      "entry": "2026-09-21-the-views-blocker-was-a-crate-name.md",
+      "key": "It leaves the other two open questions open",
+      "verdict": "closed",
+      "by": "docs/views.md answers both: what EXPLAIN over an expanded view reveals, and that a view may not reference another one"
+    },
+    {
+      "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
+      "key": "and no ledger entry in this repository records a `rust` run ",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-22-four-dependencies-and-a-tool-that-was-lying.md",
+      "key": "What survives the audit is narrower and worth more: **a muta",
+      "verdict": "closed",
+      "by": "scripts/mutate.py records every run under ledger/mutations/, one file per run, including the runs that could not score — and scripts/check_mutation_claims.py holds every entry counting mutations to a recorded one"
+    },
+    {
+      "entry": "2026-09-25-or-in-having-too.md",
+      "key": "The spec fields are the *SQL front end's* shape, not the pro",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-25-the-disjunction-the-kernel-always-had.md",
+      "key": "What was missing was only a way to *write* one as SQL text, ",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-26-the-verdict-sweep-finished-and-corrected-itself.md",
+      "key": "The sweep left 180 and this entry's own five caveats — four ",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
+      "key": "What the grep cannot say is whether a guard *should* read th",
+      "verdict": "closed",
+      "by": "scripts/check_cited_docs.py now reads .html among eleven source suffixes, so a page citing a renamed ledger entry is checked — the gap this recorded as latent"
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
+      "key": "It does not fix any of the 116.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. They are visible and grouped where they repeat; the largest is the decimal scale a client declares and nothing checks, which three entries record independently."
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
+      "key": "A `deliberate` verdict is only as good as the reasoning it q",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "the alternative is re-deriving every decision the ledger already argued, which is the work the ledger exists to stop repeating, and a re-derivation by the same kind of reader is not independent either. What the tracker offers is the `reviewed` date and `caveats.py --unread`, which finds the verdicts nobody has looked at since — not the ones whose reasoning has quietly stopped applying."
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
+      "key": "The 22 `moment` verdicts in this batch are the weakest.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing re-reads them. 'Nothing was measured' is a moment when there was nothing to measure and an open caveat when there was, and each was judged one at a time by one reader on one day."
     }
   ]
 }
