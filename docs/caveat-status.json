@@ -7956,6 +7956,552 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "the tracker records whether a claim is still true, which is a different question from whether it is worth acting on. Giving each open row an owner and a plan would make docs/caveat-status.json a backlog, and ledger/README.md's argument against a shared log applies: several agents work here at once and a priority ordering is the field they would all edit."
+    },
+    {
+      "entry": "2026-09-14-the-demo-runner-left-processes-behind.md",
+      "key": "and on the commit carrying the fix it ends with",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-the-demo-runner-left-processes-behind.md",
+      "key": "and nothing after it. Three orphans to none, same job, same ",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-the-demo-runner-left-processes-behind.md",
+      "key": "It still could not be reproduced *locally* — runs before the",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-the-demo-runner-left-processes-behind.md",
+      "key": "Nothing tests the teardown. There is no case that starts the",
+      "verdict": "open",
+      "by": "still unwritten. There is no case that starts the stack, kills it and asserts nothing survives, so a future edit reintroduces this and only a CI cleanup line notices.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-demo-runner-left-processes-behind.md",
+      "key": "The grace period is ten 0.2s polls, which is a guess at \"lon",
+      "verdict": "deliberate",
+      "by": "a timeout with no measurement behind it, and the cost of getting it wrong is asymmetric: too short leaves an orphan, too long adds two seconds to a teardown. Two seconds is cheap enough that measuring how long four services actually take to close a listener would buy nothing the guess does not already cover.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-grouped-plan-in-the-demo.md",
+      "key": "The panel shows the two inputs' access paths and `decodes`; ",
+      "verdict": "deliberate",
+      "by": "the adapters' contract excludes client-formatted floats on purpose, so estimated rows and cost travel as the server's own `display` string rather than as three numbers each adapter rounds its own way. That is what stops the three adapters disagreeing about a plan they all render.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-grouped-plan-in-the-demo.md",
+      "key": "The demo groups a two-table join and nothing else, so `/api/",
+      "verdict": "deliberate",
+      "by": "the demo is a demonstration and the coverage belongs where the caveat says it is: crates/slate-server/tests/multi.rs covers the chain and single-table shapes. Widening the demo to exercise an RPC's every shape would make it a test suite with a UI.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-grouped-plan-in-the-demo.md",
+      "key": "Nothing checks that the *adapters* agree with the clients ab",
+      "verdict": "deliberate",
+      "by": "the vocabulary is asserted against literals in the TypeScript and Python client suites, which is where a shared name belongs. Asserting it again in the conformance runner would compare the three adapters to each other a second time, which is the check that cannot catch all three being wrong together.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-kernel-in-a-browser.md",
+      "key": "No head node, so nothing about leadership, replicas, freshne",
+      "verdict": "deliberate",
+      "by": "by construction: slate-wasm is the kernel compiled for a browser, and a head node in a browser has nothing to lead. The explorer demo covers the rest, which the caveat says.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-kernel-in-a-browser.md",
+      "key": "No joins, aggregates or grouped reads through the binding ye",
+      "verdict": "closed",
+      "by": "all three reached the binding in ledger/2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md, and the workbench then gave them a SQL front end"
+    },
+    {
+      "entry": "2026-09-14-the-kernel-in-a-browser.md",
+      "key": "Writes are not exposed. The store is seeded and then read; a",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-writes-in-the-playground.md — crates/slate-wasm/src/lib.rs carries the write surface and the panel shows an index being maintained"
+    },
+    {
+      "entry": "2026-09-14-the-kernel-in-a-browser.md",
+      "key": "596 KiB gzipped is not free, and nothing lazy-loads it yet.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-not-paying-for-the-playground.md defers the import"
+    },
+    {
+      "entry": "2026-09-14-the-kernel-in-a-browser.md",
+      "key": "The wasm build is not in CI as of this commit, so nothing st",
+      "verdict": "closed",
+      "by": ".github/workflows/ci.yml builds the wasm target, which is the guard this caveat said would arrive with the site integration"
+    },
+    {
+      "entry": "2026-09-14-the-kernel-on-wasm.md",
+      "key": "Nothing else in the workspace is checked for the same proble",
+      "verdict": "open",
+      "by": "still a reading rather than a check. slate-tuple and slate-schema do not depend on tokio and nothing asserts they keep not depending on it; the wasm build in CI covers slate-kernel only, because that is the one crate compiled for the target.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-kernel-on-wasm.md",
+      "key": "The wasm target is not in CI as of this commit, so nothing s",
+      "verdict": "closed",
+      "by": ".github/workflows/ci.yml builds the wasm target on every push"
+    },
+    {
+      "entry": "2026-09-14-the-panel-catches-up-with-the-binding.md",
+      "key": "The delete button takes the primary key from the first write",
+      "verdict": "deliberate",
+      "by": "both fixture tables have a single-column key, so the panel is correct for every table it can show. Reading `n` from the schema — which carries it — is the right fix and buys nothing until a composite-key fixture exists; the workbench's SQL front end reaches composite keys without a button.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-panel-catches-up-with-the-binding.md",
+      "key": "No update button, though the binding has `update`. Insert an",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: insert and delete show index maintenance in both directions, and update's distinct lesson — the entry moves rather than duplicating — is covered in the Rust tests. A fourth button to re-show it in a browser is UI for a property already demonstrated.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-panel-catches-up-with-the-binding.md",
+      "key": "The join's country filter is a free-text box against `author",
+      "verdict": "deliberate",
+      "by": "a select built from the distinct countries needs a `distinct` the binding does not expose, so the choice was a free-text box or no filter. The workbench, which replaced this panel as the place to drive the kernel, takes SQL and reports a refusal by name rather than an empty table.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-panel-catches-up-with-the-binding.md",
+      "key": "The join section's row table has no headers, because grouped",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: grouped and ungrouped results have different column counts, and the code that would name them for both is more than the section earns. The workbench names its columns, because it has a schema to name them from.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-the-settings-landed.md",
+      "key": "The release upload is still the one thing in this repository",
+      "verdict": "closed",
+      "by": "v0.0.1 is tagged and pushed — `git ls-remote --tags origin` shows refs/tags/v0.0.1"
+    },
+    {
+      "entry": "2026-09-14-the-settings-landed.md",
+      "key": "Nothing keeps `main` and the working branch in step. They ar",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-14-the-testserver-joins-the-workspace.md",
+      "key": "`scripts/build_testserver.sh` is now unnecessary — it existe",
+      "verdict": "closed",
+      "by": "the script is gone — `git grep build_testserver` finds only this entry's own sentence — which the entry records inline"
+    },
+    {
+      "entry": "2026-09-14-the-testserver-joins-the-workspace.md",
+      "key": "The demo's three backends (`examples/explorer/backends/`) ar",
+      "verdict": "deliberate",
+      "by": "a Go module, an npm package and a Python package cannot be Cargo workspace members, so the rot this entry cured for the testserver has no equivalent cure for them. What they have instead is CI: each of the three is built and run by the conformance runner on every push, which is what stopped the testserver rotting and is the property rather than the mechanism.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-withdrawing-the-rename-caveat.md",
+      "key": "Neither test covers a column with *several* previous names, ",
+      "verdict": "deliberate",
+      "by": "a client cannot tell the cases apart, which is the point: it sends one hash either way. The enumeration and its MAX_SPELLINGS truncation are exercised where they live, in crates/slate-server/src/fingerprint.rs, and a client-side test could only re-assert that one hash equals another.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-withdrawing-the-rename-caveat.md",
+      "key": "The Python client has no equivalent test. Its fingerprint is",
+      "verdict": "open",
+      "by": "still absent. Its fingerprint is the reference the other two were ported from and is pinned against them, so the property follows — and this entry's own five paragraphs are about what 'follows' rather than 'shown' costs.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-writes-in-the-playground.md",
+      "key": "Writes go through the ordinary authorised path as the `app` ",
+      "verdict": "deliberate",
+      "by": "one role is what a single-tab playground has. Showing a write refused by RBAC or reshaped by a row policy needs three personas and a role switcher, which is the explorer demo — and the caveat says so rather than proposing to build a second one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-writes-in-the-playground.md",
+      "key": "Nothing exercises a conflicting concurrent write, because th",
+      "verdict": "deliberate",
+      "by": "one tab and one writer, by construction. Retry and fencing are the head node's concern and are tested in slate-kernel and slate-server, where there are two writers to conflict.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-writes-in-the-playground.md",
+      "key": "No bulk path: `insert_many` exists in the kernel and one row",
+      "verdict": "deliberate",
+      "by": "one row at a time is what a form produces. `insert_many` exists in the kernel and reaching it from a browser form means inventing a multi-row form, which demonstrates nothing the single-row path does not.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-14-writes-in-the-playground.md",
+      "key": "The panel does not expose any of this yet — this commit is t",
+      "verdict": "closed",
+      "by": "ledger/2026-09-14-the-panel-catches-up-with-the-binding.md, which is the next commit and which the caveat predicts"
+    },
+    {
+      "entry": "2026-09-15-money-that-does-not-drift.md",
+      "key": "This is now the third feature on this branch wanting the sam",
+      "verdict": "closed",
+      "by": "they were done together: crates/slate-server/proto/slate/v1/records.proto carries the pagination cursor, the conditional update and the decimal from one protocol change"
+    },
+    {
+      "entry": "2026-09-15-the-list-of-open-problems-that-kept-closed-ones.md",
+      "key": "The client READMEs are untouched, because none of the four f",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-15-the-list-of-open-problems-that-kept-closed-ones.md",
+      "key": "`examples/explorer` is untouched for the same reason. Its `/",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-15-the-list-of-open-problems-that-kept-closed-ones.md",
+      "key": "Nothing verifies that the documents stay true. `site/check/q",
+      "verdict": "narrowed",
+      "by": "four guards now read the prose: scripts/check_retired_claims.py over eleven suffixes and .github/, scripts/check_cited_docs.py over the same, scripts/check_caveat_citations.py over the tracker, and scripts/check_mutation_claims.py over the entries that count mutations. ledger/2026-09-28-the-eighth-invented-citation-had-somewhere-to-hide.md",
+      "residual": "none of the four reads a *number*. A measurement in README.md or a design note that has gone stale is caught only by somebody re-measuring, which is the half this caveat named and is still unguarded.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-a-batch-is-a-round-trip-a-transaction-is-a-guarantee.md",
+      "key": "The measurement is loopback against an in-memory store, whic",
+      "verdict": "open",
+      "by": "still loopback. examples/deployed is where a real-network ratio would come from and it does not exercise Batch, so the 9.4x remains the least favourable case and the favourable one is unmeasured.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-a-batch-is-a-round-trip-a-transaction-is-a-guarantee.md",
+      "key": "`max_batch_operations = 1000` is a guess, not a measurement.",
+      "verdict": "deliberate",
+      "by": "a guard against a request nobody should send rather than a tuning knob, and documented as such. Measuring it would mean finding where a node falls over on batch size, which is the same unmeasured failure point the execution ceilings record — and a number derived from that would still be a guard rather than a tuning.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-a-batch-is-a-round-trip-a-transaction-is-a-guarantee.md",
+      "key": "Reads are not batchable. A batch carries writes only, becaus",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: a batch of reads is already one query with an IN, and mixing reads into a batch raises a question the design does not answer — what a read inside an INDEPENDENT batch sees of the writes beside it. Answering it means defining a visibility rule for a construct that exists to avoid one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-a-durability-check-that-cried-data-loss.md",
+      "key": "The deployed harness's *other* unfreshened reads are untouch",
+      "verdict": "closed",
+      "by": "examples/deployed pins the whole run to one snapshot, which is the bigger change this caveat named"
+    },
+    {
+      "entry": "2026-09-16-a-durability-check-that-cried-data-loss.md",
+      "key": "Nothing measures how far behind a replica can get, so \"one c",
+      "verdict": "open",
+      "by": "still inferred rather than observed: 'one chunk' comes from 18,000 against 20,000 with a 2,000-row batch, not from a measurement of replica lag.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-a-durability-check-that-cried-data-loss.md",
+      "key": "The batch cap is still enforced only server-side, and no cli",
+      "verdict": "open",
+      "by": "still server-side only. No client checks a batch's length before sending, so an over-cap batch is a round trip that fails rather than a local refusal.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-a-line-break-hid-fourteen-minutes-of-checks.md",
+      "key": "It does not stop an unformatted commit being made; it only s",
+      "verdict": "deliberate",
+      "by": "the pre-commit hook deliberately does not check formatting, and CLAUDE.md gives the reason this entry was written against: CI's rustfmt is newer than the local one, so a hook enforcing the local formatter would reject code CI accepts and accept code CI rejects. Splitting formatting into its own job — what this entry did — stops one red job hiding the other twenty.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-a-line-break-hid-fourteen-minutes-of-checks.md",
+      "key": "It also does not address the related and larger gap named in",
+      "verdict": "deliberate",
+      "by": "the toolchain gap is a property of this container, recorded in CLAUDE.md with the three lints that proved it and the instruction that follows: read the diff out of the failing job's log and apply it, rather than re-running fmt here and concluding CI is wrong. Installing a second toolchain to close it is what the disk note rules out.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md",
+      "key": "No measurement from a client. The 9.4x–10.0x in the previous",
+      "verdict": "open",
+      "by": "still inherited. None of the three clients has a batching benchmark, and the per-operation work they add — schema claims, value encoding — is not saved by batching, so the Rust wire number is an upper bound on what a client sees rather than a measurement of it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md",
+      "key": "`max_batch_operations` is enforced only by the server. No cl",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: the limit is configurable, so a client-side copy is a second number that has to agree with a server the client cannot read. The cost is one wasted round trip for a caller who builds an over-cap batch; the alternative cost is a client that refuses a batch the server would have accepted.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md",
+      "key": "The demo frontend still has no batch button, like predicate ",
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx has one"
+    },
+    {
+      "entry": "2026-09-16-chains-were-never-missing-from-the-wire.md",
+      "key": "Nothing here changes the server, the kernel or any client. T",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-16-chains-were-never-missing-from-the-wire.md",
+      "key": "The chain cases do not cover a chain's *computed* value or a",
+      "verdict": "closed",
+      "by": "the corpus compares a chain's computed value across the three SDKs — examples/explorer/conformance/conformance.py — which ledger/2026-09-15-a-chains-computed-value-and-a-type-tag-in-a-label.md added"
+    },
+    {
+      "entry": "2026-09-16-chains-were-never-missing-from-the-wire.md",
+      "key": "The other `grep`-based rows in that table have not been re-c",
+      "verdict": "closed",
+      "by": "ledger/2026-09-20-the-gap-list-that-outlived-its-gaps.md re-read the whole table for its real shape rather than one row at a time"
+    },
+    {
+      "entry": "2026-09-16-keyset-pagination-on-the-wire-and-the-page-that-failed-second.md",
+      "key": "`Related`, `Join` and `Aggregate` have no cursor. A relation",
+      "verdict": "narrowed",
+      "by": "paging a join and a chain was designed and built — crates/slate-kernel/src/join.rs and crates/slate-kernel/src/chain.rs, which both carry a cursor is the item this caveat named as 'a real gap and not a decision'",
+      "residual": "`Related` and `Aggregate` still have none, and for the two reasons this caveat already gives: a relationship load is bounded by its keys, and the kernel refuses a grouped read a cursor by name. Neither is a gap so much as a shape, but neither has been written down as a decision either.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-keyset-pagination-on-the-wire-and-the-page-that-failed-second.md",
+      "key": "The cursor is the primary key and nothing else. Paging in an",
+      "verdict": "deliberate",
+      "by": "the kernel refuses an index-ordered cursor by name rather than approximating it, which is the choice: a cursor that resumes from an index entry has to carry the entry, and an entry is not stable under a write that moves it. Refusing is what stops a page silently skipping a row.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-keyset-pagination-on-the-wire-and-the-page-that-failed-second.md",
+      "key": "Nothing measures the *cost* on the wire. The README's \"page ",
+      "verdict": "open",
+      "by": "still a kernel measurement only. 'Page 99 read 495 key-value pairs by offset and 5 by cursor' has not been re-made through a head node, and the entry declined to claim it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-keyset-pagination-on-the-wire-and-the-page-that-failed-second.md",
+      "key": "`slate-tuple`, `slate-schema`, `slate-derive` and `slate-sla",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md",
+      "key": "No client has it. `load_related_through` is a record-layer f",
+      "verdict": "closed",
+      "by": "`through` is on the wire — crates/slate-server/proto/slate/v1/records.proto — and reaches the three clients, which is ledger/2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md's wire half"
+    },
+    {
+      "entry": "2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md",
+      "key": "Nothing measures it. \"Two reads rather than N\" is a claim ab",
+      "verdict": "open",
+      "by": "still structural. `parents_sharing_a_tag_share_one_read_of_it` counts the values in the IN filter, which is the request's size; no benchmark counts round trips or latency for a many-to-many.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md",
+      "key": "Nesting is not addressed: `load_related_through` goes one ho",
+      "verdict": "closed",
+      "by": "ledger/2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md is the entry that adds the second hop"
+    },
+    {
+      "entry": "2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md",
+      "key": "Still record-layer only. No client can nest, for the same re",
+      "verdict": "closed",
+      "by": "`through` is on the wire — crates/slate-server/proto/slate/v1/records.proto — so a nested load is one call rather than two and a regroup"
+    },
+    {
+      "entry": "2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md",
+      "key": "Two levels and no more. Three would be another function, and",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning: a third level is another function, and at three the right move is the dynamic `include` form — with the depth limit this entry says is currently unnecessary, because there it would not be. Building the third function now buys one hop and forecloses the shape that would replace it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md",
+      "key": "The claim \"two reads\" is structural rather than measured. No",
+      "verdict": "open",
+      "by": "still unmeasured, and the same claim the many-to-many entry makes. Nothing counts round trips at runtime and the deployed benchmark does not exercise either function.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-in-three-clients-and-a-guard-that-never-ran.md",
+      "key": "`returning` on a predicate write that matches a great many r",
+      "verdict": "narrowed",
+      "by": "a ceiling exists — crates/slate-server/src/session.rs, whose returning ceiling bounds the response — so a predicate write's response is bounded rather than unbounded",
+      "residual": "the bound is a refusal rather than a stream, and nothing measures where it hurts. A delete that matches more rows than the ceiling is refused, which is a different behaviour from paging the response and is not what a caller wanting a million rows back wants.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-in-three-clients-and-a-guard-that-never-ran.md",
+      "key": "The demo frontend does not show predicate writes. The adapte",
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx has the panel"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-on-the-wire-and-eight-errors-that-read-as-a-crash.md",
+      "key": "No client has these yet. The RPCs and the wire tests exist; ",
+      "verdict": "closed",
+      "by": "ledger/2026-09-16-predicate-writes-in-three-clients-and-a-guard-that-never-ran.md is the next commit the caveat predicts, and the corpus compares them"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-on-the-wire-and-eight-errors-that-read-as-a-crash.md",
+      "key": "`RETURNING` is all-or-nothing: the rows as written, never a ",
+      "verdict": "open",
+      "by": "still all-or-nothing. A caller that wants one column of the written rows gets whole rows, bounded now by the returning ceiling rather than projected.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-predicate-writes-on-the-wire-and-eight-errors-that-read-as-a-crash.md",
+      "key": "The rows are materialised whether or not `returning` is set,",
+      "verdict": "open",
+      "by": "still true and still unmeasured. `delete_where` collects every matched row before writing anything, so a DELETE over a huge table is bounded by memory whatever `returning` says, and nothing establishes where that bound is.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-regenerate-the-stubs-the-proto-change-invalidated.md",
+      "key": "Nothing stops the next proto change from doing this again. T",
+      "verdict": "deliberate",
+      "by": "this entry's own trade, stated with its cost: a pre-commit check that regenerated and compared needs the Python and Go toolchains present at commit time for every agent working here, and they are not. The guards catch it in CI three minutes later, and the cost is a red run.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-regenerate-the-stubs-the-proto-change-invalidated.md",
+      "key": "The binary-staleness guard names whatever source file change",
+      "verdict": "deliberate",
+      "by": "conservative on purpose, and the entry says so: the guard cannot know which files the binary depends on, and refusing too often is the right failure for a check whose job is to stop a stale binary being trusted. Naming the right file would mean modelling the build graph.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md",
+      "key": "The conformance runner still does not exercise relations. Al",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py compares relations across the three adapters"
+    },
+    {
+      "entry": "2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md",
+      "key": "No freshness-floor assertion on the TypeScript side. The Go ",
+      "verdict": "open",
+      "by": "still absent. The Go client's interceptor test covers the shape of the mistake and not every instance of it, and the entry is explicit that this is weaker than it sounds.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md",
+      "key": "`valueKey` is not used anywhere but `related`. It is exporte",
+      "verdict": "deliberate",
+      "by": "exported on purpose: a caller mapping rows onto parents needs the same key function the client used, and an unexported one pushes them to invent a worse one. The cost is one exported symbol with one internal caller.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-the-deploy-workflow-described-a-site-that-no-longer-exists.md",
+      "key": "It does not deploy the rebuilt site. Pages triggers on `main",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-16-the-go-relation-client-and-a-comment-that-cost-eight-minutes.md",
+      "key": "The freshness test asserts the floor is **on the request**, ",
+      "verdict": "narrowed",
+      "by": "examples/deployed runs a replica and pins the whole run to one snapshot, which is where the strong version of this assertion belongs and where it now lives",
+      "residual": "the Go suite itself still has only the weak form. Nothing in clients/go covers a replica, so a Go-only change that broke the floor's effect while keeping it on the request would pass there and fail only in the deployed harness.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-the-go-relation-client-and-a-comment-that-cost-eight-minutes.md",
+      "key": "No TypeScript `related` yet, so the conformance runner still",
+      "verdict": "closed",
+      "by": "clients/typescript/src/client.ts has `related`, and the conformance runner compares all three"
+    },
+    {
+      "entry": "2026-09-16-the-go-relation-client-and-a-comment-that-cost-eight-minutes.md",
+      "key": "The three clients now key their group lookups on a serialise",
+      "verdict": "open",
+      "by": "still unasserted. The three would only disagree over a field their encoders order differently, which a flat oneof does not have — so the risk is conditional on `Value` growing a map, and the conformance runner is where that should be caught.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-the-three-sdks-compared-on-relations-and-a-refusal-that-was-not-one.md",
+      "key": "The demo's UI has no relationship view. The endpoint exists ",
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx has one"
+    },
+    {
+      "entry": "2026-09-16-the-three-sdks-compared-on-relations-and-a-refusal-that-was-not-one.md",
+      "key": "The corpus compares the three clients to each other and not ",
+      "verdict": "deliberate",
+      "by": "the property it claims is the one it checks: a caller can switch SDKs. A third implementation to compare against would be the kernel, which each client already reaches through the same server — so the runner would be comparing the server to itself.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-the-three-sdks-compared-on-relations-and-a-refusal-that-was-not-one.md",
+      "key": "`through` being settable is a hole in the argument that the ",
+      "verdict": "deliberate",
+      "by": "stated as a hole rather than defended: one string, one non-default value, one case, and the alternative was not comparing the refusals at all. An adapter that parsed a language to avoid it would be the larger version of the same compromise.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-the-three-sdks-compared-on-relations-and-a-refusal-that-was-not-one.md",
+      "key": "Nothing measures the read count here. Go and Python assert i",
+      "verdict": "deliberate",
+      "by": "by construction: the corpus compares answers, and an answer cannot tell one read from fifty. The read count is asserted in the Go and Python suites at the transport, which is the only place it is visible.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-two-checks-that-only-fire-in-ci-and-both-were-red.md",
+      "key": "Nothing stops the next new test module from repeating it. Th",
+      "verdict": "deliberate",
+      "by": "as the caveat itself concludes: the lint is workspace-wide and the allowance is per-module by design, so every test module that wants `expect` has to say so. That is the lint working rather than a gap.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-two-checks-that-only-fire-in-ci-and-both-were-red.md",
+      "key": "It does not make the local toolchain match CI's. `dtolnay/ru",
+      "verdict": "deliberate",
+      "by": "recorded in CLAUDE.md with the four lints that proved it. Matching the toolchains means installing a second one, which the disk note rules out on this container; the compensating rule is to read the failing job's diff rather than re-run the check here.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-16-what-the-other-orms-have-that-this-does-not.md",
+      "key": "Window functions, CTEs, views, arrays, full-text search and ",
+      "verdict": "closed",
+      "by": "five of the six were built — windows, views, arrays and full-text search each have a crate-level surface, a wire shape and a SQL keyword — and CTEs were decided rather than deferred in docs/ctes.md, which splits WITH into three constructs with three answers; crates/slate-sql/src/sql.rs implements the non-recursive form and refuses WITH RECURSIVE by name, because a fixpoint is a loop whose trip count is unknown"
+    },
+    {
+      "entry": "2026-09-17-the-next-six-are-the-edges-the-first-six-left.md",
+      "key": "It does not write N3's design note. That note — what a join'",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-17-the-next-six-are-the-edges-the-first-six-left.md",
+      "key": "It does not touch `README.md`, which describes the surface r",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-17-the-next-six-are-the-edges-the-first-six-left.md",
+      "key": "The three \"smaller, and owed\" items at the end of the new pl",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-part-two.md",
+      "key": "283 remain",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Same work at the same rate, over the densest part of the ledger."
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-part-two.md",
+      "key": "Two verdicts in two batches cited a path that resolves and s",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "the same limitation recorded deliberate against ledger/2026-09-26-the-citation-nobody-could-follow.md as 'It checks existence, not aptness'. No pattern reads a cited file and judges whether it supports the citing sentence; what this entry adds is a second worked example of the failure, and the practice that caught both — read the file before writing the claim."
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-part-two.md",
+      "key": "The four unmeasured round-trip claims are grouped here and n",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Batching from a client, a many-to-many's two reads, a nested load's two reads and keyset paging on the wire are all structural claims; examples/deployed is the harness that could measure all four and exercises none of them."
     }
   ]
 }

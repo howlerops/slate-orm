@@ -113,6 +113,18 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "wasm-chain": ("chain", "crates/slate-wasm/tests"),
  "python-packaging": (None, "clients/python/tests/test_packaging.py"),
  "runner-teardown": ("kill", "examples/explorer/run.sh"),
+ # --- the 2026-09-14/15/16 backlog, triaged 2026-09-28
+ 'wasm-in-ci': ('wasm', '.github/workflows/ci.yml'),
+ 'wasm-writes': ('insert', 'crates/slate-wasm/src/lib.rs'),
+ # --- the 2026-09-16/17 backlog, triaged 2026-09-28
+ 'demo-batch': ('batch', 'examples/explorer/web/src/panels.tsx'),
+ 'demo-predicate-write': ('predicate', 'examples/explorer/web/src/panels.tsx'),
+ 'demo-relations': ('relat', 'examples/explorer/web/src/panels.tsx'),
+ 'conformance-relations': ('relat', 'examples/explorer/conformance/conformance.py'),
+ 'through-nested': ('through', 'crates/slate-server/proto/slate/v1/records.proto'),
+ 'ts-related': ('related', 'clients/typescript/src/client.ts'),
+ 'ctes-decided': (None, 'docs/ctes.md'),
+ 'gap-list-reread': ('gap', 'README.md'),
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
  "full-join-unmatched": ("BothUnmatchedSidesOfAFullJoin", "clients/go/slate/scalar_test.go"),
@@ -288,6 +300,12 @@ EXEMPT: dict[str, str] = {
         "re-examined under a wider frame, a set of gap rows re-read for their "
         "real shape. The output is prose and the entry is the artifact"
     ),
+    "deleted": (
+        "closed by deleting the thing the caveat was about. A removal leaves no "
+        "artifact by construction — the only witness would be a file asserting "
+        "that another file is gone, which goes stale the moment somebody writes "
+        "a third file with the same name"
+    ),
     "tagged": (
         "closed by a git tag, which is a ref rather than a file. `v0.0.1` is on "
         "the remote — `git ls-remote --tags origin` shows it — and the working "
@@ -311,6 +329,12 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-14-the-testserver-joins-the-workspace.md',
+     '`scripts/build_testserver.sh` is now unnecessary — it existe'):
+        'closed by deleting `scripts/build_testserver.sh`. `git grep build_testserver` now finds only this entry\'s own sentence, and the entry records the deletion inline',
+    ('2026-09-14-the-settings-landed.md',
+     'The release upload is still the one thing in this repository'):
+        'closed by pushing `v0.0.1`, the tag `softprops/action-gh-release` waits for. A git ref is not a file, so the tree carries the workflow that reacts to a tag and not the fact that one was pushed',
     ('2026-09-14-ci-that-had-never-run.md',
      'What follows was true until that tag, and is left because it'):
         'closed by pushing `v0.0.1`, which is a git tag and not a file. `git ls-remote --tags origin` shows it; nothing in the working tree records that the release workflow has now run, and adding a file that said so would be a second copy of the tag',
@@ -397,6 +421,74 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # --- the 2026-09-16/17 backlog, triaged 2026-09-28
+    ('2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md',
+     'The demo frontend still has no batch button, like predicate '):
+        'demo-batch',
+    ('2026-09-16-chains-were-never-missing-from-the-wire.md',
+     "The chain cases do not cover a chain's *computed* value or a"):
+        'conformance-runner',
+    ('2026-09-16-chains-were-never-missing-from-the-wire.md',
+     'The other `grep`-based rows in that table have not been re-c'):
+        'gap-list-reread',
+    ('2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md',
+     'No client has it. `load_related_through` is a record-layer f'):
+        'through-nested',
+    ('2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md',
+     'Nesting is not addressed: `load_related_through` goes one ho'):
+        'through-nested',
+    ('2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md',
+     'Still record-layer only. No client can nest, for the same re'):
+        'through-nested',
+    ('2026-09-16-predicate-writes-in-three-clients-and-a-guard-that-never-ran.md',
+     'The demo frontend does not show predicate writes. The adapte'):
+        'demo-predicate-write',
+    ('2026-09-16-predicate-writes-on-the-wire-and-eight-errors-that-read-as-a-crash.md',
+     'No client has these yet. The RPCs and the wire tests exist; '):
+        'conformance-runner',
+    ('2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md',
+     'The conformance runner still does not exercise relations. Al'):
+        'conformance-relations',
+    ('2026-09-16-the-go-relation-client-and-a-comment-that-cost-eight-minutes.md',
+     'No TypeScript `related` yet, so the conformance runner still'):
+        'ts-related',
+    ('2026-09-16-the-three-sdks-compared-on-relations-and-a-refusal-that-was-not-one.md',
+     "The demo's UI has no relationship view. The endpoint exists "):
+        'demo-relations',
+    ('2026-09-16-what-the-other-orms-have-that-this-does-not.md',
+     'Window functions, CTEs, views, arrays, full-text search and '):
+        'ctes-decided',
+    # --- the 2026-09-14/15/16 backlog, triaged 2026-09-28
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     'No joins, aggregates or grouped reads through the binding ye'):
+        'wasm-chain',
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     'Writes are not exposed. The store is seeded and then read; a'):
+        'wasm-writes',
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     '596 KiB gzipped is not free, and nothing lazy-loads it yet.'):
+        'wasm-lazy-import',
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     'The wasm build is not in CI as of this commit, so nothing st'):
+        'wasm-in-ci',
+    ('2026-09-14-the-kernel-on-wasm.md',
+     'The wasm target is not in CI as of this commit, so nothing s'):
+        'wasm-in-ci',
+    ('2026-09-14-the-settings-landed.md',
+     'The release upload is still the one thing in this repository'):
+        '=tagged',
+    ('2026-09-14-the-testserver-joins-the-workspace.md',
+     '`scripts/build_testserver.sh` is now unnecessary — it existe'):
+        '=deleted',
+    ('2026-09-14-writes-in-the-playground.md',
+     'The panel does not expose any of this yet — this commit is t'):
+        'workbench-having',
+    ('2026-09-15-money-that-does-not-drift.md',
+     'This is now the third feature on this branch wanting the sam'):
+        'decimal-wire',
+    ('2026-09-16-a-durability-check-that-cried-data-loss.md',
+     "The deployed harness's *other* unfreshened reads are untouch"):
+        'deployed',
     # --- the 2026-09-13/14 backlog, triaged 2026-09-28 ----------------------
     ('2026-09-13-a-grouped-chain-on-the-wire.md',
      '`EXPLAIN` still cannot describe a grouped chain, or a groupe'):
