@@ -1207,3 +1207,22 @@ fn a_conjunction_on_either_side_of_the_merge_stays_flat() {
     assert_eq!(spec.filters.len(), 3, "{:?}", spec.filters);
     assert!(spec.predicate.is_none(), "{:?}", spec.predicate);
 }
+
+// A repeated column in a CTE's projection is accepted, and projects that column
+// twice — which is what the same projection does without a CTE. `SELECT id, id`
+// is legal SQL returning two columns, so the expansion agreeing with the direct
+// form is the answer, not a shape that needed refusing.
+//
+// The implementation left this undecided and nothing had established what it
+// did. Establishing it is what made the question answerable: the two forms are
+// equal, so there is one rule here rather than two.
+#[test]
+fn a_repeated_column_in_a_cte_projects_it_twice_just_as_it_does_directly() {
+    let through_cte = select("WITH d AS (SELECT id, id FROM books) SELECT * FROM d");
+    assert_eq!(through_cte.columns, vec![0, 0], "id, twice");
+    assert_eq!(
+        through_cte,
+        select("SELECT id, id FROM books"),
+        "the expansion is the query it inlines into, repeated column and all"
+    );
+}

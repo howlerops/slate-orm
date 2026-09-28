@@ -7003,6 +7003,84 @@
       "verdict": "deliberate",
       "by": "the sweep was done and is reported in this entry: five of the guard scripts under scripts/ deal with the site and four already read .html. The one latent gap it found — check_cited_docs.py not walking site/ — is recorded rather than fixed because no page cites a ledger entry today, so widening it would add a check with nothing to check, which is the never-fires shape this repository treats as a liability rather than a win.",
       "reviewed": "2026-09-27"
+    },
+    {
+      "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
+      "key": "It touches a file outside `crates/slate-sql`, and that was n",
+      "verdict": "deliberate",
+      "by": "the entry, and the alternative was a knowingly red build: crates/slate-wasm/tests/ctes.rs asserted a refusal message for two statements that now parse. Rewriting that test around the split was the smallest honest change; deleting it would have removed the only binding-level coverage of the refusals. No other file outside crates/slate-sql was touched, and nothing else in site/, clients/, examples/ or scripts/ consumes that message text.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
+      "key": "It updates no design note or comparison row.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-28-the-gap-table-had-stopped-describing-the-tree.md, the same day: docs/ctes.md §3 now reads built with all four of its open questions decided, docs/orm-comparison.md's CTE row says the third that was missing is built, docs/views.md's pointer at ctes.md is past tense, and site/docs/roadmap.html's CTE row no longer says missing.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
+      "key": "A CTE body may not compute, window, group, sort or page",
+      "verdict": "deliberate",
+      "by": "the entry: the alternative is expanding a body that already sorts or groups into an outer query that may do either again, which is two of each in one spec and no rule for which wins. Refused by name with that reason rather than answered wrongly. It is the same argument the join refusal makes about ordinal spaces, one level down.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
+      "key": "A CTE may not be read from a join input or a subquery",
+      "verdict": "deliberate",
+      "by": "the entry: one shared refusal covers the read-twice case, join inputs and subqueries, because all three are a reference outside the statement's own FROM and the expansion has exactly one place to put the body. Splitting it into three messages would be three ways of saying the spec holds one table.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
+      "key": "Nothing measures the expansion's cost",
+      "verdict": "deliberate",
+      "by": "the entry: the expansion produces the same QuerySpec the inlined query compiles to — tested by equality against it in a_single_reference_cte_is_the_spec_the_inlined_query_compiles_to — so there is no runtime difference to measure. What could be measured is parse time, which is not what anybody means by what a CTE costs.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
+      "key": "A repeated column in a CTE's projection",
+      "verdict": "closed",
+      "by": "a_repeated_column_in_a_cte_projects_it_twice_just_as_it_does_directly in crates/slate-sql/tests/front_end.rs. The entry recorded this as undecided because nothing had established what it did; it projects the column twice and is equal to `SELECT id, id FROM books`, the same projection without a CTE. Legal SQL, and the expansion agreeing with the direct form is the answer rather than a shape needing refusal.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
+      "key": "`EXPLAIN` over an expanded CTE is not considered.",
+      "verdict": "deliberate",
+      "by": "the entry: the expanded plan names the base table, so this is the question docs/views.md already leaves open for a view and it lands in the same place. Deciding it here would decide it for views too, from the narrower of the two cases.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-gap-table-had-stopped-describing-the-tree.md",
+      "key": "Nine corrections, and nothing that stops the tenth.",
+      "verdict": "deliberate",
+      "by": "the entry, under Alternatives rejected: generating the built/not-built column is the structural fix and cannot work, because most cells are arguments the tree does not hold. A guard pairing each row with a symbol that must exist is the other option and is unbuilt; it would catch a row naming a deleted symbol, not a row whose prose quietly stopped being true, which is what all nine of these were.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-gap-table-had-stopped-describing-the-tree.md",
+      "key": "The four kept plan-item problem statements are now defensibl",
+      "verdict": "narrowed",
+      "by": "the convention distinguishing a Stops at line from a plan item's problem statement is now written down in \"How to read this\", so the four are defensible as history rather than looking like an inconsistency.",
+      "checked": "2026-09-28",
+      "residual": "nothing checks that a sentence filed as history actually sits under a current-voice block. A plan item whose block was never written would read as a present-tense claim and match no rule."
+    },
+    {
+      "entry": "2026-09-28-the-gap-table-had-stopped-describing-the-tree.md",
+      "key": "The migrations decision rests on knowledge of three tools, n",
+      "verdict": "deliberate",
+      "by": "the entry states the basis where the decision is stated: none of Alembic, Drizzle Kit or Prisma Migrate is installed here and the container has no network, so running them was not available. The argument the decision turns on — edit-before-apply and an ordered chain — is named so it can be attacked without them.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-gap-table-had-stopped-describing-the-tree.md",
+      "key": "The `OR` row is the only audit omission looked for.",
+      "verdict": "deliberate",
+      "by": "the entry: the alternative is re-running the original audit against all seven ORMs to find every capability they share that this table never listed. Not taken because that is the whole audit again, and the row that prompted it surfaced from a sweep rather than a search. Recorded so the next reader knows the table is complete against what was audited, not against the seven.",
+      "reviewed": "2026-09-28"
     }
   ]
 }

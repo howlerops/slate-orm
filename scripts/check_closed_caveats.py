@@ -102,6 +102,8 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "sole-missing-table": ("NAMES_A_MISSING_TABLE", "scripts/check_handlers.py"),
  "converter-callers": ("a handler converting before authorising fails", "scripts/test_check_handlers.py"),
  "convert-audited": ("pub fn aggregate_from_proto_query", "crates/slate-server/src/convert.rs"),
+ "cte-docs-updated": ("built, and it was the views row", "docs/ctes.md"),
+ "cte-repeated-column": ("a_repeated_column_in_a_cte_projects_it_twice_just_as_it_does_directly", "crates/slate-sql/tests/front_end.rs"),
  "unmatched-go": ("TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide", "clients/go/slate/scalar_test.go"),
  "unmatched-ts": ("undefined on an unmatched outer side", "clients/typescript/test/scalar.test.ts"),
  "ci-conclusion": ("Read the run's conclusion", "CLAUDE.md"),
@@ -361,6 +363,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-the-caveat-was-already-true.md',
      'I did not re-audit the rest of `convert.rs`.'):
         'convert-audited',
+    ('2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md',
+     'It updates no design note or comparison row.'):
+        'cte-docs-updated',
+    ('2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md',
+     "A repeated column in a CTE's projection"):
+        'cte-repeated-column',
     ('2026-09-15-the-values-that-arrived-and-vanished.md',
      "No test declares a computed value on an outer join's unmatch"):
         'unmatched-go',

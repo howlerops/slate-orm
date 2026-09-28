@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-28T16:45:04+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "1628650",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the expansion resolves against the CTE's own name, not the base table",
+      "old": "    fn scope<'n>(&'n self, table: &'n TableDef) -> (&'n str, Option<&'n [u32]>) {",
+      "new": "    fn scope<'n>(&'n self, table: &'n TableDef) -> (&'n str, Option<&'n [u32]>) {\n        if true { return (table.name(), None); }",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "an_aggregate_over_a_cte_resolves_in_the_ctes_namespace_too",
+        "the_ctes_name_is_the_qualifier_and_the_base_tables_is_not"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

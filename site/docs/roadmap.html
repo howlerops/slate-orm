@@ -285,11 +285,14 @@
             <td>CTEs and recursive queries</td>
             <td>SQLAlchemy, Drizzle, Diesel</td>
             <td>
-              <strong>Answered: two thirds refused.</strong>
-              <code>WITH RECURSIVE</code> is a fixpoint loop and a statement is
-              one plan; a CTE read twice is the <code>UNION</code> argument
-              exactly. A non-recursive CTE read once is missing, and is the same
-              mechanism as views.
+              <strong>Answered, and the third that was missing is now
+              built.</strong> <code>WITH RECURSIVE</code> is a fixpoint loop and a
+              statement is one plan; a CTE read twice is the <code>UNION</code>
+              argument exactly. Both stay refused. A non-recursive CTE read once
+              expands into the query it inlines into &mdash; inside the SQL front
+              end, before anything resolves a table name, so the spec names the
+              base table and there is no synthetic id for a grant to key on. That
+              is the same mechanism as a view, and the same security reason.
             </td>
           </tr>
           <tr>
