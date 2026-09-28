@@ -10499,9 +10499,22 @@
     {
       "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
       "key": "It does not check whether other entries carry the withdrawn ",
+      "verdict": "closed",
+      "by": "closed on a null result: four entries carry the claim and all four were committed before 35d9182, the fix, on the same day — the latest by 56 minutes. Each was true when written, so none is struck. See ledger/2026-09-28-the-four-entries-that-were-true-when-they-were-written.md."
+    },
+    {
+      "entry": "2026-09-28-the-four-entries-that-were-true-when-they-were-written.md",
+      "key": "It checks one claim, not the class.",
       "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Two 2026-09-18 entries were the source of the five scale caveats and neither was re-read for a present-tense statement of the withdrawn claim; scripts/check_retired_claims.py excludes ledger/ deliberately, so it would not see one."
+      "by": "nothing yet. Whether any other entry states something a later commit reversed is unexamined, and that count is what would decide whether a forward pointer is worth its cost.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-four-entries-that-were-true-when-they-were-written.md",
+      "key": "It leaves the four entries readable as current by anyone who",
+      "verdict": "deliberate",
+      "by": "this entry: the accepted cost of the append-only rule, argued against both alternatives above. The tracker is the mechanism — all five caveats these entries raise carry a closed verdict naming crates/slate-server/src/fingerprint.rs.",
+      "reviewed": "2026-09-28"
     }
   ]
 }

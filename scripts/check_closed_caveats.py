@@ -466,6 +466,11 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
         'same as the row above, and the last of the four. A caveat that counts '
         'how much of itself is left is true only until the next commit, which '
         'is an argument for writing fewer of them rather than for a witness',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It does not check whether other entries carry the withdrawn '):
+        'closed by reading the four entries and their commit timestamps against '
+        "35d9182's. All four predate the fix, so each was true when written and "
+        'nothing needed striking. A null result changes no file by construction',
 }
 
 #: Every `closed` caveat, and the witness that must still be in the tree.
@@ -475,6 +480,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It does not check whether other entries carry the withdrawn '): '=read',
     # --- two open verdicts re-read against the tree on 2026-09-28 and found false
     ('2026-09-14-explaining-a-grouped-read.md',
      'No client exposes `ExplainAggregate` inside a transaction ex'):
