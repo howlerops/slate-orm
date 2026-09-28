@@ -2158,10 +2158,9 @@
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
       "key": "The demo and the docs site show no array.",
-      "verdict": "narrowed",
-      "by": "the docs site does: site/docs/features.html has an \"Arrays, ordered by prefix\" section. The demo still shows none, and deliberately \u2014 `posts` is in NOT_IN_THE_UI at examples/explorer/web/src/api.ts:308 because nothing seeds it and the UI has no list cell. The demo half is the residual",
-      "checked": "2026-09-26",
-      "residual": "the demo half. `posts` is in NOT_IN_THE_UI at examples/explorer/web/src/api.ts:308 because nothing seeds it and the UI has no list cell"
+      "verdict": "closed",
+      "by": "ledger/2026-09-28-the-demo-showed-a-question-mark-for-four-wire-types.md: posts is seeded by examples/explorer/backends/go/seed.go, is in both grants in examples/explorer/head.toml, is out of NOT_IN_THE_UI, and render's array arm in examples/explorer/web/src/api.ts shows it. site/docs/features.html points at it.",
+      "reviewed": "2026-09-28"
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
@@ -7128,6 +7127,35 @@
       "key": "The `--plan` preview clears it too",
       "verdict": "deliberate",
       "by": "that entry: the preview exists to describe what the run will do, and the run holds the lease, so a preview that refused would be a preview nobody can act on. The alternative is to show the refusal as a warning the run will not hit, which teaches operators to ignore the preview's refusals. Not taken; the module docs in crates/slate-kernel/src/migrate.rs are where this is learned.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-demo-showed-a-question-mark-for-four-wire-types.md",
+      "key": "A decimal still renders as stored units.",
+      "verdict": "narrowed",
+      "by": "it renders at all, and the header beside it says `decimal`, so the number is no longer `?` and is not passed off as an integer. Pinned by `a decimal renders its stored units, because the scale is the column's` in examples/explorer/web/test/api.test.ts.",
+      "checked": "2026-09-28",
+      "residual": "`price` shows 1250 where the amount is 12.50. The scale lives in the catalog beside the column name and `render` is given a value; supplying it means a second prop on ValueTable parallel to `columns`, and the dynamic query view has no table to look one up in."
+    },
+    {
+      "entry": "2026-09-28-the-demo-showed-a-question-mark-for-four-wire-types.md",
+      "key": "Nothing ran the demo end to end here.",
+      "verdict": "deliberate",
+      "by": "that entry: ./run.sh --e2e needs a built server and a browser, which this container has neither of, and CI runs it on every push. The alternative is to skip the change until it can be run locally, which trades a checked-in improvement for a wait \u2014 and CLAUDE.md's own note is that a skip reads as green. Not taken; the unit suite, gofmt, go vet and the schema guards cover what they can and the entry says what they cannot.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-demo-showed-a-question-mark-for-four-wire-types.md",
+      "key": "The workbench still has no array.",
+      "verdict": "deliberate",
+      "by": "that entry: the workbench's fixture is the NYC taxi data, which has no array column, and adding one means changing the wasm fixture and the sizes every visitor downloads. The alternative is a second fixture, which doubles what the loader-cliff measurements in ledger/2026-09-22-a-scan-gets-cheaper-per-row-as-the-table-grows.md are about. Not taken; site/docs/features.html points at the demo instead, where an array is now browsable.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-demo-showed-a-question-mark-for-four-wire-types.md",
+      "key": "`NOT_IN_THE_UI` is now empty",
+      "verdict": "deliberate",
+      "by": "that entry: the roster is the mechanism that forces the next table added to the catalog to be shown or explained, and it works empty. The alternative is to delete it and re-add it when a table needs hiding, which is the same as not having it \u2014 nobody adds a roster while adding the table it would have caught. Kept, with a comment saying why it is empty rather than unused.",
       "reviewed": "2026-09-28"
     }
   ]

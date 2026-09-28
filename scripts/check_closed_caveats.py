@@ -73,6 +73,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
 
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
+ "array-in-the-ui": ("array", "examples/explorer/backends/go/seed.go"),
  "sole-writer-refusal": ("SoleWriterNotEstablished", "crates/slate-kernel/src/migrate.rs"),
  "bad-section-run": ("refuses()", "scripts/run_examples.sh"),
  "ambiguity": ("ambigu", "crates/slate-sql/src"),
@@ -347,6 +348,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-25-or-in-having-too.md',
      'No parentheses, so still no nesting.'):
         'having-brackets',
+    ('2026-09-20-an-array-on-the-wire-and-in-three-clients.md',
+     'The demo and the docs site show no array.'):
+        'array-in-the-ui',
     ('2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md',
      'The backfill hazard is documented and unenforced.'):
         'sole-writer-refusal',

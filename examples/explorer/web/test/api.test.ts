@@ -62,11 +62,37 @@ test("every tagged type renders, and the type stays distinguishable", () => {
     [{ u64: "18446744073709551615" }, "18446744073709551615", "u64"],
     [{ f64: "4.500000" }, "4.500000", "f64"],
     [{ bytes: "0a0b" }, "0x0a0b", "bytes"],
+    // The four the adapters have always been able to send and this list did
+    // not have. `books` carries a vector and a decimal, so browsing it showed
+    // `?` in two columns for as long as those columns existed — the test
+    // claimed "every tagged type" while covering seven of eleven.
+    [{ uuid: "0d8f1e2a-0000-4000-8000-000000000001" }, "0d8f1e2a-0000-4000-8000-000000000001", "uuid"],
+    [{ decimal: "1250" }, "1250", "decimal"],
+    [{ vector: ["0.100000", "0.900000"] }, "[0.100000, 0.900000]", "vector"],
+    [{ array: [{ str: "a" }, { str: "b" }] }, "[a, b]", "array"],
   ];
   for (const [value, text, kind] of cases) {
     assert.equal(render(value), text);
     assert.equal(kindOf(value), kind);
   }
+});
+
+test("an array renders its elements by their own kind, not as text", () => {
+  // The element type is read from the value, so a list of integers and a list
+  // of strings are visibly different — which is the whole reason `posts` has
+  // two array columns with different element types.
+  assert.equal(render({ array: [{ i64: "1" }, { i64: "-2" }] }), "[1, -2]");
+  assert.equal(render({ array: [] }), "[]");
+  // And it nests, because `Tagged` does.
+  assert.equal(render({ array: [{ array: [{ str: "x" }] }] }), "[[x]]");
+});
+
+test("a decimal renders its stored units, because the scale is the column's", () => {
+  // `1250` at scale 2 is 12.50, and `render` is given a value and no column.
+  // The header beside it says `decimal`, so the number is not passed off as an
+  // integer — but it is units, not the rendered amount. Pinned so that a later
+  // change which *does* plumb the scale through has to come here and say so.
+  assert.equal(render({ decimal: "1250" }), "1250");
 });
 
 test("64-bit integers pass through as text, never through Number", () => {

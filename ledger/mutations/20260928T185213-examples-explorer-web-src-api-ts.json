@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-28T18:52:13+00:00",
+  "file": "examples/explorer/web/src/api.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer/web && npm test 2>&1"
+  ],
+  "commit": "078886b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an array renders its elements without recursing",
+      "old": "if (\"array\" in value) return `[${value.array.map((e) => render(e)).join(\", \")}]`;",
+      "new": "if (\"array\" in value) return `[${value.array.join(\", \")}]`;",
+      "verdict": "caught",
+      "caught_by": [
+        "every tagged type renders, and the type stays distinguishable",
+        "an array renders its elements by their own kind, not as text"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a vector renders as the bare list",
+      "old": "if (\"vector\" in value) return `[${value.vector.join(\", \")}]`;",
+      "new": "if (\"vector\" in value) return value.vector.join(\", \");",
+      "verdict": "caught",
+      "caught_by": [
+        "every tagged type renders, and the type stays distinguishable"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a decimal falls through to the unhandled arm",
+      "old": "  if (\"decimal\" in value) return value.decimal;\n",
+      "new": "",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "a uuid falls through to the unhandled arm",
+      "old": "  if (\"uuid\" in value) return value.uuid;\n",
+      "new": "",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

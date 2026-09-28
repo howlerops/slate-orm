@@ -64,7 +64,17 @@ export type Tagged =
   | { i64: string }
   | { u64: string }
   | { f64: string }
-  | { bytes: string };
+  | { bytes: string }
+  | { uuid: string }
+  // Stored units as text, not the rendered amount: the scale belongs to the
+  // column and the wire carries a value. `1250` at scale 2 is 12.50.
+  | { decimal: string }
+  // Elements pre-formatted, because the three adapters' float formatters do
+  // not agree on the last digit and the conformance runner compares text.
+  | { vector: string[] }
+  // Each element tagged in turn, so a list of `"1"` and a list of `1` stay
+  // different — the confusion tagging exists to stop, one level down.
+  | { array: Tagged[] };
 
 export interface SlateFailure {
   kind: string;
@@ -285,6 +295,26 @@ export function render(value: Tagged | undefined): string {
   if ("u64" in value) return value.u64;
   if ("f64" in value) return value.f64;
   if ("bytes" in value) return `0x${value.bytes}`;
+  if ("uuid" in value) return value.uuid;
+  if ("decimal" in value) return value.decimal;
+  if ("vector" in value) return `[${value.vector.join(", ")}]`;
+  if ("array" in value) return `[${value.array.map((e) => render(e)).join(", ")}]`;
+  return unhandled(value);
+}
+
+/** Compile-time proof that `render` covers every `Tagged` arm.
+ *
+ * A parameter of type `never` only accepts a value TypeScript has narrowed to
+ * nothing, so this call type-checks exactly while the union is fully handled:
+ * a new arm on `Tagged` breaks the build here rather than rendering as `?` in
+ * a column nobody looks at twice. Four arms did that for as long as they
+ * existed — `books` carries a vector and a decimal, and both showed `?`.
+ *
+ * It still returns something, because a *runtime* value outside the union is
+ * possible however good the type is: a server sending a tag this build has
+ * never heard of. That is the case `?` is for, and the only one left.
+ */
+function unhandled(_value: never): string {
   return "?";
 }
 
@@ -306,9 +336,10 @@ export function kindOf(value: Tagged | undefined): string {
  * place a UI decision lives.
  */
 export const NOT_IN_THE_UI: Record<string, string> = {
-  posts:
-    "it exists so the generated array decoders have something to decode; " +
-    "nothing seeds it and the UI has no way to render a list cell",
+  // Empty, and kept rather than deleted: the mechanism is what stops the next
+  // table being added to the catalog and quietly never shown. `posts` was the
+  // one entry — seeded by the Go adapter now, and rendered by `render`'s
+  // `array` arm, which the compiler requires because `Tagged` is exhaustive.
 };
 
 const shown = <T,>(all: Record<string, T>): Record<string, T> =>

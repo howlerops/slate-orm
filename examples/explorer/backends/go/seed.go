@@ -140,6 +140,39 @@ func (s *server) seed() error {
 		return err
 	}
 
+	// Two array columns with different element types, so the UI's list cell is
+	// shown to read the element kind from the value rather than assuming one:
+	// a row whose `tags` render as text and whose `sizes` render as numbers
+	// cannot be produced by a renderer that hard-codes either.
+	//
+	// Seeded at all because `posts` used to be a table nothing wrote and the
+	// UI would not show — it existed only so the generated array decoders had
+	// something to decode. A feature reachable by no demonstration is a
+	// feature nobody notices is broken.
+	posts := [][]slate.Value{
+		{
+			slate.Uint(1), slate.String("Ancillary Justice, revisited"),
+			slate.Array{slate.String("space opera"), slate.String("review")},
+			slate.Array{slate.Int(1200), slate.Int(800)},
+		},
+		{
+			slate.Uint(2), slate.String("On the shape of a Culture novel"),
+			slate.Array{slate.String("banks"), slate.String("essay"), slate.String("long")},
+			slate.Array{slate.Int(4400)},
+		},
+		// An empty list in each column, because "no tags" and "no sizes" are
+		// the values most likely to be rendered as a blank cell by accident —
+		// an empty array is not a null and the UI must not show one as the
+		// other.
+		{
+			slate.Uint(3), slate.String("A note with nothing attached"),
+			slate.Array{}, slate.Array{},
+		},
+	}
+	if _, err := session.Upsert(ctx, "posts", posts...); err != nil {
+		return err
+	}
+
 	// And retire one, so the database holds a row that an ordinary read cannot
 	// see and a `read_deleted` grant can. Without this the whole soft-delete
 	// surface would be demonstrable only in the negative — every read agreeing
