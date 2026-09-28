@@ -120,10 +120,25 @@ twenty separately-encoded rows passes every assertion here, which is correct —
 that *is* one round trip — and is also the whole of the caveat's surviving
 half. Nothing here measures encoding cost.
 
-**Only Python is instrumented.** The claim "batching helps *the clients*" is
+~~**Only Python is instrumented.** The claim "batching helps *the clients*" is
 now shown for one of three. Go's `grpc.WithUnaryInterceptor` and TypeScript's
 interceptor option would each take an afternoon; whether the three agree is the
-conformance runner's question and it does not ask this one.
+conformance runner's question and it does not ask this one.~~
+
+> Wrong within the hour, and corrected in
+> `ledger/2026-09-28-the-go-client-was-already-counting.md`. Go has had this
+> instrument since relations landed: `dialRecording` in
+> `clients/go/slate/related_test.go` installs a unary interceptor, and
+> `TestRelatedIsOneRequestHoweverManyParents` asserts one `/Related` call for
+> fifty parents. What Go lacked was a *batch* count, not the mechanism. The
+> sentence above was written from having just built the Python one, without
+> looking — the mirror of the eight misleading greps earlier today: there a hit
+> was read as presence, here absence was assumed without a look.
+
+**TypeScript has no request counter at all, and only Python counts paging.**
+That is what is left of the sentence above once Go is accounted for: the
+TypeScript client has no interceptor in any test, and neither Go's relation
+count nor its new batch count touches keyset paging.
 
 **It says nothing about latency or bytes.** Four calls for four pages is the
 count; what those four calls cost over a network, and how many bytes they

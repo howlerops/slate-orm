@@ -10697,17 +10697,38 @@
     },
     {
       "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
-      "key": "Only Python is instrumented.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Go's grpc.WithUnaryInterceptor and TypeScript's interceptor option would each take the same shape; whether the three clients agree is the conformance runner's question and it does not ask this one."
-    },
-    {
-      "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
       "key": "It says nothing about latency or bytes.",
       "verdict": "open",
       "checked": "2026-09-28",
       "by": "nothing yet. examples/deployed is where a network round trip would be timed and it does not exercise paging; the README's 495-against-5 figure is still the only measurement of what a page reads from the store."
+    },
+    {
+      "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
+      "key": "TypeScript has no request counter at all, and only Python co",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Go gained a batch count in clients/go/slate/round_trip_test.go and has had a relation count since relations landed; TypeScript's suite installs no interceptor anywhere, and neither Go test touches keyset paging."
+    },
+    {
+      "entry": "2026-09-28-the-go-client-was-already-counting.md",
+      "key": "It does not instrument TypeScript.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. No test in clients/typescript installs an interceptor, so of the three clients one counts two paths, one counts one, and one counts nothing."
+    },
+    {
+      "entry": "2026-09-28-the-go-client-was-already-counting.md",
+      "key": "Neither Go test counts paging.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Python counts Query calls per keyset page; Go counts /Related and /Batch. The three clients share a proto rather than a paging implementation, so Python's result does not carry over."
+    },
+    {
+      "entry": "2026-09-28-the-go-client-was-already-counting.md",
+      "key": "It does not check that the three agree.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Each client is measured against its own expectation; the conformance runner compares answers rather than request counts, which is the distinction dialRecording's comment draws about why counting was needed."
     }
   ]
 }
