@@ -331,13 +331,24 @@ func TestRelatedCarriesTheSchemaClaim(t *testing.T) {
 	}
 }
 
-// dialRecording dials the node with an interceptor over every unary call.
+// dialRecording dials the node with an interceptor over every call it makes,
+// unary and streaming both.
 //
 // The freshness floor and the request count are properties of the *request*,
 // not of the answer: a client that dropped the floor, or that looped over the
 // parents one at a time, would return exactly the right rows. Nothing
 // assertable about the result distinguishes them, so the request itself is
 // what has to be looked at.
+//
+// Both interceptors, because a read is server-streaming and a write is unary.
+// This took only the unary one until a paging count was written against it and
+// reported zero `/Query` calls for four pages that plainly happened — which
+// reads as "a read is free" rather than as a hole in the instrument. The same
+// trap is written up in the Python client's `Counting`, which registers both
+// grpc interfaces for the same reason; here it was met rather than avoided.
+//
+// A stream interceptor sees the call being opened and not the messages, which
+// is exactly the round trip a caller pays for: one `Query` per page.
 func dialRecording(
 	t *testing.T,
 	server *serving,
@@ -362,6 +373,20 @@ func dialRecording(
 				seen(method, message)
 			}
 			return invoke(ctx, method, request, reply, cc, opts...)
+		}),
+		grpc.WithChainStreamInterceptor(func(
+			ctx context.Context,
+			desc *grpc.StreamDesc,
+			cc *grpc.ClientConn,
+			method string,
+			streamer grpc.Streamer,
+			opts ...grpc.CallOption,
+		) (grpc.ClientStream, error) {
+			// No request message: a stream is opened before anything is sent,
+			// so a caller wanting the body has to wrap SendMsg. Nothing needs
+			// it yet, and a nil is honest about what this saw.
+			seen(method, nil)
+			return streamer(ctx, desc, cc, method, opts...)
 		}),
 	)
 	if err != nil {

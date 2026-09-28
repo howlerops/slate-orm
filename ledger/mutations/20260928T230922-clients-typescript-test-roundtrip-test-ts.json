@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-28T23:09:22+00:00",
+  "file": "clients/typescript/test/roundTrip.test.ts",
+  "dialect": "node",
+  "command": [
+    "bash",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json && node --test dist-test/test/roundTrip.test.js"
+  ],
+  "commit": "3df314d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the control writes one row instead of twenty",
+      "old": "for (let n = 0; n < ROWS; n += 1) {",
+      "new": "for (let n = 0; n < 1; n += 1) {",
+      "verdict": "caught",
+      "caught_by": [
+        "writing n rows one at a time is n round trips"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the paging loop reads one page fewer than it claims",
+      "old": "for (let p = 0; p < PAGES; p += 1) {",
+      "new": "for (let p = 0; p < PAGES - 1; p += 1) {",
+      "verdict": "caught",
+      "caught_by": [
+        "paging by cursor is one round trip per page"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

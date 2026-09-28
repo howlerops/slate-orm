@@ -317,7 +317,23 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "window-wire": ("window", "crates/slate-server/proto/slate/v1/records.proto"),
  "workbench-chain": ("the aliased chain plans as three steps", "site/check/workbench.py"),
  "zones": (None, "crates/slate-kernel/src/zones.rs"),
- "zones-dst": ("tzdata", "crates/slate-kernel/src/zones.rs"),}
+ "zones-dst": ("tzdata", "crates/slate-kernel/src/zones.rs"),
+
+ # --- round trips counted in all three clients, 2026-09-28 -------------------
+ #
+ # Each needle is the instrument rather than the assertion: an interceptor
+ # installed on the client's own channel. A closure reverted by deleting the
+ # test takes the file with it; one reverted by loosening the assertion leaves
+ # the needle, which is the coarseness argued for above.
+ "ts-round-trips": (
+     "interceptors",
+     "clients/typescript/test/roundTrip.test.ts",
+ ),
+ "ts-channel-options": ("options", "clients/typescript/src/client.ts"),
+ "go-paging-count": (
+     "WithChainStreamInterceptor",
+     "clients/go/slate/related_test.go",
+ ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
 #:
@@ -1609,6 +1625,15 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md',
      '267 open caveats are still unread'):
         '=stamped',
+    ('2026-09-28-round-trips-counted-at-the-clients-channel.md',
+     'TypeScript has no request counter at all, and only Python co'):
+        'ts-round-trips',
+    ('2026-09-28-the-go-client-was-already-counting.md',
+     'It does not instrument TypeScript.'):
+        'ts-channel-options',
+    ('2026-09-28-the-go-client-was-already-counting.md',
+     'Neither Go test counts paging.'):
+        'go-paging-count',
 }
 
 

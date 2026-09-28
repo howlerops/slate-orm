@@ -164,6 +164,28 @@ default, deliberately: adding one would turn a slow query into a failure in
 every caller that upgraded without asking for it, and `test/deadline.test.ts`
 demonstrates the cost of that choice as well as the fix.
 
+## Configuring the transport
+
+`connect` takes the channel's credentials and options after the identity, and
+forwards both to grpc-js untouched:
+
+```ts
+const client = Client.connect(addr, identity, grpc.credentials.createSsl(), {
+  "grpc.keepalive_time_ms": 30_000,
+  interceptors: [audit],
+});
+```
+
+Both have defaults — insecure credentials and `{}` — so an existing two-argument
+call is unchanged.
+
+This is the same door the other two clients have: Python's `Client` takes a
+built `channel=`, and Go's `Dial` takes `...grpc.DialOption`. It was added last,
+after a test needed somewhere to put a counting interceptor and found that in
+this client there was nowhere — which is worth knowing as the reason it is a
+plain pass-through rather than a curated set of knobs. Anything grpc-js accepts
+in a `ChannelOptions` works here, and nothing about it is slate's to interpret.
+
 ## Schema checks
 
 Optional, and worth turning on. Declare a table and every request naming it

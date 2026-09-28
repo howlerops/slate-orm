@@ -153,6 +153,25 @@ a call against a listener that accepts and never speaks, and checks the error is
 `KindDeadlineExceeded` rather than something else — beside a test showing the
 same call not returning when the context has no deadline.
 
+## Configuring the transport
+
+`Dial` takes `...grpc.DialOption` after the identity and passes them through:
+
+```go
+client, err := slate.Dial(addr, identity,
+    grpc.WithTransportCredentials(creds),
+    grpc.WithChainUnaryInterceptor(audit),
+    grpc.WithChainStreamInterceptor(auditStream),
+)
+```
+
+**Both interceptor kinds, if you want to see every call.** A read is
+server-streaming and a write is unary, so a unary-only chain is silent about
+queries — which reads as "a read is free" rather than as a hole. The suite's own
+`dialRecording` held only the unary one for weeks and reported zero `/Query`
+calls for four pages that plainly happened; `clients/go/slate/round_trip_test.go`
+is the test that found it.
+
 ## Schema checks
 
 Optional, and worth turning on. Declare a table and every request naming it

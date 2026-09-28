@@ -377,14 +377,23 @@ export class Client {
    * the same proxy that sets its identity headers, and offering TLS here would
    * suggest the identity was protected by something. Pass `credentials` to
    * override.
+   *
+   * `options` is forwarded to the channel untouched, which is how a caller
+   * reaches interceptors, keepalive and message-size limits. It exists because
+   * the other two clients already have this door — Python's `Client` takes
+   * `channel=` and Go's `Dial` takes `...grpc.DialOption` — and this one had
+   * none, so a caller could configure the transport in two languages of three.
+   * Found while writing a round-trip counter for all three: the counter is an
+   * interceptor, and there was nowhere to put it.
    */
   static connect(
     target: string,
     identity: Identity,
     credentials: grpc.ChannelCredentials = grpc.credentials.createInsecure(),
+    options: grpc.ChannelOptions = {},
   ): Client {
     const Records = service();
-    const raw = new Records(target, credentials) as RawClient;
+    const raw = new Records(target, credentials, options) as RawClient;
     return new Client(raw, identity);
   }
 

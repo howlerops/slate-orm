@@ -84,3 +84,75 @@ func TestABatchIsOneRequestAndSinglesAreMany(t *testing.T) {
 		t.Errorf("a batch also made %d Insert calls, want none", inserts-before)
 	}
 }
+
+// batchRoundTripPages and batchRoundTripPageSize are separate constants from
+// batchRoundTripRows rather than a division of it, so that resizing the write
+// cases cannot silently resize the paging one.
+const (
+	batchRoundTripPages    = 4
+	batchRoundTripPageSize = 5
+)
+
+// TestPagingByCursorIsOneRequestPerPage counts what a keyset page costs the
+// caller, which is the other half of the same caveat.
+//
+// The README's "page 99 read 495 key-value pairs by offset and 5 by cursor" is
+// a kernel measurement of what a page reads from the *store*. This is what a
+// page costs on the wire, which is the number someone sizing a page against a
+// network needs. Python counted it first; Go had the interceptor and never
+// pointed it at paging.
+func TestPagingByCursorIsOneRequestPerPage(t *testing.T) {
+	server := start(t, batchTables)
+
+	var queries int
+	client := dialRecording(t, server, func(method string, _ proto.Message) {
+		if strings.HasSuffix(method, "/Query") {
+			queries++
+		}
+	})
+	session := client.Session()
+	ctx := testContext(t)
+
+	rows := uint64(batchRoundTripPages * batchRoundTripPageSize)
+	b := slate.NewBatch(slate.Independent)
+	for id := uint64(1); id <= rows; id++ {
+		b = b.Insert("notes", note(id))
+	}
+	if _, err := session.Batch(ctx, b); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+	queries = 0
+
+	// The node is this test's own and the memory backend seeds nothing, so
+	// those rows are every row in `notes` and no filter is needed to isolate
+	// them.
+	var cursor []slate.Value
+	seen := 0
+	for p := 0; p < batchRoundTripPages; p++ {
+		limit := uint64(batchRoundTripPageSize)
+		page, err := session.Page(ctx, slate.Query{
+			Table: "notes", Limit: &limit, After: cursor,
+		})
+		if err != nil {
+			t.Fatalf("page %d: %v", p, err)
+		}
+		seen += len(page.Rows)
+		cursor = page.Cursor
+	}
+
+	// Both sides of each comparison are constants, and that is the point: the
+	// Python version of this first compared against a counter its own loop
+	// incremented, so it held for any number of pages including one, and a
+	// mutation shrinking the loop survived.
+	//
+	// `/Query`, not a `/Page` RPC: a keyset page is an ordinary query carrying
+	// a cursor and a limit, which is the wire shape the interceptor sees.
+	if queries != batchRoundTripPages {
+		t.Errorf("%d pages took %d Query calls, want %d",
+			batchRoundTripPages, queries, batchRoundTripPages)
+	}
+	if want := batchRoundTripPages * batchRoundTripPageSize; seen != want {
+		t.Errorf("%d full pages of %d returned %d rows, want %d",
+			batchRoundTripPages, batchRoundTripPageSize, seen, want)
+	}
+}
