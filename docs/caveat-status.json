@@ -9178,9 +9178,10 @@
     {
       "entry": "2026-09-19-a-refusal-a-form-can-render.md",
       "key": "Nothing in the demo or the conformance corpus catches a chec",
-      "verdict": "open",
-      "by": "the seam is still tested against a captured blob rather than a live refusal, so what is proved is that the client reads what the server sends and not, end to end, that a form works.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "false for the conformance half. examples/explorer/conformance/conformance.py runs \"a write the schema's CHECK refuses\" against a live server and compares all three clients on the decoded `violations`, plus a batch variant; its own comment records that it replaced the captured-blob testing this caveat names.",
+      "checked": "2026-09-28",
+      "residual": "the demo's web UI still renders no check violation — the conformance corpus is where the behaviour is demonstrated, not the browser, which is the same shape as the include_deleted and conditional-update caveats."
     },
     {
       "entry": "2026-09-19-a-refusal-a-form-can-render.md",
@@ -10622,6 +10623,27 @@
       "verdict": "open",
       "checked": "2026-09-28",
       "by": "nothing yet. 889 deliberate verdicts and no sample has ever been drawn from them; a decision that has stopped being defensible looks exactly like one that has not."
+    },
+    {
+      "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
+      "key": "It leaves forty-eight of the ninety-nine unread",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The shuffle order says which they are, and fifteen of the 39 read here were settled by a grep returning nothing rather than by reading a function, so the coverage is less even than the count suggests."
+    },
+    {
+      "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
+      "key": "It still says nothing about the 890 `deliberate` verdicts.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. They outnumber the open verdicts seven to one and no sample has ever been drawn from them; this is the third entry to say so without doing it."
+    },
+    {
+      "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
+      "key": "The rate is about caveats, not about the system.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: the sample measures whether the tracker's claims are still true, which is what it was drawn to measure. Whether the gaps matter is a different question and belongs to the gap table and the roadmap, not to a staleness audit."
     }
   ]
 }
