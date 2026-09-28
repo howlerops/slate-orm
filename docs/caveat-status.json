@@ -6996,9 +6996,8 @@
     {
       "entry": "2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md",
       "key": "`.html` was added to one guard, and the sweep for others fou",
-      "verdict": "deliberate",
-      "by": "the sweep was done and is reported in this entry: five of the guard scripts under scripts/ deal with the site and four already read .html. The one latent gap it found — check_cited_docs.py not walking site/ — is recorded rather than fixed because no page cites a ledger entry today, so widening it would add a check with nothing to check, which is the never-fires shape this repository treats as a liability rather than a win.",
-      "reviewed": "2026-09-27"
+      "verdict": "closed",
+      "by": "the latent gap this decided not to fix was fixed the next day: scripts/check_cited_docs.py now carries .html in SOURCE_SUFFIXES and walks 22 files under site/, so the decision it records no longer stands. See ledger/2026-09-28-the-eighth-invented-citation-had-somewhere-to-hide.md."
     },
     {
       "entry": "2026-09-28-a-cte-read-once-is-the-query-it-inlines-into.md",
@@ -10644,6 +10643,27 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "this entry: the sample measures whether the tracker's claims are still true, which is what it was drawn to measure. Whether the gaps matter is a different question and belongs to the gap table and the roadmap, not to a staleness audit."
+    },
+    {
+      "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
+      "key": "One in fifteen is not a rate.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The interval around 1/15 runs from about 0.2% to 30%. What is established is that the population contains at least one false verdict, not how many."
+    },
+    {
+      "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
+      "key": "It does not check the 833 others.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Fifteen per pass is fifty-six passes. The version that scales is a deliberate verdict carrying the paths its reasoning depends on, with a guard reporting when one changed since the verdict's date, and it is unbuilt."
+    },
+    {
+      "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
+      "key": "It does not re-litigate the reversed decision.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: both arguments about whether check_cited_docs.py should walk site/ are in the ledger, one from 2026-09-27 and one from H7 this morning. Recording that they disagree is the finding; deciding which was right is a separate question nobody has been blocked by."
     }
   ]
 }

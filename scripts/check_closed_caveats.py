@@ -481,6 +481,11 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # A `deliberate` whose decision the next day's work reversed, found by the
+    # first random sample ever drawn from that verdict.
+    ('2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md',
+     '`.html` was added to one guard, and the sweep for others fou'):
+        'site-html-citations',
     ('2026-09-14-ports-below-the-ephemeral-range.md',
      'Nothing tests the allocator itself. There is no case asserti'):
         'free-ports-guard',
