@@ -10664,6 +10664,27 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "this entry: both arguments about whether check_cited_docs.py should walk site/ are in the ledger, one from 2026-09-27 and one from H7 this morning. Recording that they disagree is the finding; deciding which was right is a separate question nobody has been blocked by."
+    },
+    {
+      "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
+      "key": "It leaves the 833 unsampled verdicts unsampled",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet, and one fewer idea than an hour ago. The only method known to work on that population is reading it, at fifteen per pass."
+    },
+    {
+      "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
+      "key": "It does not adopt the going-forward convention.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: a `depends` field written at the moment a verdict is authored costs nothing and would compound, but a convention with no enforcement decays, and enforcing it means backfilling 848 rows — which is the reading the guard was meant to replace."
+    },
+    {
+      "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
+      "key": "The three-of-twenty-three verification is thin.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Three shows the flags are not obviously stale and does not show the other twenty are sound; twenty more reads would price the flagged stratum, and this entry argues they are better spent at random."
     }
   ]
 }
