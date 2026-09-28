@@ -125,6 +125,26 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  'ts-related': ('related', 'clients/typescript/src/client.ts'),
  'ctes-decided': (None, 'docs/ctes.md'),
  'gap-list-reread': ('gap', 'README.md'),
+ # --- the 2026-09-18 backlog, triaged 2026-09-28
+ 'decimal-clients': (None, 'clients/go/slate/decimal_test.go'),
+ 'decimal-arith': ('Decimal', 'crates/slate-kernel/src/scalar.rs'),
+ 'metrics-endpoint': (None, 'crates/slate-serverd/src/metrics.rs'),
+ 'trailer-counted': ('trailer', 'crates/slate-serverd/src/observe.rs'),
+ # --- the rest of the 2026-09-18 backlog, triaged 2026-09-28
+ 'decimal-literal-sql': ('Decimal', 'crates/slate-sql/src/sql.rs'),
+ 'conformance-decimal': ('decimal', 'examples/explorer/conformance/conformance.py'),
+ 'root-python-checks': ('ruff', 'scripts/check.sh'),
+ 'poll-interval-answered': ('poll', 'crates/slate-kernel/src/pool.rs'),
+ 'generated-row-types': (None, 'scripts/codegen.py'),
+ # --- the 2026-09-19 backlog, triaged 2026-09-28
+ 'every-bad-field': ('violations', 'clients/typescript/src/details.ts'),
+ 'violation-column': ('column', 'clients/typescript/src/details.ts'),
+ 'conformance-shipments': ('shipments', 'examples/explorer/conformance/conformance.py'),
+ 'generated-decoders-run': (None, 'clients/go/slate/generated_test.go'),
+ 'soft-delete-restore': ('restore', 'crates/slate-kernel/src/record.rs'),
+ 'purge-counted': ('purge', 'crates/slate-serverd/src/observe.rs'),
+ 'published-checks': ('column', 'crates/slate-kernel/src/security.rs'),
+ 'must-differ-pairs': ('MUST_DIFFER', 'examples/explorer/conformance/conformance.py'),
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
  "full-join-unmatched": ("BothUnmatchedSidesOfAFullJoin", "clients/go/slate/scalar_test.go"),
@@ -421,6 +441,96 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # --- the 2026-09-19 backlog, triaged 2026-09-28
+    ('2026-09-19-a-check-that-names-its-field.md',
+     'The write path still stops at the first failing check, so a '):
+        'every-bad-field',
+    ('2026-09-19-a-check-that-names-its-field.md',
+     'No client reads the new metadata. Python, Go and TypeScript '):
+        'violation-column',
+    ('2026-09-19-a-real-enum-and-a-real-soft-delete.md',
+     'Nothing **reads** the new table yet. No conformance case que'):
+        'conformance-shipments',
+    ('2026-09-19-a-real-enum-and-a-real-soft-delete.md',
+     'The retired row is invisible to every current caller, becaus'):
+        'conformance-include-deleted',
+    ('2026-09-19-a-real-enum-and-a-real-soft-delete.md',
+     "No test asserts the demo's *generated* schema module imports"):
+        'generated-decoders-run',
+    ('2026-09-19-a-row-that-is-gone-but-still-there.md',
+     'There is no `restore` and no reaper. Un-deleting is an ordin'):
+        'soft-delete-restore',
+    ('2026-09-19-a-row-with-names-on-it.md',
+     'The Go and TypeScript decoders are **compiled but not execut'):
+        'generated-decoders-run',
+    ('2026-09-19-asking-for-the-rows-that-are-gone.md',
+     '`MUST_DIFFER` holds one pair. Several other flags have the s'):
+        'must-differ-pairs',
+    ('2026-09-19-asking-for-the-rows-that-are-gone.md',
+     'Nothing tests `include_deleted` on a *join* input, which is '):
+        'conformance-include-deleted',
+    ('2026-09-19-every-bad-field-at-once.md',
+     'No client surfaces the set. All three SDKs show the status m'):
+        'every-bad-field',
+    ('2026-09-19-every-bad-field-at-once.md',
+     'The third recommendation — publishing checks so a client can'):
+        'published-checks',
+    ('2026-09-19-forgetting-a-retired-row.md',
+     "No metric or log line counts purged rows, so a sweep's effec"):
+        'purge-counted',
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not build any of the three remaining recommendations'):
+        'published-checks',
+    ('2026-09-19-where-validation-lives.md',
+     'It does not build any of the four things it recommends, and '):
+        'published-checks',
+    ('2026-09-19-the-column-the-caller-cannot-set.md',
+     'No soft delete, and no other hooks.'):
+        'soft-delete-restore',
+    # --- the rest of the 2026-09-18 backlog, triaged 2026-09-28
+    ('2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md',
+     'The SQL front end still parses `19.99` as a float.'):
+        'decimal-literal-sql',
+    ('2026-09-18-decimals-and-conditional-updates-in-three-clients.md',
+     'No decimal arithmetic.'):
+        'decimal-arith',
+    ('2026-09-18-decimals-and-conditional-updates-in-three-clients.md',
+     'No three-SDK conformance case yet.'):
+        'conformance-decimal',
+    ('2026-09-18-pin-the-deployed-run-to-one-snapshot.md',
+     'It does not resolve the poll-interval discrepancy above'):
+        'poll-interval-answered',
+    ('2026-09-18-swap-mypy-for-ty-astrals-checker.md',
+     'It does not touch the other Python in this repository.'):
+        'root-python-checks',
+    ('2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md',
+     'It generates a declaration, not a row type.'):
+        'generated-row-types',
+    ('2026-09-18-the-docs-catch-up-with-two-shipped-items.md',
+     "The README's closed-items list was not audited."):
+        'gap-list-reread',
+    ('2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md',
+     '`late` is cumulative, like everything else on the line.'):
+        'metrics-endpoint',
+    ('2026-09-18-the-python-checks-that-were-installed-and-never-run.md',
+     'It does not check the other Python in this repository.'):
+        'root-python-checks',
+    # --- the 2026-09-18 backlog, triaged 2026-09-28
+    ('2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md',
+     'No client speaks either of these yet.'):
+        'decimal-clients',
+    ('2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md',
+     'No decimal arithmetic anywhere.'):
+        'decimal-arith',
+    ('2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md',
+     '`delete_if_unchanged` does not exist'):
+        'delete-if-unchanged',
+    ('2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md',
+     "The quantiles are over the process's whole life, not the las"):
+        'metrics-endpoint',
+    ('2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md',
+     'A failure raised in a trailer still counts as a success'):
+        'trailer-counted',
     # --- the 2026-09-16/17 backlog, triaged 2026-09-28
     ('2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md',
      'The demo frontend still has no batch button, like predicate '):

@@ -8502,6 +8502,1045 @@
       "verdict": "open",
       "checked": "2026-09-28",
       "by": "nothing yet. Batching from a client, a many-to-many's two reads, a nested load's two reads and keyset paging on the wire are all structural claims; examples/deployed is the harness that could measure all four and exercises none of them."
+    },
+    {
+      "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
+      "key": "No client speaks either of these yet.",
+      "verdict": "closed",
+      "by": "clients/go/slate/query.go, clients/typescript/src/query.ts and clients/python carry both, and the conformance corpus compares them"
+    },
+    {
+      "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
+      "key": "No decimal arithmetic anywhere.",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/scalar.rs has decimal operations and crates/slate-sql/src/sql.rs has a decimal literal"
+    },
+    {
+      "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
+      "key": "The wire carries no scale, ever.",
+      "verdict": "open",
+      "by": "still true, and the entry calls it a real hole: a client renders a decimal from the scale it declared locally, the fingerprint deliberately does not hash the scale because a scale addresses no column, and nothing checks the two agree. A client with the scale wrong reaches the right column and prints the wrong number.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
+      "key": "A conditional update is one round trip per row.",
+      "verdict": "open",
+      "by": "still a read per row where update_many reads in one wave, and still arithmetic rather than a measurement — no benchmark exercises it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
+      "key": "`delete_if_unchanged` does not exist",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/record.rs has it, and the decision the caveat named — what `expected` means for a row being removed — was made there"
+    },
+    {
+      "entry": "2026-09-18-a-depth-limit-this-server-states-rather-than-inherits.md",
+      "key": "It does not measure anything about the stack.",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning, and the measurement would be the wrong tool: 32 is chosen far below both prost's limit and any real query, and a stack-derived number would be a platform-specific figure pretending to be a contract.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-depth-limit-this-server-states-rather-than-inherits.md",
+      "key": "Prost's limit still applies first for anything past 100",
+      "verdict": "deliberate",
+      "by": "and it is fine, as the caveat itself says: this limit fires at 32, so a caller reaches it long before prost's. Two limits with the tighter one first is the arrangement, not a gap in it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-depth-limit-this-server-states-rather-than-inherits.md",
+      "key": "Nothing bounds an expression's *width*.",
+      "verdict": "deliberate",
+      "by": "a different shape covered by a different mechanism: a flat And of a million terms is depth 1, and the daemon's per-request work and memory budget is what bounds it. Putting a width limit here would be a second budget for work the first one already counts.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-depth-limit-this-server-states-rather-than-inherits.md",
+      "key": "The three clients do not know the limit.",
+      "verdict": "deliberate",
+      "by": "publishing it means publishing a constant every client has to restate, which is what the fingerprint module's own doc argues against. A client builds a too-deep expression and is told by the server, by name — the refusal is the publication.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-fourth-lint-that-does-not-exist-here.md",
+      "key": "Nothing catches the next one.",
+      "verdict": "deliberate",
+      "by": "there is no local check for a lint that is not installed, and installing CI's toolchain to find out is what the disk note rules out. CLAUDE.md carries the compensating practice instead: verify a lint exists before treating its silence as a pass, and read the failing job's diff rather than re-running the check here.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-fourth-lint-that-does-not-exist-here.md",
+      "key": "The other three crates' test code was not audited",
+      "verdict": "deliberate",
+      "by": "this entry's own division of labour: CI will say, and for a lint with an obvious mechanical fix that is the right place to find out. The entry's subject is the edit method — re-read a scripted edit's output — rather than this particular lint.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-fourth-lint-that-does-not-exist-here.md",
+      "key": "It does not make the local and CI toolchains agree",
+      "verdict": "deliberate",
+      "by": "the only thing that would remove the class, rejected in this entry's own Alternatives for reasons rather than for lack of disk, and recorded again in CLAUDE.md.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
+      "key": "The quantiles are over the process's whole life, not the las",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/metrics.rs exposes the bucket counts, which is what lets a scraper take a delta between two reads — the fix this caveat names"
+    },
+    {
+      "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
+      "key": "No scrape endpoint and no `tracing`.",
+      "verdict": "narrowed",
+      "by": "crates/slate-serverd/src/metrics.rs is the scrape endpoint",
+      "residual": "no `tracing` still. A span per request with a subscriber is untouched, and the node still writes to stderr.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
+      "key": "Still timed to the response head.",
+      "verdict": "open",
+      "by": "unchanged. A streamed read's rows are in none of these numbers, including the quantiles and the exported histogram, for the reason the module doc gives.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
+      "key": "A failure raised in a trailer still counts as a success",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/observe.rs counts a trailer failure, which this caveat names as the next item on the list"
+    },
+    {
+      "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
+      "key": "Nothing else is bucketed.",
+      "verdict": "open",
+      "by": "still only latency to the response head. Rows returned, bytes written and queue depth have no histogram and no counter.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
+      "key": "The client's view is still the client's.",
+      "verdict": "deliberate",
+      "by": "inherent to a server-side number: these exclude everything between the two endpoints, so a client's p99 is higher and the difference is exactly what an operator wants. Getting it means instrumenting the client, which is a different measurement rather than a better version of this one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
+      "key": "No authentication.",
+      "verdict": "deliberate",
+      "by": "a decision rather than an oversight, stated in crates/slate-serverd/src/metrics.rs, on the docs page, and in a warning at startup. A metrics endpoint that authenticates is a second identity system in a node whose own identity comes from a mesh.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
+      "key": "Nothing exports the kernel.",
+      "verdict": "open",
+      "by": "still head-node request counters only. Rows read, bytes fetched from the object store, compaction and lease renewals have no counters in the kernel to export.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
+      "key": "No `tracing`.",
+      "verdict": "open",
+      "by": "untouched. A span per request with a subscriber is the other half of the observability row.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
+      "key": "Still the response *head*.",
+      "verdict": "open",
+      "by": "the same limitation as the summary line, now exported: a streamed read's rows are in no latency here.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
+      "key": "No test runs two nodes and compares two scrapes.",
+      "verdict": "deliberate",
+      "by": "what is tested is the property that makes the subtraction meaningful — the buckets are cumulative and monotone — rather than a scraper doing it. Doing the real thing means a Prometheus in the test suite, which tests Prometheus.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
+      "key": "The shutdown does not wait for a scrape in flight.",
+      "verdict": "deliberate",
+      "by": "the listener stops after the drain and the last summary, so a scraper polling through a shutdown gets the final numbers; one holding a connection open cannot delay the exit. Letting it would make an open scrape a way to keep a node alive.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-request-id-a-caller-can-grep-for.md",
+      "key": "The server never generates one.",
+      "verdict": "deliberate",
+      "by": "this entry's own rejected alternative: a server-minted id is one the caller never sees, so it cannot be quoted in a bug report — which is the whole use. `id=-` for a caller that sends nothing is the honest rendering of 'nobody named this call'.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-request-id-a-caller-can-grep-for.md",
+      "key": "Nothing is returned to the caller.",
+      "verdict": "deliberate",
+      "by": "deliberate and documented: the id a client reports is the one it sent, so a failure raised before the call left the process still carries an id. An id with no matching server line is the useful signal that the call did not arrive, which an echoed id would destroy.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-request-id-a-caller-can-grep-for.md",
+      "key": "No propagation across a call chain.",
+      "verdict": "deliberate",
+      "by": "distributed tracing, and a different item: `traceparent` handling ties two services together and needs a propagation format, a sampling decision and a collector. A per-call label that finds a line is what this is for.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-request-id-a-caller-can-grep-for.md",
+      "key": "It is not authenticated and must not be trusted.",
+      "verdict": "deliberate",
+      "by": "by construction: any caller may send any value and two may send the same. It is a label for finding a line, never an input to a decision, which is why the constant is documented as not one of the identity keys it sits beside.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-a-request-id-a-caller-can-grep-for.md",
+      "key": "The Python suite does not prove the server logs what Python ",
+      "verdict": "deliberate",
+      "by": "slate-testserver has no request log, so the Python half cannot assert it; the Rust test covers that direction and the Python test says so where a reader meets it. Giving the testserver a request log would make it a second server to keep in step.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
+      "key": "The SQL front end still parses `19.99` as a float.",
+      "verdict": "closed",
+      "by": "crates/slate-sql/src/sql.rs parses a decimal literal"
+    },
+    {
+      "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
+      "key": "No client surface.",
+      "verdict": "open",
+      "by": "still true: the three Scalar builders express arithmetic and none knows a decimal's scale, so a client can build an expression the server refuses. The refusal is clear and arrives before any rows, and it arrives from the server.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
+      "key": "Nothing checks a client's declared scale against the server'",
+      "verdict": "open",
+      "by": "still true and still the sharpest edge in the feature: the fingerprint deliberately does not hash a scale, because a scale addresses no column, so a client declaring scale 2 against a scale 4 column reaches the right column and renders every value a hundred times wrong, for ever, with no error at any layer.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
+      "key": "`AVG` over a decimal is still a float",
+      "verdict": "deliberate",
+      "by": "the deliberate non-goal recorded against the README item: an average of cents is not cents, and the alternative is the scale-carrying value this entry rejects. A float AVG is wrong in a way a reader can see; a decimal AVG would be wrong in a way they could not.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
+      "key": "Aggregates other than `SUM` were not audited",
+      "verdict": "open",
+      "by": "still unaudited. SUM is tested, MIN and MAX pass values through and are very likely fine, AVG is the known float — 'very likely' is the part nobody has checked.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
+      "key": "Nothing checks a client's declared scale against the server'",
+      "verdict": "open",
+      "by": "still true and still the sharpest edge in the feature: the fingerprint deliberately does not hash a scale, because a scale addresses no column, so a client declaring scale 2 against a scale 4 column reaches the right column and renders every value a hundred times wrong, for ever, with no error at any layer.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
+      "key": "No decimal arithmetic.",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/scalar.rs has decimal operations and crates/slate-sql/src/sql.rs has the literal"
+    },
+    {
+      "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
+      "key": "No three-SDK conformance case yet.",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py exercises a decimal across the three adapters"
+    },
+    {
+      "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
+      "key": "A conditional update is one round trip per row.",
+      "verdict": "open",
+      "by": "still a read per row where update_many reads in one wave, still arithmetic rather than a measurement.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
+      "key": "Python's spelling differs from the other two",
+      "verdict": "deliberate",
+      "by": "each client spells it the way its own language does, which is the rule the three SDKs follow everywhere else; making them identical would make two of the three read as ports. The cost is that a caller porting between them has to notice, and the conformance corpus is where the behaviours are shown to match.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
+      "key": "A conditional delete is one round trip per key",
+      "verdict": "deliberate",
+      "by": "the plain delete's own argument, unchanged: two keys in one batch can reach the same doomed row by different foreign-key paths, so a batched form would have to union the closures before writing anything. The conditional form adds nothing to that and inherits it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
+      "key": "It does not guard a cascade.",
+      "verdict": "deliberate",
+      "by": "stated above in the entry and in three doc comments: `expected` is a claim about the row named, not about the rows a cascade reaches. Extending it to the closure means a claim about rows the caller never named.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
+      "key": "No SQL surface.",
+      "verdict": "open",
+      "by": "the front end has no `DELETE … WHERE … AS OF` and the entry proposes none.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
+      "key": "`affected` is always the number of keys sent",
+      "verdict": "deliberate",
+      "by": "a consequence of refusing the absent row rather than counting it: if an absent key is a refusal, every key that survives to the write was present, so the count is what the caller sent. Stated where somebody would otherwise read it as meaning something.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
+      "key": "The demo's UI does not show it.",
+      "verdict": "open",
+      "by": "still no panel. The endpoint exists and the conformance corpus drives it; a visitor sees nothing.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
+      "key": "The demo and the three clients are untouched.",
+      "verdict": "deliberate",
+      "by": "a client builds `Value::Decimal(1999)` directly, which is the scale-agnostic form and is exactly right. A decimal *literal* needs a SQL front end and none of the three has one — the workbench does, and it is where the literal is exercised.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
+      "key": "Nothing checks a client's idea of a column's scale against t",
+      "verdict": "open",
+      "by": "still true and still the sharpest edge in the feature: the fingerprint deliberately does not hash a scale, because a scale addresses no column, so a client declaring scale 2 against a scale 4 column reaches the right column and renders every value a hundred times wrong, for ever, with no error at any layer.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
+      "key": "A chain's computed value renders with no scale",
+      "verdict": "open",
+      "by": "narrow and not nothing, as the entry says: the kernel refuses a computed decimal whose scale is not one a column already declares, so a computed decimal in a chain shows as its units.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
+      "key": "`group_value_type`'s computed-key branch still returns `I64`",
+      "verdict": "deliberate",
+      "by": "no query can tell that branch from reading the source column's type, and `compute_scalar` refuses a non-integer source, so a decimal computed key cannot arise. The comment there already says so; the branch is correct for everything that can reach it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
+      "key": "The `taxi` fixture has no decimal column.",
+      "verdict": "deliberate",
+      "by": "left alone on purpose: the numbers are real NYC taxi data and site/data/bucket.json is a committed listing of a real load of them, so changing a column type would invalidate that listing to re-make a point `books` already makes.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
+      "key": "`NOT EXISTS` is still refused",
+      "verdict": "deliberate",
+      "by": "correctly: it is correlated and a subquery here runs once. Only the message changed, because the old one gave a reason that does not hold.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
+      "key": "No client can express it.",
+      "verdict": "open",
+      "by": "`notIn` is a front-end operator; the wire carries Expr and the three SDKs build Expr::In with no negation helper. A client that wants it builds the Not itself, which is possible and undocumented.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
+      "key": "The planner does not optimise it.",
+      "verdict": "deliberate",
+      "by": "this entry's own rejected alternative: a NOT IN is a residual over whatever access path the rest of the predicate chooses, because a negated set has no key range. Optimising it means an anti-join, which is a different operator.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
+      "key": "The unreachable-null argument is a fact about today.",
+      "verdict": "deliberate",
+      "by": "and the entry's own conclusion about it: a NULL literal in the front end would make NOT IN able to produce the standard's unknown, which is correct and will surprise somebody. Documenting it then rather than refusing it now is the choice.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
+      "key": "`docs/correctness.md`'s `NOT IN` cases were not revisited.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-pin-the-deployed-run-to-one-snapshot.md",
+      "key": "It does not make the harness observe a lagging replica.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-pin-the-deployed-run-to-one-snapshot.md",
+      "key": "It does not resolve the poll-interval discrepancy above",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/pool.rs and the experiment in ledger/2026-09-18-the-poll-interval-governs-after-all.md answered it directly rather than through this example"
+    },
+    {
+      "entry": "2026-09-18-pin-the-deployed-run-to-one-snapshot.md",
+      "key": "It does not give Go or TypeScript a per-read freshness.",
+      "verdict": "open",
+      "by": "the asymmetry is recorded in the example's README and at both call sites, and left for its own item.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-pin-the-deployed-run-to-one-snapshot.md",
+      "key": "It does not pin `probe.py` or the restart phase's writes.",
+      "verdict": "deliberate",
+      "by": "the pin is per-phase because a new head node is at a new sequence: check.py re-derives it after the restart. Pinning across a restart would mean pinning to a sequence the new node does not have.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-pin-the-deployed-run-to-one-snapshot.md",
+      "key": "It is not a snapshot in the strict sense.",
+      "verdict": "deliberate",
+      "by": "`at_least(n)` is a floor and a view further ahead satisfies it. Nothing writes between the load and the checks, so the two coincide here; an exact-version read is not something the protocol offers, and a harness that wrote mid-run would need one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-swap-mypy-for-ty-astrals-checker.md",
+      "key": "It does not check more than mypy did in aggregate.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-swap-mypy-for-ty-astrals-checker.md",
+      "key": "`ty` is 0.0.82.",
+      "verdict": "deliberate",
+      "by": "pinned hard for the reason the entry names: its rule names are what this package's `# ty: ignore[...]` comments spell, so a rename turns a suppression into an error and a checked line into an unchecked one. Pinning anything that generates or names committed text is the rule CLAUDE.md states.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-swap-mypy-for-ty-astrals-checker.md",
+      "key": "It does not adopt `uv` for anything but CI's install step.",
+      "verdict": "deliberate",
+      "by": "no lockfile and no `uv run`, so contributors can still use pip. Adopting uv properly means a second dependency story for a package whose users install it with pip.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-swap-mypy-for-ty-astrals-checker.md",
+      "key": "It does not touch the other Python in this repository.",
+      "verdict": "closed",
+      "by": "scripts/check.sh runs two ruff and two ty passes over disjoint trees — clients/python with its own configuration, and the root for everything else — which is the gap this caveat names"
+    },
+    {
+      "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
+      "key": "It generates a declaration, not a row type.",
+      "verdict": "closed",
+      "by": "scripts/codegen.py generates a row type in each of the three languages, and ledger/2026-09-19-every-generated-decoder-runs.md executes them, so a query's answer is read by name rather than by ordinal"
+    },
+    {
+      "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
+      "key": "Only the fingerprinted fields.",
+      "verdict": "deliberate",
+      "by": "this entry's own reasoning, one clause each: a client names an index by name and a wrong name is an error the server reports, and a client pinned to a schema version stops working at the next migration. Generating either would add a way to fail that the protocol does not have.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
+      "key": "One catalog is generated from.",
+      "verdict": "open",
+      "by": "still the explorer's. examples/deployed and examples/batchbench have their own head.toml and hand-written or absent declarations; nothing stops the generator being pointed at them and nothing does.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
+      "key": "`--check` proves the file matches the catalog, not that anyb",
+      "verdict": "open",
+      "by": "still proved by mutation rather than by a check. Closing it means asserting a refusal — a deliberately wrong declaration that must fail — and the conformance harness has no way to express 'this case should break'.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
+      "key": "Nothing generates the catalog itself.",
+      "verdict": "open",
+      "by": "migrations from a schema diff is still the harder half and still open. This reads a catalog somebody wrote.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-docs-catch-up-with-two-shipped-items.md",
+      "key": "No check ties the docs to the code.",
+      "verdict": "narrowed",
+      "by": "site/check/quickstarts.py executes the code on the docs pages, and scripts/check_retired_claims.py now reads .html so a struck claim cannot stand on a page.",
+      "residual": "nothing notices when a feature page describes a refusal the kernel no longer makes. Prose that is true-today and wrong-tomorrow without being a retired claim is caught by nobody.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-docs-catch-up-with-two-shipped-items.md",
+      "key": "The README's closed-items list was not audited.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-20-the-gap-list-that-outlived-its-gaps.md asked exactly that question of the whole list"
+    },
+    {
+      "entry": "2026-09-18-the-docs-catch-up-with-two-shipped-items.md",
+      "key": "`docs/correctness.md` and `docs/performance.md` are untouche",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
+      "key": "No real mid-stream failure is exercised anywhere.",
+      "verdict": "deliberate",
+      "by": "closing it means a fault-injection knob below the store that the daemon can be started with — a production-facing setting added for a test, which is the bigger decision the entry declines to make here. What is exercised instead is the counting path, with the failure synthesised above it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
+      "key": "A client that hangs up is not a failure.",
+      "verdict": "deliberate",
+      "by": "right by construction: the body is dropped without reaching its trailers and the server did not fail. The cost is that `calls` counts a call whose rows nobody read, which is a true statement about the server's work.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
+      "key": "The duration is still the head's.",
+      "verdict": "open",
+      "by": "a read that streamed for a minute and then died contributes its first-byte latency and nothing else. Same limitation as the quantiles and the exported histogram.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
+      "key": "`late` is cumulative, like everything else on the line.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/metrics.rs exposes the counters, so a scraper takes a delta rather than reading a lifetime total"
+    },
+    {
+      "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
+      "key": "The cap can be poisoned, only degraded.",
+      "verdict": "deliberate",
+      "by": "bounded rather than unbounded, which was the missing property: sixty-four invented paths pool every genuine method in `(other)` until a restart, done by somebody who could already fill a log with the same requests. Distinguishing a routed path from an unrouted one is the proper fix and needs the layer to know the router's table.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
+      "key": "Nothing reads the trailer's `grpc-message`.",
+      "verdict": "deliberate",
+      "by": "the count says a stream died; the reason is in the client's error and in the request log's line for the same call, found by the same request id. Copying the message into the counter would put caller-controlled text in a metric label.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-formatter-and-the-file-that-is-laid-out-on-purpose.md",
+      "key": "No check enforces the decision.",
+      "verdict": "deliberate",
+      "by": "there is no 'assert unformatted' to run, and a `ruff format --check` in CI would enforce the opposite. The comment is the whole mechanism, and the entry says so rather than implying a guard.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-formatter-and-the-file-that-is-laid-out-on-purpose.md",
+      "key": "The measurement is a snapshot.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-the-formatter-and-the-file-that-is-laid-out-on-purpose.md",
+      "key": "It says nothing about `cargo fmt`",
+      "verdict": "deliberate",
+      "by": "Rust has no blank-line-separated literal that reads as a table, so the failure this entry is about has no Rust equivalent. CLAUDE.md's separate note about `cargo fmt --all` touching other agents' files still stands and is a different concern.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md",
+      "key": "Two of the three clients still send no schema check at all.",
+      "verdict": "deliberate",
+      "by": "the corpus compares answers, and a refused request is an answer only if the request was sent — so a demo adapter holding no catalog cannot exercise a schema check there. The libraries support it and their own suites exercise it, which is where a check that refuses belongs.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md",
+      "key": "A request without a schema check is served as before.",
+      "verdict": "deliberate",
+      "by": "the check is optional on the wire and this does not change that. Making it mandatory means every caller must hold a catalog, which is the protocol-publishes-no-schema decision reversed.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md",
+      "key": "Nothing checks the scale of a *computed* decimal",
+      "verdict": "deliberate",
+      "by": "there is no column to declare one against. The kernel refuses a computed decimal whose scale is not one a column already states, which is a different guarantee reached a different way and is the one available.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md",
+      "key": "The three SDKs still write their scale by hand",
+      "verdict": "deliberate",
+      "by": "catching the mistake rather than preventing it is the most a protocol that publishes no schema can do. Preventing it means publishing the schema, which is the decision this whole design rests on.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-poll-interval-governs-after-all.md",
+      "key": "It does not measure the interval's edge.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-the-poll-interval-governs-after-all.md",
+      "key": "`InMemory` object store.",
+      "verdict": "deliberate",
+      "by": "the hypothesis under test was about the reader's polling, and a store that answers instantly is the cleanest way to isolate it. A real S3 would add latency, caching and consistency to an experiment about none of those.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-poll-interval-governs-after-all.md",
+      "key": "The `process.rs` measurement was not re-run.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-the-poll-interval-governs-after-all.md",
+      "key": "Nothing in `slate-serverd` changed.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-18-the-python-checks-that-were-installed-and-never-run.md",
+      "key": "It does not run the formatter.",
+      "verdict": "deliberate",
+      "by": "the next entry explains why: one file is laid out on purpose as a table, and `ruff format` collapses it. There is no 'assert unformatted', so running the formatter means losing that layout or carrying a per-file exclusion nobody would read.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-python-checks-that-were-installed-and-never-run.md",
+      "key": "It does not check the other Python in this repository.",
+      "verdict": "closed",
+      "by": "scripts/check.sh runs a second ruff and a second ty over the root tree, covering scripts/, site/check/, examples/deployed/ and the conformance runner"
+    },
+    {
+      "entry": "2026-09-18-the-python-checks-that-were-installed-and-never-run.md",
+      "key": "It does not enable `SLF001`.",
+      "verdict": "deliberate",
+      "by": "the `select` list is the standard, and a comment suppressing a rule nobody turned on reads as a real suppression. Removing the noqas rather than adding the rule keeps one story about which rules are on.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-18-the-python-checks-that-were-installed-and-never-run.md",
+      "key": "It does not raise the floor on `python_version`.",
+      "verdict": "deliberate",
+      "by": "the checker analyses at whatever `requires-python` says, which is 3.11, whatever interpreter runs it. Raising the floor is a packaging decision about who can install the client, not a checking one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-check-that-names-its-field.md",
+      "key": "The write path still stops at the first failing check, so a ",
+      "verdict": "closed",
+      "by": "ledger/2026-09-19-every-bad-field-at-once.md collects every failing check"
+    },
+    {
+      "entry": "2026-09-19-a-check-that-names-its-field.md",
+      "key": "No client reads the new metadata. Python, Go and TypeScript ",
+      "verdict": "closed",
+      "by": "clients/typescript/src/details.ts and clients/go/slate carry a typed violation with a `column`"
+    },
+    {
+      "entry": "2026-09-19-a-check-that-names-its-field.md",
+      "key": "`#[derive(Record)]` cannot declare either field. A check wri",
+      "verdict": "open",
+      "by": "still true. A check written in Rust goes through CheckDef and can call the builders; one written through the derive macro's attribute cannot say `column = \"...\"`.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-default-cannot-hold-now.md",
+      "key": "It does not build soft delete, so the partial-index half of ",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-19-a-purge-something-can-call.md",
+      "key": "The ceiling is a count, not a byte budget or a deadline, and",
+      "verdict": "deliberate",
+      "by": "a count is the bound the caller can reason about without knowing row sizes, and refusing rather than purging a prefix is what stops a partial sweep looking like a complete one. A caller with ten million retired rows loops with its own advancing bound, which is the shape every bounded sweep has.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-purge-something-can-call.md",
+      "key": "The conformance purge case runs as `app`, which holds everyt",
+      "verdict": "open",
+      "by": "the refusals are covered in Rust only, so the three clients are not compared on what a refused purge looks like the way they are for include_deleted.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-real-enum-and-a-real-soft-delete.md",
+      "key": "Nothing **reads** the new table yet. No conformance case que",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py queries `shipments`"
+    },
+    {
+      "entry": "2026-09-19-a-real-enum-and-a-real-soft-delete.md",
+      "key": "The retired row is invisible to every current caller, becaus",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py drives include_deleted, which ledger/2026-09-19-asking-for-the-rows-that-are-gone.md added"
+    },
+    {
+      "entry": "2026-09-19-a-real-enum-and-a-real-soft-delete.md",
+      "key": "The Go decoder's allowed-values slice is generated and unuse",
+      "verdict": "deliberate",
+      "by": "the server already validates, so a client-side check would be a second copy of a rule that can disagree with the first. The slice is generated because the generator emits what the catalog says, and a caller that wants to build a dropdown has it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-real-enum-and-a-real-soft-delete.md",
+      "key": "No test asserts the demo's *generated* schema module imports",
+      "verdict": "closed",
+      "by": "clients/go/slate/generated_test.go executes the generated decoders, which ledger/2026-09-19-running-the-decoders-not-just-compiling-them.md added"
+    },
+    {
+      "entry": "2026-09-19-a-refusal-a-form-can-render.md",
+      "key": "Nothing in the demo or the conformance corpus catches a chec",
+      "verdict": "open",
+      "by": "the seam is still tested against a captured blob rather than a live refusal, so what is proved is that the client reads what the server sends and not, end to end, that a form works.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-refusal-a-form-can-render.md",
+      "key": "No client validates against the published checks before send",
+      "verdict": "deliberate",
+      "by": "what docs/validation.md declined, for the reason it gives: a client-side rule can disagree with the server's, and a regular expression evaluated in three languages is three chances to disagree. Every validation costing a round trip is the price of one rule in one place.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-row-that-is-gone-but-still-there.md",
+      "key": "There is no `restore` and no reaper. Un-deleting is an ordin",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/record.rs has `restore`, and the purge in ledger/2026-09-19-forgetting-a-retired-row.md is the reaper"
+    },
+    {
+      "entry": "2026-09-19-a-row-that-is-gone-but-still-there.md",
+      "key": "Nothing measures the cost. Every read of a soft-deleting tab",
+      "verdict": "open",
+      "by": "still unbenchmarked. Every read of a soft-deleting table carries one extra IsNull conjunct, and on a table with no partial index the retired rows stay in every index and are filtered after the fetch.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-row-with-names-on-it.md",
+      "key": "Nothing returns a typed row. A query still answers `Value`s ",
+      "verdict": "open",
+      "by": "a query still answers Values and the caller passes them to the decoder. Handing back a typed row is a client change in three languages and is not started.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-row-with-names-on-it.md",
+      "key": "Joins and chains get nothing. Their rows belong to no single",
+      "verdict": "deliberate",
+      "by": "their rows belong to no single table, so there is no table to name a type after. Generating one would mean naming a shape the catalog does not declare, which is the ordinal problem with an extra step.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-row-with-names-on-it.md",
+      "key": "The Go and TypeScript decoders are **compiled but not execut",
+      "verdict": "closed",
+      "by": "clients/go/slate/generated_test.go executes them"
+    },
+    {
+      "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
+      "key": "No client can *un*-delete a row or purge one; `include_delet",
+      "verdict": "narrowed",
+      "by": "crates/slate-kernel/src/record.rs has `restore`, and the purge RPC reaches the clients",
+      "residual": "un-deleting from a client is still an ordinary update rather than a named operation, so a caller has to know that clearing the column is what restores a row.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
+      "key": "The demo UI has no control for it — the identity switcher sh",
+      "verdict": "open",
+      "by": "still no control. The conformance corpus is where the behaviour is demonstrated, not the browser.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
+      "key": "`MUST_DIFFER` holds one pair. Several other flags have the s",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py carries the pairs, which ledger/2026-09-19-the-two-things-i-left-out.md widened"
+    },
+    {
+      "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
+      "key": "Nothing tests `include_deleted` on a *join* input, which is ",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py exercises it, and the Go and TypeScript join builders reach the flag"
+    },
+    {
+      "entry": "2026-09-19-every-bad-field-at-once.md",
+      "key": "No client surfaces the set. All three SDKs show the status m",
+      "verdict": "closed",
+      "by": "clients/typescript/src/details.ts parses `check.N`, `column.N` and `message.N` into a typed list, and clients/go/slate/details_test.go asserts the same shape in Go"
+    },
+    {
+      "entry": "2026-09-19-every-bad-field-at-once.md",
+      "key": "The third recommendation — publishing checks so a client can",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/security.rs publishes a check's column and message, and scripts/codegen.py emits them, which is ledger/2026-09-19-the-rules-a-client-can-see.md"
+    },
+    {
+      "entry": "2026-09-19-every-bad-field-at-once.md",
+      "key": "Foreign keys still fail one at a time, and so does the uniqu",
+      "verdict": "open",
+      "by": "still one at a time, and so does the unique-index check: a row can be refused for a check, fixed, and refused again for a duplicate key. Widening the same treatment is a change into the write path's ordering.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-forgetting-a-retired-row.md",
+      "key": "No metric or log line counts purged rows, so a sweep's effec",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/observe.rs counts rows a purge erased, including when it is zero"
+    },
+    {
+      "entry": "2026-09-19-forgetting-a-retired-row.md",
+      "key": "The ceiling is a count, not a byte budget or a deadline, and",
+      "verdict": "deliberate",
+      "by": "as the purge entry says: a count is the bound a caller can reason about without knowing row sizes, and refusing rather than purging a prefix stops a partial sweep reading as a complete one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-forgetting-a-retired-row.md",
+      "key": "It is untested against SlateDB and against a replica — only ",
+      "verdict": "open",
+      "by": "still MemoryStore only. The erase path is the one hard deletes have always used, so the risk is low and it is still untested at that layer.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-look-before-the-restart.md",
+      "key": "It does not cover `backend = \"memory\"`, which has no state a",
+      "verdict": "deliberate",
+      "by": "a memory backend has no state a separate invocation can read, so there is no plan to print. The flag says so rather than printing an empty one, which would read as 'nothing to do'.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-look-before-the-restart.md",
+      "key": "`DropIndex` prints an index id and not a name, because the i",
+      "verdict": "deliberate",
+      "by": "the index is by definition one the current catalog no longer declares, so there is nothing to look the name up in. Printing a number a reader matches against the previous configuration is the honest rendering of that.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-running-the-decoders-not-just-compiling-them.md",
+      "key": "Python's decoder is still tested in `scripts/test_codegen.py",
+      "verdict": "deliberate",
+      "by": "the coverage is equivalent in kind, as the entry says; what the three do not share is a corpus. One shared corpus means a fixture format three languages read, which is the conformance runner — and the conformance runner tests the wire rather than the generator.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-build-step-the-new-test-needed.md",
+      "key": "It does not stop the next step that needs the built client f",
+      "verdict": "open",
+      "by": "the convention relies on somebody reading run.sh, and this entry is the second place that says so. A `prepare` script would have enforced it.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-build-step-the-new-test-needed.md",
+      "key": "It does not address why the local run disagreed with CI. A s",
+      "verdict": "deliberate",
+      "by": "a stale dist/ is indistinguishable from a fresh one, and the general lesson is the one CLAUDE.md already draws about ty and clippy: a green local check is necessary and not sufficient. This is a third instance of that shape rather than a new class.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-counter-nobody-scraped.md",
+      "key": "Both in `2026-09-19-the-two-things-i-left-out.md`.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-19-the-fifth-table-list.md",
+      "key": "The constant is still hand-maintained, and the next table to",
+      "verdict": "deliberate",
+      "by": "and the test says so when it breaks, which is the whole argument for leaving it: a list that fails loudly on the next table is a list somebody updates, where a derived one would silently absorb a table nobody meant to add.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-fifth-table-list.md",
+      "key": "Nothing checks that the *order* of tables matches, only the ",
+      "verdict": "open",
+      "by": "`deepEqual` over an object compares neither order, so the test's name slightly overstates what it holds — which the entry says and nothing has fixed.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
+      "key": "It does not build any of the three remaining recommendations",
+      "verdict": "closed",
+      "by": "all three were built: crates/slate-kernel/src/security.rs carries a check's column, ledger/2026-09-19-every-bad-field-at-once.md collects every failure, and ledger/2026-09-19-the-rules-a-client-can-see.md publishes them in --print-schema"
+    },
+    {
+      "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
+      "key": "It does not improve the error message that caused the mistak",
+      "verdict": "open",
+      "by": "`expected a comparison after the column, found `matches`` is accurate and unhelpful, and a suggestion would have saved the detour. The keyword-alias reasoning argues against the alias, not against the hint.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
+      "key": "It does not audit the rest of the note for the same class of",
+      "verdict": "open",
+      "by": "the three remaining findings were each checked against the code when written — and so was the regex one, and it was wrong, so 'checked when written' is a weaker guarantee here than it sounded.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-rules-a-client-can-see.md",
+      "key": "No client-side evaluation, as above.",
+      "verdict": "deliberate",
+      "by": "what docs/validation.md declined: a client-side rule is a second copy that can disagree with the server's, and a regular expression evaluated in three languages is three chances to disagree.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-rules-a-client-can-see.md",
+      "key": "The demo's one check is weak on purpose — `year > 0`, which ",
+      "verdict": "deliberate",
+      "by": "a demo constraint that rejected the demo's own data would be a trap for whoever adds the next row, so the generated files demonstrate the plumbing. The enum narrowing is proved against synthetic catalogs in scripts/test_codegen.py, which the entry states rather than glosses.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-rules-a-client-can-see.md",
+      "key": "`message` is still a plain string with no translation story,",
+      "verdict": "open",
+      "by": "three separate gaps in one sentence, all still open: no translation story, no `column` or `message` in the derive attribute, and a generated CHECKS map keyed by a name with no compile-time guarantee it matches one the server sends.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-what-a-write-actually-touched.md",
+      "key": "No alert or dashboard ships with it, and there is still no s",
+      "verdict": "deliberate",
+      "by": "an operator wanting a nightly purge writes their own cron against the RPC, which is the same answer the purge entry gives. Shipping a scheduler means shipping an opinion about when a sweep should run.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-where-validation-lives.md",
+      "key": "It does not build any of the four things it recommends, and ",
+      "verdict": "closed",
+      "by": "all four were built or decided: the `matches` keyword, a check carrying a column and a message, every failing check collected, and the checks published in --print-schema — crates/slate-kernel/src/security.rs and scripts/codegen.py carry the last two"
+    },
+    {
+      "entry": "2026-09-19-where-validation-lives.md",
+      "key": "It does not ask whether anyone wants this. The note says so ",
+      "verdict": "deliberate",
+      "by": "the note says so in its last paragraph: the gap exists because seven other ORMs have the feature, which is a reason to have an answer and not a reason to build one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-prediction-that-outlived-its-subject.md",
+      "key": "No code changes.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-19-a-prediction-that-outlived-its-subject.md",
+      "key": "The rest of `docs/orm-comparison.md` was not re-read against",
+      "verdict": "narrowed",
+      "by": "scripts/check_retired_claims.py reads docs/, site/ and .github/, so a claim struck in one copy cannot stand in another, and README.md's gap table was re-read for its real shape.",
+      "residual": "the 1,200 lines of orm-comparison.md have still not been read against the code end to end. The guard catches a claim struck somewhere; it catches nothing that was never struck.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-prediction-that-outlived-its-subject.md",
+      "key": "Nothing checks a document's claims against the repository.",
+      "verdict": "open",
+      "by": "still true, and ledger/2026-09-19-the-guard-i-did-not-build.md is the entry that prototyped one design and rejected it. A checker needs the claims marked up.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-a-prediction-that-outlived-its-subject.md",
+      "key": "No prediction elsewhere was re-examined.",
+      "verdict": "open",
+      "by": "site/docs/roadmap.html and README.md's gap table both carry forward-looking statements and only the gap table has been re-read.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-arm-the-refusal-never-reaches.md",
+      "key": "No other arm was re-examined for the same problem.",
+      "verdict": "open",
+      "by": "the other six go through the same `applied` call and are pinned by four tests, and 'pinned by a test that can fail' was verified by mutation only for the arms those tests name.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-arm-the-refusal-never-reaches.md",
+      "key": "Nothing was measured.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-19-the-column-the-caller-cannot-set.md",
+      "key": "No client can express it.",
+      "verdict": "deliberate",
+      "by": "nothing needs to, because the server stamps. A client reading --print-schema can see it, since the dump carries `managed`, and a generated declaration ignores it — correctly, since a client that could set it could lie about it.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-column-the-caller-cannot-set.md",
+      "key": "Nothing backfills.",
+      "verdict": "deliberate",
+      "by": "inventing a creation time for a row whose real one is unknown would be worse than leaving it. Rows declared managed after the fact take their stamp at the next write, which is the only moment the value is true.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-column-the-caller-cannot-set.md",
+      "key": "No soft delete, and no other hooks.",
+      "verdict": "closed",
+      "by": "crates/slate-kernel/src/record.rs carries soft delete, and it is the different feature this caveat predicts — a default filter on every read rather than a value on every write"
+    },
+    {
+      "entry": "2026-09-19-the-column-the-caller-cannot-set.md",
+      "key": "The clock is per store, not per request.",
+      "verdict": "deliberate",
+      "by": "true of every distributed timestamp: two nodes stamp from their own clocks and a skewed pair produces values that do not order across them. Fixing it means a logical clock in the protocol, which is a different guarantee than 'roughly when this was written'.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
+      "key": "The plain (non-conditional) delete arm's \"failed having appl",
+      "verdict": "open",
+      "by": "still unpinned, and the two routes tried are written beside the tests rather than left as an absence: an absent key answers Ok(false) by design, and an unauthorized delete is refused before the session task is dispatched to.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
+      "key": "Nothing about the counts an atomic batch reports.",
+      "verdict": "deliberate",
+      "by": "that path collects through Decoded::apply and reports after Ok, and has its own tests; it does not go through Tally::applied, so it is a different mechanism rather than an untested one.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
+      "key": "No measurement.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
+      "key": "The `Result`-typed signature above is not implemented.",
+      "verdict": "open",
+      "by": "it would make the insert-arm mistake a compile error rather than a test failure, which is the stronger guarantee; the shape mismatch across the seven arms is why it is written down instead of written.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-guard-i-did-not-build.md",
+      "key": "It builds nothing",
+      "verdict": "open",
+      "by": "the recurrence is still unguarded and the three instances stand as three instances.",
+      "checked": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-guard-i-did-not-build.md",
+      "key": "It tested one design on one document.",
+      "verdict": "deliberate",
+      "by": "this entry's own conclusion: a different approach — claims carrying a machine-readable reference to the gap-table row they depend on — was reasoned about rather than prototyped, and the reasoning against it is cheaper than a measurement. The entry names it as the direction to start from.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-19-the-guard-i-did-not-build.md",
+      "key": "The two false positives were not counted over the whole docu",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-part-three.md",
+      "key": "130 remain",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. 2026-09-20 to 2026-09-27 remain."
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-part-three.md",
+      "key": "The two grouped findings are named, not fixed.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The scale hole — a client rendering a decimal from a scale nothing checks — and the response-head latency — a streamed read's rows in no measurement anywhere — are each one piece of work now rather than scattered sentences, and neither is started."
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-part-three.md",
+      "key": "A `deliberate` verdict quoting an entry's own reasoning is n",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "the alternative is re-deriving every decision the ledger has already argued, which is the work the ledger exists to avoid repeating — and a re-derivation by the same kind of reader is not independent either. What the tracker offers instead is the `reviewed` date, which records that somebody read the reasoning against today's tree, and `caveats.py --unread` is what finds the ones nobody has."
     }
   ]
 }
