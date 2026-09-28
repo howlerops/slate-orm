@@ -82,15 +82,33 @@
 //! leader and still writing, through a binary whose catalog does not have the
 //! index at all.
 //!
-//! This is stated rather than fixed, and the alternative was weighed. Making
-//! it safe means the backfill holding something the other writer respects — a
-//! lease — or a build-then-validate second pass over the finished index. A
-//! lease lives in the storage layer, not here, so giving this module one
-//! inverts the layering the rest of the crate keeps; a validation pass is the
-//! real answer and is a larger change than a note. The operational contract in
-//! the meantime is the one every system with an online index build starts
-//! with: do not add a unique index in a rolling deploy. Nothing enforces that,
-//! which is why it is written here rather than assumed.
+//! **This is now refused rather than only written down.** Adding a *unique*
+//! index to a table the keyspace already knows raises
+//! [`Refusal::SoleWriterNotEstablished`], and the plan does not apply. The
+//! caller clears it with [`MigrationPlan::with_sole_writer`] when it can say
+//! nothing else is writing.
+//!
+//! That shape was chosen over the two alternatives this note used to weigh.
+//! Holding a lease here inverts the layering the rest of the crate keeps — a
+//! lease lives in the storage layer — so the module asks instead of reaching:
+//! it refuses to guess, and whoever *does* hold one answers. A
+//! build-then-validate second pass over the finished index is still the more
+//! complete answer and is still a larger change; it would let the build
+//! proceed concurrently rather than requiring a single writer, which this does
+//! not.
+//!
+//! Two cases are deliberately **not** refused. A table the keyspace has never
+//! seen has nothing to backfill and no older binary has ever written to it, so
+//! refusing there would fire on every fresh install of a schema with a unique
+//! index. A non-unique index cannot exhibit the race at all — its backfill and
+//! the write path cannot disagree. The refusal is also not conditioned on the
+//! table being non-empty: asking "is it empty" is itself a read that races the
+//! writer the refusal is about.
+//!
+//! `slate-serverd` clears it. Its `reconcile` runs only on the node that won
+//! the leadership campaign and opened the writer, and opening a SlateDB writer
+//! fences the previous one — so the claim rests on the same fencing every
+//! ordinary write there already depends on.
 
 use crate::error::{KernelError, Result};
 use crate::keys;
@@ -619,6 +637,19 @@ pub enum Refusal {
         /// What went wrong.
         detail: String,
     },
+    /// A **unique** index would be backfilled over a table the keyspace
+    /// already holds, and the caller has not said it is the only writer.
+    ///
+    /// Cleared by [`MigrationPlan::with_sole_writer`] and by nothing else.
+    /// See the module docs: the backfill's uniqueness check and the write
+    /// path's are separate reads, so two rows colliding on the new key can
+    /// each pass their own check and both be written.
+    SoleWriterNotEstablished {
+        /// The table.
+        table: String,
+        /// The unique index that would be built.
+        index: String,
+    },
 }
 
 impl core::fmt::Display for Refusal {
@@ -672,6 +703,17 @@ impl core::fmt::Display for Refusal {
             Self::Corrupt { table, detail } => {
                 write!(f, "`{table}`: schema state did not decode: {detail}")
             }
+            Self::SoleWriterNotEstablished { table, index } => write!(
+                f,
+                "`{table}`: building the unique index `{index}` over rows that are already \
+                 stored is not safe while anything else may be writing this keyspace. The \
+                 backfill's uniqueness check and the write path's are separate reads, so two \
+                 rows colliding on the new key can each pass their own and both be written — \
+                 leaving an index that names one row and hides the other. Deploy it with a \
+                 single writer, or have the caller establish sole writership and clear this \
+                 with `MigrationPlan::with_sole_writer`. A non-unique index has no such \
+                 hazard and is not refused"
+            ),
         }
     }
 }
@@ -700,6 +742,30 @@ impl MigrationPlan {
     #[must_use]
     pub fn is_blocked(&self) -> bool {
         !self.refusals.is_empty()
+    }
+
+    /// Declare that nothing else can write this keyspace while the plan runs,
+    /// clearing [`Refusal::SoleWriterNotEstablished`] and **only** that.
+    ///
+    /// The kernel cannot establish this for itself and deliberately does not
+    /// try. A lease lives in the storage layer, so giving this module one
+    /// inverts the layering the rest of the crate keeps — the module docs
+    /// weighed that and chose a note instead. This is the third option: the
+    /// kernel refuses to guess, and the caller that *does* hold a lease says
+    /// so. `slate-serverd` may, because `reconcile` runs only on the node that
+    /// won the leadership campaign and opened the writer, which fences its
+    /// predecessor.
+    ///
+    /// It is not an override. A layout change is unsafe for reasons that have
+    /// nothing to do with who else is writing and stays refused, which
+    /// `claiming_sole_writership_does_not_clear_a_layout_refusal` asserts —
+    /// an escape hatch that grew to cover everything is how the next refusal
+    /// gets waved through.
+    #[must_use]
+    pub fn with_sole_writer(mut self) -> Self {
+        self.refusals
+            .retain(|r| !matches!(r, Refusal::SoleWriterNotEstablished { .. }));
+        self
     }
 
     /// The refusals, joined into one message.
@@ -1218,6 +1284,23 @@ pub async fn plan_of(
 
         for index in table.indexes() {
             if !state.built.contains(&index.id()) {
+                // Only here, and not in the never-migrated branch above. That
+                // one is a table the keyspace has never seen: there is nothing
+                // to backfill and no older binary has ever written to it, so
+                // refusing would fire on every fresh install of a schema with
+                // a unique index — a guard that trips on the case it was never
+                // about is a guard somebody turns off.
+                //
+                // Not conditioned on the table being non-empty either. "Is it
+                // empty" is itself a read that races the writer this refusal
+                // is about, so it would be a check whose answer the hazard can
+                // change underneath it.
+                if index.is_unique() {
+                    out.refusals.push(Refusal::SoleWriterNotEstablished {
+                        table: table.name().to_owned(),
+                        index: index.name().to_owned(),
+                    });
+                }
                 out.steps.push(Step::BuildIndex {
                     table: table.id(),
                     index: index.id(),

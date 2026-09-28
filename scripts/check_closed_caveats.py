@@ -73,6 +73,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
 
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
+ "sole-writer-refusal": ("SoleWriterNotEstablished", "crates/slate-kernel/src/migrate.rs"),
  "bad-section-run": ("refuses()", "scripts/run_examples.sh"),
  "ambiguity": ("ambigu", "crates/slate-sql/src"),
  "array-codegen": ("element", "scripts/codegen.py"),
@@ -346,6 +347,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-25-or-in-having-too.md',
      'No parentheses, so still no nesting.'):
         'having-brackets',
+    ('2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md',
+     'The backfill hazard is documented and unenforced.'):
+        'sole-writer-refusal',
     ('2026-09-25-parentheses-in-a-where.md',
      'No brackets in a `HAVING`'):
         'having-brackets',

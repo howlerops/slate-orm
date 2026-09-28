@@ -226,9 +226,22 @@ async fn run(arguments: cli::Cli) -> Started<()> {
                     .snapshot()
                     .await
                     .map_err(|why| Fault::new(format!("cannot read the schema state: {why}")))?;
+                // `with_sole_writer` here and at the two other call sites, for
+                // one reason: `reconcile` runs only on the node that won the
+                // leadership campaign and opened the writer, and opening a
+                // SlateDB writer fences the previous one. So the backfill is
+                // not racing an older binary — the case
+                // `slate_kernel::migrate`'s docs describe — and the claim
+                // rests on the same fencing every ordinary write here already
+                // depends on. A node that loses the campaign has no writer
+                // store and never reaches this code.
+                //
+                // The preview says it too, because a preview that refused what
+                // the run will do is a preview nobody can act on.
                 slate_kernel::migrate::plan_of(snapshot.as_ref(), &catalog)
                     .await
                     .map_err(|why| Fault::new(format!("cannot read the schema state: {why}")))?
+                    .with_sole_writer()
             }
             // Nothing stored yet, so every table is new and every index needs
             // building. Planned against an empty store rather than described in
@@ -242,6 +255,10 @@ async fn run(arguments: cli::Cli) -> Started<()> {
                     .map_err(|why| {
                         Fault::new(format!("cannot plan against an empty keyspace: {why}"))
                     })?
+                    // See the branch above. A first deploy raises no
+                    // sole-writer refusal anyway — every table is new — so
+                    // this is for the day one of them is not.
+                    .with_sole_writer()
             }
             // `backend = "memory"` keeps its keyspace in the process that made
             // it, so there is no state a separate invocation can read. Saying
@@ -760,9 +777,14 @@ async fn reconcile<S: slate_kernel::store::KvStore + ?Sized>(
         });
     }
 
+    // This node holds the write lease and its writer store has fenced the
+    // predecessor, so the unique-index backfill the kernel refuses by default
+    // is safe here. The kernel cannot establish that for itself — a lease lives
+    // in the storage layer — which is why it asks rather than assumes.
     let plan = migrate::plan(store, catalog)
         .await
-        .map_err(|why| Fault::new(format!("cannot read the schema state: {why}")))?;
+        .map_err(|why| Fault::new(format!("cannot read the schema state: {why}")))?
+        .with_sole_writer();
     if plan.is_empty() {
         return Ok(());
     }

@@ -125,6 +125,24 @@ fn users(indexed: bool) -> TableDef {
     builder.build().unwrap()
 }
 
+/// The same table with the index declared **unique**.
+///
+/// A separate helper rather than a second flag on `users`, because two bools
+/// at a call site read as neither.
+fn users_unique() -> TableDef {
+    TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::Str)
+        .primary_key(["id"])
+        .index(
+            IndexDef::builder("by_email", BY_EMAIL)
+                .column("email")
+                .unique(),
+        )
+        .build()
+        .unwrap()
+}
+
 /// A second table, three columns wide, for the partial index.
 ///
 /// Separate from `users` because the width matters to the planner: an index on
@@ -638,7 +656,17 @@ async fn building_a_unique_index_over_duplicates_refuses_instead_of_hiding_a_row
     // *same* key. Left alone it would overwrite the first row's pointer and
     // leave an index naming one row and hiding the other — a worse outcome than
     // the missing index this module exists to fix.
-    let error = migrate::migrate(&store, &catalog(unique.clone()))
+    //
+    // `with_sole_writer` because this test *is* the only writer — one thread,
+    // one `MemoryStore` — and without it the plan stops at the concurrency
+    // refusal and this guard never runs. The two are separate: one is about
+    // who else might write, the other about what is already stored, and
+    // claiming the first must not excuse the second.
+    let plan = migrate::plan(&store, &catalog(unique.clone()))
+        .await
+        .unwrap()
+        .with_sole_writer();
+    let error = migrate::apply(&store, &catalog(unique.clone()), &plan)
         .await
         .unwrap_err();
     assert!(
@@ -1338,4 +1366,147 @@ async fn a_schema_blob_from_a_newer_binary_is_refused_rather_than_misread() {
         panic!("expected a corrupt refusal, got {:?}", states[0].1);
     };
     assert!(detail.contains("after the schema"), "{detail}");
+}
+
+// --- the rolling-deploy race, refused rather than only written down ---------
+
+#[tokio::test]
+async fn adding_a_unique_index_to_a_live_table_refuses_until_sole_writership_is_claimed() {
+    // The hazard this module's docs describe: a backfill's uniqueness check and
+    // the write path's are separate reads, so two rows colliding on a new
+    // unique key can each pass their own check and both be written. It was
+    // stated and unenforced — `ledger/2026-09-27-the-last-twenty-six-and-a-
+    // hazard-nobody-had-written-down.md` recorded exactly that as its residual.
+    let store = MemoryStore::new();
+    let plain = users(false);
+    migrate::migrate(&store, &catalog(plain.clone()))
+        .await
+        .unwrap();
+    seed(&store, &plain, &[(1, "a@x", 1), (2, "b@x", 2)]).await;
+
+    let unique = users_unique();
+    let plan = migrate::plan(&store, &catalog(unique.clone()))
+        .await
+        .unwrap();
+    assert!(plan.is_blocked(), "{plan:?}");
+    assert!(
+        plan.refusals
+            .iter()
+            .any(|r| matches!(r, Refusal::SoleWriterNotEstablished { .. })),
+        "{:?}",
+        plan.refusals
+    );
+    // The message has to name the index, because an operator reading it is
+    // deciding whether *this* deploy is a rolling one.
+    assert!(
+        plan.why_blocked().contains("by_email"),
+        "{}",
+        plan.why_blocked()
+    );
+
+    // And the refusal is not decorative: applying it does nothing.
+    let error = migrate::apply(&store, &catalog(unique.clone()), &plan)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, KernelError::MigrationRefused { .. }),
+        "{error}"
+    );
+    assert_eq!(index_entries(&store, BY_EMAIL).await, 0);
+}
+
+#[tokio::test]
+async fn claiming_sole_writership_clears_that_refusal_and_nothing_else() {
+    // The caller that *can* establish it — `slate-serverd` holds the write
+    // lease and has fenced its predecessor — says so, and the backfill runs.
+    let store = MemoryStore::new();
+    let plain = users(false);
+    migrate::migrate(&store, &catalog(plain.clone()))
+        .await
+        .unwrap();
+    seed(&store, &plain, &[(1, "a@x", 1), (2, "b@x", 2)]).await;
+
+    let unique = users_unique();
+    let plan = migrate::plan(&store, &catalog(unique.clone()))
+        .await
+        .unwrap()
+        .with_sole_writer();
+    assert!(!plan.is_blocked(), "{plan:?}");
+    let report = migrate::apply(&store, &catalog(unique), &plan)
+        .await
+        .unwrap();
+    assert_eq!(report.entries_written, vec![2], "{report:?}");
+    assert_eq!(index_entries(&store, BY_EMAIL).await, 2);
+}
+
+#[tokio::test]
+async fn claiming_sole_writership_does_not_clear_a_layout_refusal() {
+    // `with_sole_writer` says one thing about concurrency and must not become a
+    // general-purpose override. A retyped column is unsafe for a reason that
+    // has nothing to do with who else is writing, and stays refused.
+    let store = MemoryStore::new();
+    migrate::migrate(&store, &catalog(users(false)))
+        .await
+        .unwrap();
+
+    let retyped = TableDef::builder("users", USERS)
+        .column("id", ValueType::U64)
+        .column("email", ValueType::U64)
+        .primary_key(["id"])
+        .build()
+        .unwrap();
+    let plan = migrate::plan(&store, &catalog(retyped))
+        .await
+        .unwrap()
+        .with_sole_writer();
+    assert!(
+        plan.is_blocked(),
+        "a layout change is not a concurrency claim"
+    );
+    assert!(
+        plan.refusals
+            .iter()
+            .any(|r| matches!(r, Refusal::LayoutChanged { .. })),
+        "{:?}",
+        plan.refusals
+    );
+}
+
+#[tokio::test]
+async fn a_non_unique_index_needs_no_such_claim() {
+    // The race is specific to uniqueness. For a non-unique index the backfill
+    // and the write path cannot disagree: an entry either exists or is written
+    // again with the same bytes. Refusing one would make every ordinary index
+    // a deploy-time decision for no reason.
+    let store = MemoryStore::new();
+    let plain = users(false);
+    migrate::migrate(&store, &catalog(plain.clone()))
+        .await
+        .unwrap();
+    seed(&store, &plain, &[(1, "a@x", 1), (2, "b@x", 2)]).await;
+
+    let plan = migrate::plan(&store, &catalog(users(true))).await.unwrap();
+    assert!(!plan.is_blocked(), "{:?}", plan.refusals);
+    let report = migrate::migrate(&store, &catalog(users(true)))
+        .await
+        .unwrap();
+    assert_eq!(report.entries_written, vec![2], "{report:?}");
+}
+
+#[tokio::test]
+async fn a_unique_index_on_a_table_the_keyspace_has_never_seen_needs_no_claim() {
+    // The first deploy of a new table. There is nothing to backfill and no
+    // older binary has ever written to it, so refusing here would make every
+    // fresh install of a schema with a unique index a manual step — a refusal
+    // that fires on the case it was never about is how a guard gets switched
+    // off.
+    let store = MemoryStore::new();
+    let plan = migrate::plan(&store, &catalog(users_unique()))
+        .await
+        .unwrap();
+    assert!(!plan.is_blocked(), "{:?}", plan.refusals);
+    migrate::migrate(&store, &catalog(users_unique()))
+        .await
+        .unwrap();
+    assert_eq!(index_entries(&store, BY_EMAIL).await, 0, "no rows to index");
 }

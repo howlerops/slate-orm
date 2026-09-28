@@ -6955,10 +6955,9 @@
     {
       "entry": "2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md",
       "key": "The backfill hazard is documented and unenforced.",
-      "verdict": "narrowed",
-      "by": "the hazard is now stated where the code is, in crates/slate-kernel/src/migrate.rs's module docs, rather than only in a ledger entry nobody reads before running a migration. That is the half a note can do.",
-      "residual": "nothing stops a rolling deploy adding a unique index while the old leader still writes. The guard would be the runner refusing to build one until it can establish no other writer holds the lease, which needs a way to ask \u2014 the lease this change declined to reach for.",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "ledger/2026-09-28-the-unique-index-race-is-refused-now.md: adding a unique index to a table the keyspace already knows raises Refusal::SoleWriterNotEstablished in crates/slate-kernel/src/migrate.rs, and the plan does not apply. MigrationPlan::with_sole_writer clears that refusal and no other.",
+      "reviewed": "2026-09-28"
     },
     {
       "entry": "2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md",
@@ -7100,6 +7099,35 @@
       "key": "The parser recurses once per bracket, with no depth limit.",
       "verdict": "deliberate",
       "by": "that entry: sql::parse has two callers \u2014 the browser binding, where the text is what the visitor typed into their own tab, and crates/slate-serverd/src/views.rs, where it is operator-authored view SQL read at boot. No caller-supplied text reaches it over the wire; the gRPC surface takes a built spec bounded by MAX_EXPRESSION_DEPTH in crates/slate-server/src/convert.rs. The alternative is a depth counter through disjunction/conjunction/primary, costing a guessed constant and a refusal nobody can currently trigger. Not taken until SQL is something a client can send.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-unique-index-race-is-refused-now.md",
+      "key": "It does not make a concurrent unique-index build safe.",
+      "verdict": "narrowed",
+      "by": "the unsafe case now stops rather than proceeding: Refusal::SoleWriterNotEstablished in crates/slate-kernel/src/migrate.rs blocks the plan, which is the half that was silent data loss.",
+      "checked": "2026-09-28",
+      "residual": "a deployment that genuinely needs the index built while another node writes still has no way to do it. Build-then-validate \u2014 a second pass over the finished index \u2014 is the change that would give it one, and is several times this one's size."
+    },
+    {
+      "entry": "2026-09-28-the-unique-index-race-is-refused-now.md",
+      "key": "`slate-serverd` clears the refusal, so its deployment path i",
+      "verdict": "deliberate",
+      "by": "that entry: reconcile runs only on the node that won the leadership campaign and opened the writer, and opening a SlateDB writer fences the previous one, so the claim is true there. The alternative is to have the daemon refuse too and make every unique index a manual step for a race it has already excluded \u2014 a refusal that fires where the hazard cannot reach is how a guard gets switched off. Not taken. What it costs is that the guard defends the library caller and not the daemon, whose safety still rests on SlateDB's fencing.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-unique-index-race-is-refused-now.md",
+      "key": "Nothing checks that a future caller's `with_sole_writer()` i",
+      "verdict": "deliberate",
+      "by": "that entry: it is an assertion about the world outside this process, and nothing inside the kernel can verify it \u2014 that is the same layering argument that kept a lease out of this module. The alternative is to require a lease handle as evidence, which would make slate-kernel depend on whichever backend supplies one. Not taken. What changed is that making the claim is now a named line of code rather than the default.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-unique-index-race-is-refused-now.md",
+      "key": "The `--plan` preview clears it too",
+      "verdict": "deliberate",
+      "by": "that entry: the preview exists to describe what the run will do, and the run holds the lease, so a preview that refused would be a preview nobody can act on. The alternative is to show the refusal as a warning the run will not hit, which teaches operators to ignore the preview's refusals. Not taken; the module docs in crates/slate-kernel/src/migrate.rs are where this is learned.",
       "reviewed": "2026-09-28"
     }
   ]
