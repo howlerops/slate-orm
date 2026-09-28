@@ -498,9 +498,12 @@ they take effect and found the shape of what they do instead.
 so a caller who opens a second socket gets a second allowance; it bounds one
 channel, not the node. `request_timeout` becomes `Server::timeout`, whose
 `GrpcTimeout` future polls the handler before it polls the sleep, so a handler
-that returns without ever pending is never cancelled — measured, a query
-answered from the memory backend with `request_timeout = "0ms"` returns both
-its rows. What it bounds is a request that *waits*. Against the impact below —
+that finishes on its first poll cannot be cancelled — and one that pends once
+meets an already-elapsed sleep on the next and is. Measured both ways:
+`request_timeout = "0ms"` left a two-row in-memory query answered five runs out
+of five on one machine and cancelled it on the first try on a CI runner. It
+bounds a request that *waits*, and it does so unreliably, so a small value is a
+flake rather than a ceiling. Against the impact below —
 one authenticated caller pinning the node — the per-request ceilings in
 `slate-kernel` are what does the work; these two help with a slow dependency
 and a single noisy channel.

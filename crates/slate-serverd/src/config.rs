@@ -437,19 +437,27 @@ pub(crate) struct LimitSettings {
     /// many concurrent requests as they had sockets.
     #[serde(default)]
     pub(crate) max_concurrent_requests: Option<usize>,
-    /// How long one request may **wait** before it is cancelled.
+    /// How long one request may **wait** before it is cancelled — unreliably.
     ///
-    /// Not a latency bound, though it is easy to read as one. It becomes
+    /// Not a latency bound, and not a safe thing to set small. It becomes
     /// tonic's `Server::timeout`, whose `GrpcTimeout` future polls the handler
-    /// *before* it polls the sleep — so a handler that returns without ever
-    /// pending is never cancelled, whatever this says. Measured: a query
-    /// answered from the memory backend with `request_timeout = "0ms"` returns
-    /// both its rows. What this bounds is a request that actually waits on
-    /// something: a slow object store, a lease, a large scan that yields.
+    /// *before* it polls the sleep. So a handler that finishes on its first
+    /// poll cannot be cancelled however low this is — and one that pends once,
+    /// on a read that is not ready yet, meets an already-elapsed sleep on the
+    /// next poll and is. Whether a given fast request pends is the scheduler's
+    /// business, not this setting's.
     ///
-    /// `crates/slate-serverd/tests/ceilings.rs` pins both halves — the zero
-    /// timeout that does not cancel, and the same query with no timeout set.
-    /// The smallest unit the parser accepts is `ms`.
+    /// Measured both ways, which is the point: `request_timeout = "0ms"` left
+    /// a two-row in-memory query answered five runs out of five on one
+    /// machine, and cancelled the same query on the first try on a CI runner.
+    /// A value below what a request spends waiting is therefore a coin flip,
+    /// not a ceiling. Set it generously or not at all; a small value buys no
+    /// bound and introduces a flake.
+    ///
+    /// `crates/slate-serverd/tests/ceilings.rs` asserts only the deterministic
+    /// half — a generous timeout serves, and so does no timeout — and explains
+    /// at length why the zero case is left unasserted. The smallest unit the
+    /// parser accepts is `ms`.
     #[serde(default)]
     pub(crate) request_timeout: Option<String>,
     /// Distinct `GROUP BY` keys one request may hold.

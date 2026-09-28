@@ -88,43 +88,51 @@ fn serving(files: &Files, limits: &str, tag: &str) -> Serving {
     ])
 }
 
-/// **A `request_timeout` does not bound a request the handler answers at once.**
+/// **A `request_timeout` is not a reliable bound, and not a reliable no-op.**
 ///
-/// This is the opposite of what the test was written to assert, and it is a
-/// property of tonic rather than of this code. `GrpcTimeout::poll` polls the
-/// inner future *first* and returns its `Poll::Ready` before the sleep is ever
-/// polled:
+/// Whether a small timeout cancels a fast request depends on whether the
+/// handler's future pends before returning, which depends on the scheduler and
+/// the socket rather than on anything here. `GrpcTimeout::poll` polls the inner
+/// future *first* and returns its `Poll::Ready` before the sleep is polled:
 ///
 /// ```text
 /// if let ready @ Poll::Ready(_) = this.inner.poll(cx) { return ready; }
 /// if let Some(sleep) = this.sleep.as_pin_mut() { ready!(sleep.poll(cx)); … }
 /// ```
 ///
-/// So a handler that completes without pending cannot be cancelled, whatever
-/// the timeout says. Measured rather than read off the source: `0ms` — the
-/// smallest the configuration parser accepts is `ms`, and zero is accepted —
-/// left this two-row in-memory query answered, five runs out of five. `1ms`
-/// did too, also five out of five.
+/// So a handler that completes on its first poll cannot be cancelled — and a
+/// handler that pends once, for a read that is not ready yet, meets an
+/// already-elapsed sleep on the next one and is.
 ///
-/// That is correct behaviour, and it means the setting is a bound on requests
-/// that *wait* rather than a ceiling on request latency. It is pinned here
-/// because it is surprising, because `[limits] request_timeout` reads like the
-/// second, and because if tonic ever swaps those two polls this test goes red
-/// and somebody reads this comment.
+/// **Measured both ways, which is why nothing below asserts an outcome.** On
+/// this container `request_timeout = "0ms"` left a two-row in-memory query
+/// answered, five runs out of five, and `1ms` did too. An earlier version of
+/// this file asserted that as the behaviour; CI run 443 failed it on the first
+/// try with `Cancelled: Timeout expired` on the same query and the same
+/// configuration. Two machines, opposite answers, no change in between.
+///
+/// The claim published from the five-out-of-five reading — "a query answered
+/// at once returns its rows whatever the timeout says" — is withdrawn. What
+/// stands is the weaker and more useful statement: a timeout below the time a
+/// request spends waiting will *sometimes* cancel it and sometimes not, so a
+/// small `request_timeout` is neither a latency ceiling nor a harmless
+/// setting. A deployment wanting requests bounded cannot get it from here; a
+/// deployment setting a small value to be safe is introducing a flake.
+///
+/// What is asserted instead is the deterministic half: a generous timeout
+/// serves, which shows the setting is read and applied without depending on a
+/// race. The zero case is left unasserted deliberately — a test whose expected
+/// outcome differs by machine is a test that teaches people to re-run CI.
 #[tokio::test]
-async fn a_zero_request_timeout_does_not_cancel_a_query_answered_at_once() {
+async fn a_generous_request_timeout_serves_the_query() {
     let files = Files::new();
-    let serving = serving(&files, "[limits]\nrequest_timeout = \"0ms\"", "timeout");
+    let serving = serving(&files, "[limits]\nrequest_timeout = \"60s\"", "timeout");
     let mut client = connect(&serving).await;
 
     let returned = rows(&mut client, &APP, query("docs"))
         .await
-        .expect("a query the handler answers before the sleep is polled");
-    assert_eq!(
-        returned.len(),
-        2,
-        "both seeded rows, despite a zero timeout"
-    );
+        .expect("a timeout far longer than the query cannot cancel it on any machine");
+    assert_eq!(returned.len(), 2, "both seeded rows");
 
     drop(client);
     let finished = serving.terminate();
@@ -134,10 +142,11 @@ async fn a_zero_request_timeout_does_not_cancel_a_query_answered_at_once() {
 /// The unit the configuration accepts, which is what made the above the only
 /// experiment available.
 ///
-/// `1ns` is refused by name. A sub-millisecond timeout is the one value that
-/// could have made a fast handler overrun, and the parser does not take one —
-/// so "does a timeout ever fire?" cannot be answered from a client against an
-/// in-memory store, and is recorded as open rather than asserted.
+/// `1ns` is refused by name. `ms` is the floor, which is why `0ms` was the
+/// smallest experiment available and why the answer it gave was a race rather
+/// than a measurement. "Does a timeout fire predictably?" cannot be answered
+/// from a client against an in-memory store, and is recorded as open rather
+/// than asserted.
 #[test]
 fn a_sub_millisecond_timeout_is_refused_by_name() {
     let files = Files::new();
@@ -154,9 +163,10 @@ fn a_sub_millisecond_timeout_is_refused_by_name() {
 
 /// The control: the same query against the same node with no timeout set.
 ///
-/// Without it the test above proves only that the query failed, which a broken
-/// fixture would also prove. This is the half that makes the difference
-/// attributable to the setting.
+/// Without it the test above proves only that the node serves, which says
+/// nothing about the setting having been read. Together they show a node that
+/// serves with the setting and without it, which is the whole of what can be
+/// asserted deterministically here.
 #[tokio::test]
 async fn the_same_query_succeeds_with_no_timeout_set() {
     let files = Files::new();

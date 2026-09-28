@@ -115,6 +115,7 @@ conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py
 demo-surface|.|python3 scripts/check_demo_surface.py
 demo-surface-guard|.|python3 scripts/test_check_demo_surface.py
 example-runner-guard|.|python3 scripts/test_run_examples.py
+free-ports-guard|.|python3 scripts/test_free_ports.py
 example-roster|.|python3 scripts/check_examples_roster.py
 example-roster-guard|.|python3 scripts/test_check_examples_roster.py
 toolchain-pins|.|python3 scripts/check_toolchain_pins.py

@@ -35,8 +35,11 @@ the *unread* count and now names both.
 The measurement came first and the prose was left behind it.
 `crates/slate-serverd/tests/ceilings.rs` was written to prove the two settings
 take effect end to end, and could not: `request_timeout = "0ms"` on a query the
-memory backend answers at once returns both rows, five times out of five, and
-`1ms` does the same. The test was rewritten to pin the behaviour that is there
+memory backend answers at once returned both rows, five times out of five, and
+`1ms` did the same. **On CI the same test cancelled on the first try**, which
+makes those ten runs samples of a race rather than a property — see
+`ledger/2026-09-28-a-measurement-that-reversed-under-ci.md`. The mechanism
+described below holds; the "never cancelled" it was read as saying does not. The test was rewritten to pin the behaviour that is there
 — `a_zero_request_timeout_does_not_cancel_a_query_answered_at_once` — and the
 limits page was corrected. The doc comments a reader actually meets when they
 open the config struct were not, and those are the ones that decide what

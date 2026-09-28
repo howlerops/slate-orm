@@ -82,6 +82,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # into the withdrawal below, which is what actually happened.
  "explain-aggregate-in-a-transaction": ("explainAggregateIn", "clients/typescript/src/client.ts"),
  "quickstart-install-lines": ("check_install_lines", "site/check/quickstarts.py"),
+ "free-ports-guard": ("ip_local_port_range", "scripts/test_free_ports.py"),
  "ceilings": ("ExecutionLimits", "crates/slate-kernel/src/limits.rs"),
  "readme-swept": ("Status", "README.md"),
  "explain-grouped": ("grouped read narrows its", "crates/slate-kernel/src/explain.rs"),
@@ -480,6 +481,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-14-ports-below-the-ephemeral-range.md',
+     'Nothing tests the allocator itself. There is no case asserti'):
+        'free-ports-guard',
     ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
      'It does not check whether other entries carry the withdrawn '): '=read',
     # --- two open verdicts re-read against the tree on 2026-09-28 and found false

@@ -75,7 +75,9 @@ relative link resolves.
 The measurement behind the second paragraph is in
 `ledger/2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md`: ten runs
 of a live node, five at `1ms` and five at `0ms`, none of which cancelled a
-two-row query.
+two-row query — **on this container**. CI cancelled the same query at `0ms` on
+the first try, so those ten runs are samples of a race and not a property; the
+account is `ledger/2026-09-28-a-measurement-that-reversed-under-ci.md`.
 
 ## What this does not do
 

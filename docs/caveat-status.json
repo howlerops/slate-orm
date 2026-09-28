@@ -7891,9 +7891,8 @@
     {
       "entry": "2026-09-14-ports-below-the-ephemeral-range.md",
       "key": "Nothing tests the allocator itself. There is no case asserti",
-      "verdict": "open",
-      "by": "still no case asserting every allocated port is below the ephemeral floor, so an edit moving it back into the range would be caught only by CI, intermittently — which is where this started.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/test_free_ports.py extracts the PORTS heredoc from both run.sh copies and executes it with /proc stubbed to four floors, asserting every port it offers is below the floor it was given. 18 cases, in scripts/check.sh."
     },
     {
       "entry": "2026-09-14-ports-below-the-ephemeral-range.md",
@@ -10538,6 +10537,48 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "this entry: what a scan costs is the planner's question with its own tests in crates/slate-kernel, and a Records-level counter that also measured scan width would move when the planner is tuned and read as a relation-loading regression."
+    },
+    {
+      "entry": "2026-09-28-the-port-allocator-runs-in-a-test-now.md",
+      "key": "It does not run the allocator through `sh`.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: the property under test is the allocator's arithmetic, and running it through sh would need the whole demo stack. The shell-level half is exercised end to end by CI's --conformance and --e2e jobs; the_heredoc_is_found covers a renamed marker."
+    },
+    {
+      "entry": "2026-09-28-the-port-allocator-runs-in-a-test-now.md",
+      "key": "It does not remove the duplicate.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. examples/batchbench/run.sh carries its own copy of the allocator. Extracting a shared Python module under scripts/ for both to shell out to is the fix and is rejected in the entry as larger than this change; the guard covers both copies meanwhile."
+    },
+    {
+      "entry": "2026-09-28-the-port-allocator-runs-in-a-test-now.md",
+      "key": "The 10050 floor is chosen, not found.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: it is the floor that makes max(..., 10100) bind, which is what the mutation run showed the two realistic floors cannot catch. Enumerating the 10001-10100 window would add cases that differ only in a literal."
+    },
+    {
+      "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
+      "key": "It does not establish when the handler pends.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Core count, tokio's scheduler under load, socket readiness and timer resolution are all candidates and none was investigated; the limits page's advice is conservative because of it."
+    },
+    {
+      "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
+      "key": "It does not check the other measurements from this session f",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. crates/slate-orm/tests/read_counts.rs counts calls rather than timing and has no race of this kind, but no other single-machine number in the ledger was re-examined for whether it would reverse on a second machine."
+    },
+    {
+      "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
+      "key": "It leaves `max_concurrent_requests` where it was.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: the per-connection claim is a reading of the tonic method's name, never a timing measurement, so a finding about a racing timeout does not bear on it. Why it stays unmeasured is unchanged and recorded against 2026-09-13-per-request-ceilings.md."
     }
   ]
 }

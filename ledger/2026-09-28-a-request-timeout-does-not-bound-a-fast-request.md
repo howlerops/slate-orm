@@ -38,10 +38,28 @@ accepts:
 | `1ms`             |    5 |               0 |
 | `0ms`             |    5 |               0 |
 
-`1ns` is refused at startup: the smallest unit the parser takes is `ms`. So
-there is no value a client can set that makes a two-row in-memory query
+`1ns` is refused at startup: the smallest unit the parser takes is `ms`.
+
+~~So there is no value a client can set that makes a two-row in-memory query
 overrun, and the question "does the timeout ever fire?" cannot be answered from
-this side at all.
+this side at all.~~
+
+**Wrong, and withdrawn the same evening. CI run 443 cancelled that exact query
+at `0ms` on the first try** — `Cancelled: Timeout expired`, same test, same
+configuration, a different machine. Ten runs on one container is not a
+property; it is ten samples of a race. The mechanism above is right and the
+conclusion drawn from it was too strong: a handler that completes on its
+*first* poll cannot be cancelled, and one that pends once — on a read that is
+not ready yet, which is the scheduler's business — meets an already-elapsed
+sleep on the next poll and is.
+
+What stands is weaker and more useful than either version: a small
+`request_timeout` is neither a latency ceiling nor a harmless setting. It is a
+coin flip whose bias depends on the machine. The test that asserted the
+five-out-of-five reading is deleted rather than loosened, and
+`crates/slate-serverd/tests/ceilings.rs` now asserts only the deterministic
+half; `ledger/2026-09-28-a-measurement-that-reversed-under-ci.md` is the
+account.
 
 This matters because `[limits] request_timeout` reads like a ceiling on request
 latency and is a bound on requests that *wait*. Both are useful; they are not
