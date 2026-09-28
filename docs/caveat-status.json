@@ -8220,9 +8220,10 @@
     {
       "entry": "2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md",
       "key": "No measurement from a client. The 9.4x–10.0x in the previous",
-      "verdict": "open",
-      "by": "still inherited. None of the three clients has a batching benchmark, and the per-operation work they add — schema claims, value encoding — is not saved by batching, so the Rust wire number is an upper bound on what a client sees rather than a measurement of it.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "clients/python/tests/test_round_trips.py counts round trips at the channel with a grpc interceptor: twenty singles are twenty Insert calls, the same twenty in a batch are one Batch call and zero Inserts. Measured from a client, on a real server.",
+      "checked": "2026-09-28",
+      "residual": "it counts calls, not the per-request client work the caveat also names — schema claims and value encoding cost the same twenty encodings either way, and a call count cannot see that. Only Python is instrumented; Go and TypeScript are not."
     },
     {
       "entry": "2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md",
@@ -8272,9 +8273,10 @@
     {
       "entry": "2026-09-16-keyset-pagination-on-the-wire-and-the-page-that-failed-second.md",
       "key": "Nothing measures the *cost* on the wire. The README's \"page ",
-      "verdict": "open",
-      "by": "still a kernel measurement only. 'Page 99 read 495 key-value pairs by offset and 5 by cursor' has not been re-made through a head node, and the entry declined to claim it.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "test_paging_by_cursor_is_one_round_trip_per_page in clients/python/tests/test_round_trips.py: four pages of five cost four Query calls, counted at the client's channel. That is what a page costs a caller, which is the number a reader sizing a page against a network needs.",
+      "checked": "2026-09-28",
+      "residual": "the README's 495-against-5 key-value figure is still the only measurement of what a page *reads from the store*, and this does not touch it. Calls are not bytes and not latency."
     },
     {
       "entry": "2026-09-16-keyset-pagination-on-the-wire-and-the-page-that-failed-second.md",
@@ -10685,6 +10687,27 @@
       "verdict": "open",
       "checked": "2026-09-28",
       "by": "nothing yet. Three shows the flags are not obviously stale and does not show the other twenty are sound; twenty more reads would price the flagged stratum, and this entry argues they are better spent at random."
+    },
+    {
+      "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
+      "key": "It counts calls, not work.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: one Batch call carrying twenty separately-encoded rows is one round trip, which is what the claim was about. Encoding cost is the caveat's surviving half and is recorded as the residual on both narrowed verdicts rather than folded into a count."
+    },
+    {
+      "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
+      "key": "Only Python is instrumented.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Go's grpc.WithUnaryInterceptor and TypeScript's interceptor option would each take the same shape; whether the three clients agree is the conformance runner's question and it does not ask this one."
+    },
+    {
+      "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
+      "key": "It says nothing about latency or bytes.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. examples/deployed is where a network round trip would be timed and it does not exercise paging; the README's 495-against-5 figure is still the only measurement of what a page reads from the store."
     }
   ]
 }

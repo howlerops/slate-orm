@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-28T22:43:05+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "python3",
+    "-m",
+    "pytest",
+    "clients/python/tests/test_round_trips.py",
+    "-q"
+  ],
+  "commit": "321f457",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the unary interceptor stops counting, so writes read as free",
+      "old": "    def intercept_unary_unary(\n        self, continuation: Any, details: Any, request: Any\n    ) -> Any:\n        self._count(details.method)\n",
+      "new": "    def intercept_unary_unary(\n        self, continuation: Any, details: Any, request: Any\n    ) -> Any:\n",
+      "verdict": "caught",
+      "caught_by": [
+        "clients/python/tests/test_round_trips.py::test_writing_n_rows_one_at_a_time_is_n_round_trips",
+        "clients/python/tests/test_round_trips.py::test_writing_n_rows_in_a_batch_is_one_round_trip"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the batch case sends its rows one at a time instead",
+      "old": "    batch = Batch(Atomicity.INDEPENDENT)\n    for n in range(ROWS, ROWS * 2):\n        batch.insert(DOCS, [_row(n)])\n    client.batch(batch)",
+      "new": "    for n in range(ROWS, ROWS * 2):\n        client.insert(DOCS, [_row(n)])",
+      "verdict": "caught",
+      "caught_by": [
+        "clients/python/tests/test_round_trips.py::test_writing_n_rows_in_a_batch_is_one_round_trip"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the paging loop asks for one page instead of four",
+      "old": "    while pages < 4:",
+      "new": "    while pages < 1:",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
