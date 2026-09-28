@@ -2452,9 +2452,9 @@
       "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
       "key": "Nothing tests the daemon's `max_concurrent_requests` or `req",
       "verdict": "narrowed",
-      "by": "the configuration half. crates/slate-serverd/tests/refusals.rs has `a_zero_concurrency_limit_is_refused_because_it_would_serve_nobody`, `the_ceilings_and_the_timeout_are_accepted_when_they_are_sensible` and `omitting_them_entirely_is_still_a_valid_configuration`, over the real binary",
-      "checked": "2026-09-26",
-      "residual": "exactly what the caveat names — that setting them in TOML takes effect end to end, which needs a live server and a 65th request"
+      "by": "crates/slate-serverd/tests/ceilings.rs runs a real node with each setting: a zero concurrency limit and a sub-millisecond timeout are each refused by name, a node serves with each present, and a zero timeout is measured not to cancel a query the handler answers at once. ledger/2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
+      "checked": "2026-09-28",
+      "residual": "nothing has seen either ceiling *bind*. tonic polls the handler before the timeout's sleep, so a request answered on the first poll cannot be cancelled at any value the parser accepts; and concurrency_limit_per_connection releases its permit when the response future resolves, which for a streaming RPC is before any row is read. Observing either needs a way to block a handler, which is a production-facing knob added for a test."
     },
     {
       "entry": "2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md",
@@ -10396,13 +10396,6 @@
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
-      "key": "It does not fix any of the 116.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. They are visible and grouped where they repeat; the largest is the decimal scale a client declares and nothing checks, which three entries record independently."
-    },
-    {
-      "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
       "key": "A `deliberate` verdict is only as good as the reasoning it q",
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
@@ -10414,6 +10407,34 @@
       "verdict": "open",
       "checked": "2026-09-28",
       "by": "nothing re-reads them. 'Nothing was measured' is a moment when there was nothing to measure and an open caveat when there was, and each was judged one at a time by one reader on one day."
+    },
+    {
+      "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
+      "key": "It does not fix any of the 118.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. They are visible and grouped where they repeat; the largest is the decimal scale a client declares and nothing checks, which three entries record independently."
+    },
+    {
+      "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
+      "key": "Nothing here has seen either ceiling bind.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "narrowed from 'untested end to end' to 'untestable from a client without a knob nobody should ship'. Observing either bind needs a way to block a handler: tonic polls the handler before the timeout's sleep, and concurrency_limit_per_connection releases its permit when the response future resolves, which for a streaming RPC is before any row is read."
+    },
+    {
+      "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
+      "key": "The streaming observation is read, not measured.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "that tower's permit is released when the response future resolves is read off its shape and tonic's use of it, not instrumented. It is consistent with the timeout result — both follow from a streaming handler returning before its rows do — and consistency is not a measurement."
+    },
+    {
+      "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
+      "key": "No per-request ceiling was examined",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry's scope is the daemon's two settings, which is what the residual named. ExecutionLimits has its own tests in the kernel and ledger/2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md covers those paths; re-examining them here would be a second copy of that coverage."
     }
   ]
 }
