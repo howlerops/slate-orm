@@ -18,14 +18,29 @@ and left 120 open. Sorting them by how badly a reader would want to know, the
 top two are these, and neither was on the page whose whole job is to say where
 this stops.
 
-The scale one is the sharper. `Value::Decimal` carries units and the scale
+~~The scale one is the sharper. `Value::Decimal` carries units and the scale
 lives on the column, so a client renders `1999` as `19.99` from the scale it
 declared locally. The fingerprint deliberately does not hash a scale — a scale
 addresses no column, so hashing it would refuse a request that reaches exactly
 the right row — which means a client that believes a column is scale 2 where
 the catalog says 4 prints every value a hundred times wrong, for ever, with no
 error at any layer. Three separate ledger entries record it independently and
-the docs site did not.
+the docs site did not.~~
+
+**Wrong, and withdrawn the same evening. The fingerprint has hashed the scale
+since `35d9182` on 2026-09-18** — `crates/slate-serverd/src/fingerprint.rs`
+calls `state.number(scale as usize)`, and its module docstring names the scale
+as the deliberate exception to the addresses-a-column rule for exactly the
+reason the paragraph above says it is not one. The five caveats were true when
+written and were answered later the same day, by the entry
+`2026-09-18-the-one-thing-in-the-fingerprint-that-addresses-no-column.md`.
+The page was rewritten to say so; see
+`ledger/2026-09-28-the-scale-hole-was-closed-ten-days-ago.md`, which is the
+third time in one session I said this wrongly and the account of why. The
+paragraph is struck rather than deleted because the wrong reasoning is the
+subject of that entry.
+
+The second paragraph of the page, on latency, was and is correct.
 
 The second is the one `crates/slate-serverd/tests/ceilings.rs` measured this
 afternoon: `request_timeout` bounds a request that *waits* and not one the

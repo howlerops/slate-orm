@@ -7737,9 +7737,8 @@
     {
       "entry": "2026-09-14-explaining-a-grouped-read.md",
       "key": "No client exposes `ExplainAggregate` inside a transaction ex",
-      "verdict": "open",
-      "by": "still Go only. Python and TypeScript reach the non-transactional form; the server implements both, so this is client surface rather than protocol.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "false as written. `Transaction.explainAggregate` and `explainAggregateJoin` are in clients/typescript/src/client.ts and route through `explainAggregateIn`; Python's `Transaction` inherits `_Ops.explain_aggregate`, which sends `self._transaction_id()`, and `Transaction._transaction_id` returns the transaction's own id. All three clients reach it inside a transaction."
     },
     {
       "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
@@ -7918,9 +7917,8 @@
     {
       "entry": "2026-09-14-self-checking-quickstarts-and-conformance.md",
       "key": "The quickstart check does not verify the *prose* around the ",
-      "verdict": "open",
-      "by": "still true, and the packages are still unpublished. site/check/quickstarts.py runs the code and not the install line above it, so `pip install slate-client` and `npm install @slate-orm/client` name things that do not exist.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "false as written. `check_install_lines` in site/check/quickstarts.py reads the install line under each snippet and fails when it names a local path that is not there — written against these two lines, which are now local paths."
     },
     {
       "entry": "2026-09-14-self-checking-quickstarts-and-conformance.md",
@@ -9420,8 +9418,9 @@
     {
       "entry": "2026-09-19-a-prediction-that-outlived-its-subject.md",
       "key": "Nothing checks a document's claims against the repository.",
-      "verdict": "open",
-      "by": "still true, and ledger/2026-09-19-the-guard-i-did-not-build.md is the entry that prototyped one design and rejected it. A checker needs the claims marked up.",
+      "verdict": "narrowed",
+      "by": "scripts/check_site_claims.py checks a document's factual claims against the tree, and `claim_pages` covers every page under site/ (site/docs/roadmap.html included), README.md and every docs/*.md design note.",
+      "residual": "the roster of claims is hand-maintained, so a new claim in a design note is checked only if somebody adds it; and a prediction is not a factual claim, which is what the companion caveat is about.",
       "checked": "2026-09-28"
     },
     {
@@ -10430,9 +10429,10 @@
     {
       "entry": "2026-09-28-the-limits-page-omitted-the-sharpest-limit.md",
       "key": "It fixes neither.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "both stay open in docs/caveat-status.json, which is where the work is tracked. This is the page a reader meets first saying what the tracker already knew."
+      "verdict": "narrowed",
+      "by": "the scale half was closed: the five caveats it was about turned out answered ten days earlier, and the page was rewritten — see ledger/2026-09-28-the-scale-hole-was-closed-ten-days-ago.md.",
+      "residual": "the latency half stands. `request_timeout` is now documented in crates/slate-serverd/src/config.rs and on the page, and the two caveats in 2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md are still open.",
+      "checked": "2026-09-28"
     },
     {
       "entry": "2026-09-28-the-limits-page-omitted-the-sharpest-limit.md",
@@ -10481,6 +10481,27 @@
       "key": "It does not touch the `1ms` floor.",
       "verdict": "deliberate",
       "by": "this entry: the floor is config::optional_duration's smallest unit and the error message names it. Documenting a sub-millisecond refusal beside a setting whose timeout does not fire on a fast request at all would put the reader's attention on the wrong limit."
+    },
+    {
+      "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
+      "key": "It reads eleven of 116, and changes four.",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The remaining open caveats are unexamined, and the eleven read here were picked for being cheap to check, which is a biased sample of the population."
+    },
+    {
+      "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
+      "key": "It adds no guard.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-28",
+      "by": "this entry: deciding whether 'no client exposes X' holds meant reading Python's inheritance, which is not a regex. The rejected alternative is argued above and in ledger/2026-09-19-the-guard-i-did-not-build.md; scripts/check_site_claims.py's hand-written roster is the tractable shape and extending it to the tracker is a piece of work, not a line."
+    },
+    {
+      "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
+      "key": "It does not check whether other entries carry the withdrawn ",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. Two 2026-09-18 entries were the source of the five scale caveats and neither was re-read for a present-tense statement of the withdrawn claim; scripts/check_retired_claims.py excludes ledger/ deliberately, so it would not see one."
     }
   ]
 }

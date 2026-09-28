@@ -80,6 +80,8 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # before its row was written, which is the step that turned one
  # plausible-looking closure — "plan.rs costs a grouped join as grouped" —
  # into the withdrawal below, which is what actually happened.
+ "explain-aggregate-in-a-transaction": ("explainAggregateIn", "clients/typescript/src/client.ts"),
+ "quickstart-install-lines": ("check_install_lines", "site/check/quickstarts.py"),
  "ceilings": ("ExecutionLimits", "crates/slate-kernel/src/limits.rs"),
  "readme-swept": ("Status", "README.md"),
  "explain-grouped": ("grouped read narrows its", "crates/slate-kernel/src/explain.rs"),
@@ -473,6 +475,13 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # --- two open verdicts re-read against the tree on 2026-09-28 and found false
+    ('2026-09-14-explaining-a-grouped-read.md',
+     'No client exposes `ExplainAggregate` inside a transaction ex'):
+        'explain-aggregate-in-a-transaction',
+    ('2026-09-14-self-checking-quickstarts-and-conformance.md',
+     'The quickstart check does not verify the *prose* around the '):
+        'quickstart-install-lines',
     # --- four progress markers, each retired by the batch after it
     ('2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md',
      'The 468 are untriaged, and that is the work this surfaced ra'): '=stamped',

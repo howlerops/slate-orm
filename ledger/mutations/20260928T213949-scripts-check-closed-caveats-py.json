@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-28T21:39:49+00:00",
+  "file": "scripts/check_closed_caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_closed_caveats.py"
+  ],
+  "commit": "7c599b6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the TypeScript transaction witness points at a needle that is not there",
+      "old": "\"explainAggregateIn\", \"clients/typescript/src/client.ts\"",
+      "new": "\"explainAggregateInTransaction\", \"clients/typescript/src/client.ts\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the quickstart witness points at the wrong file",
+      "old": "\"check_install_lines\", \"site/check/quickstarts.py\"",
+      "new": "\"check_install_lines\", \"site/check/docs.py\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
