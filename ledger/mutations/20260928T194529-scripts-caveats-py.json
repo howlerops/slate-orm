@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-28T19:45:29+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "e1ac6fd",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a struck paragraph is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:>|```|\\*?\\(Closed)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a struck paragraph not worded as a withdrawal is still not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "WITHDRAWN stops recognising a struck bold lead",
+      "old": "WITHDRAWN = re.compile(r\"^[~*]*\\s*Withdrawn\\b\", re.I)",
+      "new": "WITHDRAWN = re.compile(r\"^~*\\s*Withdrawn\\b\", re.I)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the item marker no longer needs whitespace after it",
+      "old": "MARKER = re.compile(r\"\\A(?:[-*+]|\\d+\\.)[ \\t]+\")",
+      "new": "MARKER = re.compile(r\"\\A(?:[-*+]|\\d+\\.)[ \\t]*\")",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

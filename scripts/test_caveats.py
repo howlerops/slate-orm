@@ -453,6 +453,200 @@ def main() -> int:
         0,
     )
 
+    # The recall half, added 2026-09-28. The bold lead is a *convention*, and
+    # it firmed up around the 20th: 379 paragraphs in this repository's own
+    # `What this does not do` sections do not carry one, and every single one
+    # of them was invisible — 129 entries had no caveat the tracker could see
+    # at all. A tracker reporting "0 open" over 74% of the caveats is the
+    # never-fires shape wearing a headline number.
+    case(
+        "a paragraph with no bold lead is a caveat too",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "No deployment. The site is files in a directory.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "a bold-lead caveat and a plain one are both found, and counted once",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "**A bold one.** With a sentence after it.\n\n"
+                "A plain one, with no lead at all.\n"
+            )
+        },
+        {"untriaged": 2},
+        0,
+    )
+
+    # The key has to stay the bold text where there is one, or the widening
+    # orphans every verdict this repository has written. Measured before the
+    # change: 1065 keys before, 1065 of them still present after, 379 added,
+    # nothing colliding.
+    case(
+        "a bold caveat keeps its key when plain paragraphs are read too",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "**A bold one.** With a sentence after it.\n\n"
+                "A plain one.\n"
+            ),
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "A bold one.",
+                        "verdict": "open",
+                        "by": "",
+                    }
+                ]
+            ),
+        },
+        {"open": 1, "untriaged": 1},
+        0,
+    )
+
+    # A plain withdrawal is dropped for the same reason a bold one is. It
+    # could not arise before, because `WITHDRAWN` only ever saw bold text.
+    case(
+        "a plain withdrawal is not a caveat either",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "Withdrawn, 2026-09-14. The measurement did not hold.\n\n"
+                "A real one.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    # Three shapes that are *about* a caveat rather than being one. Each was
+    # met while widening: 26 blockquoted `> **Closed on …**` notes, 3 fenced
+    # blocks of captured output, and one `*(Closed, …)*` parenthetical. All
+    # three read as claims once whole paragraphs were read, and none is one.
+    case(
+        "a blockquoted closure note is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "A real one.\n\n"
+                "> **Closed on 2026-09-15** by `some-later-entry`.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "a fenced block of captured output is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "A real one.\n\n"
+                "```\nTerminate orphan process: pid (3524)\n```\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "a parenthetical closure note is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "A real one.\n\n"
+                "*(Closed, 2026-09-14: the runner builds all three now.)*\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    # A tight list is several caveats, not one. 53 of this repository's 54
+    # list blocks hold more than one item, each with its own bold lead, and
+    # reading the block as a single caveat would key all of them on the first
+    # one's opening words — which is worse than missing them, because it looks
+    # triaged.
+    case(
+        "each item of a tight list is its own caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "- **The first.** With a sentence that\n  wraps onto a second line.\n"
+                "- **The second.** Another.\n"
+                "- **The third.** And another.\n"
+            )
+        },
+        {"untriaged": 3},
+        0,
+    )
+
+    case(
+        "a list item keys on its bold lead, not on the dash",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "- **The first.** With a sentence.\n"
+            ),
+            "docs/caveat-status.json": status(
+                [{"entry": "a.md", "key": "The first.", "verdict": "open", "by": ""}]
+            ),
+        },
+        {"open": 1, "untriaged": 0},
+        0,
+    )
+
+    # `.match`, never `.search`. 126 plain paragraphs in this repository carry
+    # emphasis somewhere in the middle, and a searched lead would key them on
+    # that fragment — 26 of them on the same six words, which collides.
+    case(
+        "mid-paragraph emphasis does not become a plain caveat's key",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "The runner is not wired in, and that is **the whole point**.\n"
+            ),
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "The runner is not wired in, and that is **the whole point**.",
+                        "verdict": "open",
+                        "by": "",
+                    }
+                ]
+            ),
+        },
+        {"open": 1, "untriaged": 0},
+        0,
+    )
+
+    # The half `WITHDRAWN` does not cover, and the reason `~~` is in
+    # `ANNOTATION` rather than left to it. 47 struck paragraphs here, and most
+    # open with the retracted sentence rather than with the word "Withdrawn" —
+    # "~~The runner is not wired into CI…~~". A mutation dropping `~~` from
+    # `ANNOTATION` survived every case in this file until this one, because
+    # every struck fixture happened to say the word.
+    case(
+        "a struck paragraph not worded as a withdrawal is still not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "~~The runner is not wired into CI, so nothing runs it.~~\n\n"
+                "A real one.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
     case(
         "a struck-through withdrawal is not a caveat",
         {

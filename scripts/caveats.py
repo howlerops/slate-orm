@@ -99,10 +99,78 @@ SECTION = re.compile(r"^## What this does not do\s*$(.*?)(?=^## |\Z)", re.M | re
 #: retracted eleven days earlier, and `moment` would have called a
 #: correction a passing observation.
 BULLET = re.compile(r"(?:\A|\n[ \t]*\n)[ \t]*\*\*(.+?)\*\*", re.S)
+#: A paragraph in the section, bold lead or not.
+#:
+#: **The bold lead is a convention, and it was not always the convention.**
+#: `BULLET` above reads only paragraphs that open with `**`, which is how the
+#: tracker was built and how every verdict in `docs/caveat-status.json` is
+#: keyed. Measured on 2026-09-28: 1071 paragraphs in this repository's
+#: `What this does not do` sections carry a bold lead and **379 do not**, and
+#: all 379 were invisible. **129 entries had no caveat the tracker could see at
+#: all** — the whole of 2026-09-13 and most of the 14th, before the lead firmed
+#: up around the 20th. So "0 open" was a statement about 74% of the caveats,
+#: and the missing quarter was the *oldest* quarter, which is the worst
+#: possible skew: an old caveat is the one most likely to have been quietly
+#: closed or quietly forgotten, and neither shows up in a number that cannot
+#: see it.
+#:
+#: That is the never-fires shape wearing a headline. It is exactly what this
+#: file's own docstring warns about one level up — a check that cannot see a
+#: thing reports the same "clean" as a check that saw it and found nothing.
+#:
+#: The key still comes from the **bold text** where there is one, never from
+#: the whole paragraph, because every verdict written so far is keyed that way
+#: and keying on the paragraph would orphan all 1065 of them at once. Measured
+#: before the change: 1065 keys before, all 1065 present after, 379 added, no
+#: collisions.
+PARAGRAPH = re.compile(r"\n[ \t]*\n")
+#: The bold lead of a unit, when it has one.
+#:
+#: Applied with `.match`, never `.search`, and that is the whole of the
+#: restriction — the `\A` a first draft carried was redundant beside `.match`
+#: and a mutation removing it survived, which is the equivalent-mutation trap
+#: `mutate.py` warns about rather than a missing test. `.search` is the real
+#: hazard and is a real change: 126 plain paragraphs here carry emphasis
+#: mid-sentence, and a searched lead would key them on that fragment — 26 of
+#: them on the same six words, `Closed on 2026-09-15`, which collides.
+LEAD = re.compile(r"\*\*(.+?)\*\*", re.S)
+#: A unit that is *about* a caveat rather than being one, so not counted.
+#:
+#: Each of the four was met when whole paragraphs were first read, and each
+#: read as a claim: 26 blockquoted `> **Closed on …**` notes recording that the
+#: caveat above them was answered, 3 fenced blocks of captured process output,
+#: one `*(Closed, …)*` parenthetical, and 47 struck-through paragraphs.
+#:
+#: The struck ones were already excluded before, but by accident rather than by
+#: rule — `~~` opened the paragraph so the bold-lead pattern never matched. An
+#: exclusion that works because something else did not fire is one that stops
+#: working the moment that something else changes, which is exactly what
+#: happened here.
+ANNOTATION = re.compile(r"\A(?:~~|>|```|\*?\(Closed)")
+#: A list marker at the start of a line, splitting a tight list into items.
+#:
+#: The unit is the *item*, not the block. 53 of this repository's 54 list
+#: blocks hold more than one item, each with its own bold lead, so reading a
+#: block as one caveat would key every item on the first one's opening words.
+#: That is worse than missing them: a wrong key looks triaged.
+#:
+#: The same pattern recognises a block as a list, with `.match` on a stripped
+#: block. A second constant doing that job was redundant and a mutation
+#: loosening its whitespace survived, because this one was what decided. The
+#: `[ \t]+` is load-bearing exactly once: it keeps `**Bold.**`, which has no
+#: space after the first `*`, from reading as a `*` bullet.
+ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d+\.)[ \t]+", re.M)
 #: A bullet whose lead opens a withdrawal rather than a limitation. Matched
 #: on the first word so that the date and the reasoning after it are free
 #: text, which is how the ledger writes them.
-WITHDRAWN = re.compile(r"^~*\s*Withdrawn\b", re.I)
+#:
+#: No `~*` here any more, though there was until `ANNOTATION` below existed:
+#: a struck withdrawal is `~~**Withdrawn.** …~~`, `ANNOTATION` drops it before
+#: this runs, and a mutation removing the `~` survived because nothing reached
+#: it. What is left is the prose form — a paragraph, or a bold lead, opening
+#: with the word — which is how the ledger writes a withdrawal that was never
+#: struck through.
+WITHDRAWN = re.compile(r"^\s*Withdrawn\b", re.I)
 VERDICTS = ("open", "closed", "narrowed", "deliberate", "moment", "untriaged")
 
 #: What a `narrowed` verdict must say is *left*, beside the `by` that says what
@@ -139,6 +207,20 @@ def key(claim: str) -> str:
     return " ".join(claim.split())[:KEY]
 
 
+def units(body: str) -> list[str]:
+    """The section's caveat-sized pieces: paragraphs, and a list's own items."""
+    found = []
+    for block in PARAGRAPH.split(body):
+        stripped = block.strip()
+        if not stripped:
+            continue
+        if ITEM.match(stripped):
+            found.extend(part.strip() for part in ITEM.split(stripped) if part.strip())
+        else:
+            found.append(stripped)
+    return found
+
+
 def caveats(root: Path = ROOT) -> list[dict[str, str]]:
     found: list[dict[str, str]] = []
     ledger = root / "ledger"
@@ -156,10 +238,23 @@ def caveats(root: Path = ROOT) -> list[dict[str, str]]:
         # orphaned verdicts when the pattern was tightened: normalising the
         # boundary here is safer than loosening the pattern, which is what let
         # mid-paragraph emphasis in as a caveat in the first place.
-        for bullet in BULLET.findall("\n\n" + section.group(1)):
-            if WITHDRAWN.match(bullet.strip()):
+        for unit in units(section.group(1)):
+            if ANNOTATION.match(unit):
                 continue
-            found.append({"entry": path.name, "claim": " ".join(bullet.split())})
+            lead = LEAD.match(unit)
+            # The bold text where there is one, so every key written before the
+            # paragraph widening still resolves; the whole unit otherwise,
+            # which is the only text there is.
+            #
+            # No marker strip here, though a first draft had one: `ITEM.split`
+            # consumes every marker, including the leading one, and a block
+            # that opens with a marker is by definition the block `units` sent
+            # down that path. A mutation removing the strip survived, which is
+            # what dead code looks like from the outside.
+            claim = lead.group(1) if lead else unit
+            if WITHDRAWN.match(claim.strip()):
+                continue
+            found.append({"entry": path.name, "claim": " ".join(claim.split())})
     return found
 
 

@@ -7228,6 +7228,28 @@
       "verdict": "deliberate",
       "by": "already recorded deliberate against ledger/2026-09-26-the-citation-nobody-could-follow.md, under the key 'It checks existence, not aptness': judging whether a cited file supports the citing sentence is the work the citation *is*, and no pattern does it. Restated here so a reader of this entry meets it; the widening does not approach it.",
       "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md",
+      "key": "The 468 are untriaged, and that is the work this surfaced ra",
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. This is the backlog the widening revealed and it is real work, not a decision: 468 caveats written between 2026-09-13 and 2026-09-27 that no verdict has ever been given."
+    },
+    {
+      "entry": "2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md",
+      "key": "The four annotation shapes are recognised by their opening c",
+      "verdict": "deliberate",
+      "by": "this entry's Alternatives: counting the 77 annotations would need a verdict meaning 'this is not a caveat', which the vocabulary does not have and `moment` does not mean. Recognising them by shape is one rule; the alternative is 77 rows of apology. The dangerous direction — a genuine caveat opening with `>` — was looked for and does not exist today.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md",
+      "key": "A caveat outside the section is still invisible",
+      "verdict": "narrowed",
+      "checked": "2026-09-28",
+      "by": "every one of the 408 entries carries `## What this does not do`, spelled exactly, so nothing is missed today. Measured while widening: zero entries with no matching section and zero near-miss headings. ledger/2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md",
+      "residual": "a missing or misspelled section is skipped silently rather than reported, so the day an entry grows one the tracker will say nothing. The template supplies the heading and the pre-commit hook requires it, which is why the count is zero and not why it would stay zero."
     }
   ]
 }

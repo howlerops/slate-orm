@@ -1,0 +1,131 @@
+{
+  "at": "2026-09-28T19:46:38+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "e1ac6fd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a plain paragraph is skipped again",
+      "old": "            claim = lead.group(1) if lead else unit",
+      "new": "            if not lead:\n                continue\n            claim = lead.group(1)",
+      "verdict": "caught",
+      "caught_by": [
+        "a paragraph with no bold lead is a caveat too: untriaged: wanted 1, got 0",
+        "a bold-lead caveat and a plain one are both found, and counted once: untriaged: wanted 2, got 1",
+        "a bold caveat keeps its key when plain paragraphs are read too: untriaged: wanted 1, got 0",
+        "a plain withdrawal is not a caveat either: untriaged: wanted 1, got 0",
+        "a blockquoted closure note is not a caveat: untriaged: wanted 1, got 0",
+        "a fenced block of captured output is not a caveat: untriaged: wanted 1, got 0",
+        "a parenthetical closure note is not a caveat: untriaged: wanted 1, got 0",
+        "mid-paragraph emphasis does not become a plain caveat's key: open: wanted 1, got 0; problems: wanted 0, got 1 ['a.md::The runner is not wired in, and that is **the whole point**.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the lead is searched rather than matched",
+      "old": "            lead = LEAD.match(unit)",
+      "new": "            lead = LEAD.search(unit)",
+      "verdict": "caught",
+      "caught_by": [
+        "mid-paragraph emphasis does not become a plain caveat's key: open: wanted 1, got 0; untriaged: wanted 0, got 1; problems: wanted 0, got 1 ['a.md::The runner is not wired in, and that is **the whole point**.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a blockquote is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:~~|```|\\*?\\(Closed)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a blockquoted closure note is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a fenced block is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:~~|>|\\*?\\(Closed)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a fenced block of captured output is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a parenthetical closure is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a parenthetical closure note is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a struck paragraph is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:>|```|\\*?\\(Closed)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a struck paragraph not worded as a withdrawal is still not a caveat: untriaged: wanted 1, got 2",
+        "a struck-through withdrawal is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "WITHDRAWN stops recognising a prose withdrawal",
+      "old": "WITHDRAWN = re.compile(r\"^\\s*Withdrawn\\b\", re.I)",
+      "new": "WITHDRAWN = re.compile(r\"^\\s*NeverAppears\\b\", re.I)",
+      "verdict": "caught",
+      "caught_by": [
+        "a plain withdrawal is not a caveat either: untriaged: wanted 1, got 2",
+        "a caveat withdrawn in prose is not counted: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a tight list is read as one caveat rather than as its items",
+      "old": "            found.extend(part.strip() for part in ITEM.split(stripped) if part.strip())",
+      "new": "            found.append(stripped)",
+      "verdict": "caught",
+      "caught_by": [
+        "each item of a tight list is its own caveat: untriaged: wanted 3, got 1",
+        "a list item keys on its bold lead, not on the dash: open: wanted 1, got 0; untriaged: wanted 0, got 1; problems: wanted 0, got 1 ['a.md::The first.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the item marker no longer needs whitespace after it",
+      "old": "ITEM = re.compile(r\"^[ \\t]*(?:[-*+]|\\d+\\.)[ \\t]+\", re.M)",
+      "new": "ITEM = re.compile(r\"^[ \\t]*(?:[-*+]|\\d+\\.)[ \\t]*\", re.M)",
+      "verdict": "caught",
+      "caught_by": [
+        "a verdict is read by the opening of its bullet: open: wanted 1, got 0; untriaged: wanted 1, got 2; problems: wanted 0, got 1 ['a.md::It does not do the first thing.']",
+        "closed without naming what closed it is refused: closed: wanted 1, got 0",
+        "deliberate without naming the reasoning is refused: deliberate: wanted 1, got 0",
+        "narrowed without naming what closed and what is left is refused: narrowed: wanted 1, got 0; problems: wanted 2, got 1 ['a.md::It does not do the first thing.']",
+        "narrowed with a `by` and no `residual` is refused: narrowed: wanted 1, got 0",
+        "narrowed with a `by` and a `residual` is accepted and counted as its own thing: narrowed: wanted 1, got 0; problems: wanted 0, got 1 ['a.md::It does not do the first thing.']",
+        "a settled verdict carrying `checked` rather than `reviewed` is refused: deliberate: wanted 1, got 0",
+        "a narrowed caveat carrying `reviewed` rather than `checked` is refused: narrowed: wanted 1, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
