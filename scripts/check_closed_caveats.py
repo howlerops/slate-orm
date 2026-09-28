@@ -73,6 +73,7 @@ WITNESS: dict[str, tuple[str | None, str]] = {
 
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
  "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
+ "full-join-unmatched": ("BothUnmatchedSidesOfAFullJoin", "clients/go/slate/scalar_test.go"),
  "array-in-the-ui": ("array", "examples/explorer/backends/go/seed.go"),
  "sole-writer-refusal": ("SoleWriterNotEstablished", "crates/slate-kernel/src/migrate.rs"),
  "bad-section-run": ("refuses()", "scripts/run_examples.sh"),
@@ -348,6 +349,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-25-or-in-having-too.md',
      'No parentheses, so still no nesting.'):
         'having-brackets',
+    ('2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md',
+     'The unmatched side is produced by a left join only.'):
+        'full-join-unmatched',
     ('2026-09-20-an-array-on-the-wire-and-in-three-clients.md',
      'The demo and the docs site show no array.'):
         'array-in-the-ui',

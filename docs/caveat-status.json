@@ -6918,10 +6918,9 @@
     {
       "entry": "2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md",
       "key": "The unmatched side is produced by a left join only.",
-      "verdict": "narrowed",
-      "by": "a left join produces the row the caveat is about with one fewer moving part, and the client decoders cannot see which join produced a missing input \u2014 they receive an absent `row` either way, so the right and full cases exercise the same branch.",
-      "residual": "that is an argument from the decoder's shape, not a demonstration. A server that filled an unmatched input differently for a full outer join \u2014 an empty row rather than no row \u2014 would pass both tests and be wrong in the clients.",
-      "checked": "2026-09-27"
+      "verdict": "closed",
+      "by": "ledger/2026-09-28-a-getter-that-advances-answered-about-the-next-row.md: TestBothUnmatchedSidesOfAFullJoinComputeNothing in clients/go/slate/scalar_test.go runs a full outer join where both directions occur \u2014 an author with no books and a book with no author \u2014 and each unmatched side computes nothing. The residual's hypothesis, that a server might fill an unmatched input with an empty row, was printed row by row and is false; the withdrawal is in that entry.",
+      "reviewed": "2026-09-28"
     },
     {
       "entry": "2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md",
@@ -7186,6 +7185,28 @@
       "by": "each port's table is three lines beside the constant it asserts, so a mismatch is visible in review, and the number itself is the cross-port evidence.",
       "checked": "2026-09-28",
       "residual": "a port that wrote the right number against a different table would pass. Enforcing it means a shared fixture the four ports read, which is a file format none of them has."
+    },
+    {
+      "entry": "2026-09-28-a-getter-that-advances-answered-about-the-next-row.md",
+      "key": "The other two clients cannot have this defect, and that is t",
+      "verdict": "moment",
+      "by": "checked on 2026-09-28 rather than assumed: TypeScript's withComputed yields ComputedRow/ComputedJoinedRow carrying values and computed together, and Python's Row holds its own computed values. Neither exposes a cursor two getters can disagree about. A point-in-time reading of two client designs, which a later refactor could change.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-getter-that-advances-answered-about-the-next-row.md",
+      "key": "Nothing forbids a future getter from advancing again.",
+      "verdict": "deliberate",
+      "by": "that entry: a guard would grep the Go client for `at++` inside a method that is not Next, which has a false-positive problem \u2014 Next itself contains one, and so would any legitimate internal helper. The alternative is to make the cursor private behind an accessor that cannot be advanced by a getter, which is a larger refactor of three stream types for a rule two tests already state. Not taken; TestOnlyNextMovesTheCursor fails if any of the three regresses.",
+      "reviewed": "2026-09-28"
+    },
+    {
+      "entry": "2026-09-28-a-getter-that-advances-answered-about-the-next-row.md",
+      "key": "`GroupStream.Group` is fixed but has no idempotence test of ",
+      "verdict": "narrowed",
+      "by": "it is fixed the same way as the other two and the whole Go suite passes over it, including the grouped tests that count rows \u2014 a group stream advancing twice per Next returns half its groups and those counts would move.",
+      "checked": "2026-09-28",
+      "residual": "no test calls Group twice and compares. A group has no second accessor to disagree with, so the only available assertion is that shape, and it is not written."
     }
   ]
 }

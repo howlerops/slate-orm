@@ -1,0 +1,52 @@
+{
+  "at": "2026-09-28T19:22:44+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -count=1"
+  ],
+  "commit": "3ef180e",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the join cursor advances two rows per Next",
+      "old": "func (j *JoinStream) Next() bool {\n\tif j.primed {\n\t\tj.at++\n\t}",
+      "new": "func (j *JoinStream) Next() bool {\n\tif j.primed {\n\t\tj.at += 2\n\t}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestAnInnerJoinKeepsOnlyMatchedRows",
+        "TestALeftJoinKeepsTheUnmatchedLeftSide",
+        "TestAJoinLimitApplies",
+        "TestTheFourJoinTypesDiffer",
+        "TestAChainsComputedValueReadsEveryInput",
+        "TestPagingAJoinReproducesTheWholeJoin",
+        "TestAJoinsComputedValueReadsBothSides",
+        "TestBothKindsOfComputedValueComeBackOnAJoin"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the row cursor advances two rows per Next",
+      "old": "func (r *RowStream) Next() bool {\n\tif r.primed {\n\t\tr.at++\n\t}",
+      "new": "func (r *RowStream) Next() bool {\n\tif r.primed {\n\t\tr.at += 2\n\t}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestIndependentBatchAppliesEveryOperation",
+        "TestIndependentBatchCarriesOnPastAFailure",
+        "TestAtomicBatchReportsNoPerOperationOutcomes",
+        "TestBatchCarriesEveryKindOfWrite",
+        "TestQueryFiltersAndOrders",
+        "TestQueryLimitAndProjection",
+        "TestAClientSendsADisjunctionInAFilter",
+        "TestOrWithNoPartsIsFalseAndAdmitsNothing"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
