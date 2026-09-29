@@ -9526,9 +9526,10 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
       "key": "The two grouped findings are named, not fixed.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The scale hole \u2014 a client rendering a decimal from a scale nothing checks \u2014 and the response-head latency \u2014 a streamed read's rows in no measurement anywhere \u2014 are each one piece of work now rather than scattered sentences, and neither is started."
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "closed: the scale hole, which was fixed on 2026-09-18 by commit 35d9182 and found to have been fixed by ledger/2026-09-28-the-scale-hole-was-closed-ten-days-ago.md \u2014 ten days before this bullet grouped it as unstarted. Same miss as the sibling row in 2026-09-28-the-invisible-backlog-is-triaged.md: the correction reached the caveats sourced from the original entry and not the roll-ups quoting them.",
+      "residual": "the response-head latency. Every client's duration still stops at the response head, so a streamed read's rows are in no measurement anywhere; ledger/2026-09-29-bytes-do-not-need-a-network.md records the same half as still blocked on a harness with a network under it."
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
@@ -10407,9 +10408,10 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
       "key": "It does not fix any of the 118.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. They are visible and grouped where they repeat; the largest is the decimal scale a client declares and nothing checks, which three entries record independently."
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "closed: the one this caveat names as the largest. `crates/slate-server/src/fingerprint.rs` hashes a decimal's scale (line 177, 'A decimal's scale, and only a decimal's'), and has since commit 35d9182 on 2026-09-18 \u2014 eight days before this bullet called it unchecked and said it 'renders money a hundred times wrong in silence'. ledger/2026-09-28-the-scale-hole-was-closed-ten-days-ago.md found that and closed the five caveats sourced from the original entry, but not this summary quoting them.",
+      "residual": "the other 117. This entry triaged them and fixed none, and the passes since have moved verdicts rather than closed gaps."
     },
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
@@ -11892,6 +11894,27 @@
       "key": "Nothing stops this recurring.",
       "verdict": "open",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-correction-reached-the-caveats-and-not-the-summaries.md",
+      "key": "It does not find the next one.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. Whether any other entry restates a claim a later commit corrected is unexamined; the count that would decide whether a rule is worth building is how many caveats quote a claim sourced elsewhere, and nothing measures it."
+    },
+    {
+      "entry": "2026-09-29-the-correction-reached-the-caveats-and-not-the-summaries.md",
+      "key": "The new test case checks the tracker's form, not its truth.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry, and check_closed_caveats.py's docstring before it: a guard can check that a verdict is well formed and keyed to a caveat that exists; whether it is *true* is the reading, and these two were well formed and wrong for ten days. The reading is the mechanism, and the censuses are how it is done."
+    },
+    {
+      "entry": "2026-09-29-the-correction-reached-the-caveats-and-not-the-summaries.md",
+      "key": "One of the two mutations is weaker than it looks.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: the two residual mutations are one mutation applied twice, which is stated rather than dressed up as two, and the orphan case was added on noticing it. Three independent mutations of a two-row data change would be padding."
     }
   ]
 }

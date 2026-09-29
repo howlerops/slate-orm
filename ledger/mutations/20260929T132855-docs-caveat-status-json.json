@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-29T13:28:55+00:00",
+  "file": "docs/caveat-status.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "31c9282",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": []
+}

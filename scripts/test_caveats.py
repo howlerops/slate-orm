@@ -975,6 +975,26 @@ def main() -> int:
         0,
     )
 
+    # The real tracker, last, for the reason every guard's test here gives:
+    # the cases above are written trees, so every rule passes for as long as
+    # the fixtures stay correct, which is also what a rule aimed at nothing
+    # does. `report()` is the whole of what `check.sh` runs, so this is CI's
+    # own condition under a name a mutation run can score — and until it was
+    # here, `scripts/mutate.py` could not score a change to
+    # `docs/caveat-status.json` at all: no suite read the real file, so
+    # breaking a verdict left every suite green.
+    counts, problems, orphans = guard.report(guard.ROOT)
+    RESULTS.append(not problems and not orphans)
+    if problems or orphans:
+        print("FAIL  the real tracker: every verdict is well formed")
+        for one in (problems + orphans)[:10]:
+            print(f"        {one}")
+    else:
+        print(
+            "ok    the real tracker: every verdict is well formed  "
+            f"({sum(counts.values())} caveats)"
+        )
+
     print(f"\n{sum(RESULTS)} passed, {len(RESULTS) - sum(RESULTS)} failed")
     return 0 if all(RESULTS) else 1
 
