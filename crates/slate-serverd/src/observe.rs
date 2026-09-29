@@ -26,12 +26,20 @@
 //! # What a streamed response means for the duration
 //!
 //! The duration recorded is to the *response head*, not to the last row. A
-//! streaming read returns its head almost immediately and then streams for as
-//! long as the client keeps reading, so timing to the end would measure the
-//! client's appetite rather than the server's work — and a slow consumer would
-//! read as a slow server. `rows_per_message` and the client's own timing are
-//! where the rest of that lives. The log line says `head` so this is not
-//! mistaken for the whole call.
+//! streaming read then streams for as long as the client keeps reading, so
+//! timing to the end would measure the client's appetite rather than the
+//! server's work — and a slow consumer would read as a slow server.
+//! `rows_per_message` and the client's own timing are where the rest of that
+//! lives. The log line says `head` so this is not mistaken for the whole call.
+//!
+//! **The head is not "almost immediately", which this said for as long as it
+//! did.** `slate-server`'s `query` handler spawns the scan and then awaits a
+//! `started` oneshot that `scan.run` fires only once `view.execute` has handed
+//! back a cursor, so the head goes out after authorisation, conversion,
+//! routing, planning and opening the scan — and before any row. What this
+//! duration misses is per-row work alone, which makes it a far more useful
+//! number than the old sentence implied, and is worth knowing before anyone
+//! concludes it measures nothing.
 //!
 //! # The size of a response is not the duration of one, and is counted
 //!

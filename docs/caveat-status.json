@@ -8596,9 +8596,10 @@
     {
       "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
       "key": "Still timed to the response head.",
-      "verdict": "open",
-      "by": "unchanged. A streamed read's rows are in none of these numbers, including the quantiles and the exported histogram, for the reason the module doc gives.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md, which separates the two questions these three rows ran together. Timing to the last row is refused with a reason rather than undone: a slow consumer would be reported as a slow server, which is the confound crates/slate-serverd/src/observe.rs has documented since the layer was built. The other half of what these rows asked for -- that a streamed read's rows are in no number at all -- is answered: slate_response_bytes_total and slate_response_frames_total weigh the whole body, because a slow reader makes a response later and not larger.",
+      "checked": "2026-09-29",
+      "residual": "time to the *first row* is still unmeasured, and unlike time to the last row it is not confounded by the consumer -- backpressure cannot apply before the first frame goes out. What the head duration covers is now established by reading crates/slate-server/src/service.rs: the handler waits on a `started` oneshot that `scan.run` fires only after `view.execute` hands back a cursor, so the head includes authorisation, conversion, routing, planning and opening the scan, and excludes every row. So the head is not 'almost nothing' for a streamed read -- it is the whole of the setup -- and what it misses is per-row work alone."
     },
     {
       "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
@@ -8645,9 +8646,10 @@
     {
       "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
       "key": "Still the response *head*.",
-      "verdict": "open",
-      "by": "the same limitation as the summary line, now exported: a streamed read's rows are in no latency here.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md, which separates the two questions these three rows ran together. Timing to the last row is refused with a reason rather than undone: a slow consumer would be reported as a slow server, which is the confound crates/slate-serverd/src/observe.rs has documented since the layer was built. The other half of what these rows asked for -- that a streamed read's rows are in no number at all -- is answered: slate_response_bytes_total and slate_response_frames_total weigh the whole body, because a slow reader makes a response later and not larger.",
+      "checked": "2026-09-29",
+      "residual": "time to the *first row* is still unmeasured, and unlike time to the last row it is not confounded by the consumer -- backpressure cannot apply before the first frame goes out. What the head duration covers is now established by reading crates/slate-server/src/service.rs: the handler waits on a `started` oneshot that `scan.run` fires only after `view.execute` hands back a cursor, so the head includes authorisation, conversion, routing, planning and opening the scan, and excludes every row. So the head is not 'almost nothing' for a streamed read -- it is the whole of the setup -- and what it misses is per-row work alone."
     },
     {
       "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
@@ -8992,9 +8994,10 @@
     {
       "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
       "key": "The duration is still the head's.",
-      "verdict": "open",
-      "by": "a read that streamed for a minute and then died contributes its first-byte latency and nothing else. Same limitation as the quantiles and the exported histogram.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md, which separates the two questions these three rows ran together. Timing to the last row is refused with a reason rather than undone: a slow consumer would be reported as a slow server, which is the confound crates/slate-serverd/src/observe.rs has documented since the layer was built. The other half of what these rows asked for -- that a streamed read's rows are in no number at all -- is answered: slate_response_bytes_total and slate_response_frames_total weigh the whole body, because a slow reader makes a response later and not larger.",
+      "checked": "2026-09-29",
+      "residual": "time to the *first row* is still unmeasured, and unlike time to the last row it is not confounded by the consumer -- backpressure cannot apply before the first frame goes out. What the head duration covers is now established by reading crates/slate-server/src/service.rs: the handler waits on a `started` oneshot that `scan.run` fires only after `view.execute` hands back a cursor, so the head includes authorisation, conversion, routing, planning and opening the scan, and excludes every row. So the head is not 'almost nothing' for a streamed read -- it is the whole of the setup -- and what it misses is per-row work alone."
     },
     {
       "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
@@ -12434,6 +12437,27 @@
       "verdict": "narrowed",
       "by": "the weakness is measured rather than merely admitted: ledger/2026-09-29-the-deliberate-sample-carried-to-168.md puts the deliberate bucket's false rate at 2 in 168, so these fifteen inherit a known rate rather than an unknown one.",
       "residual": "that rate was measured by the same kind of reader on the same kind of same-day verdict, so it bounds these fifteen only as well as it bounds itself. Nothing independent has read any of them.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-rows-that-asked-two-questions-at-once.md",
+      "key": "It does not measure time to the first row.",
+      "verdict": "open",
+      "by": "the residual this entry writes onto three other rows, stated here as its own work. Reading crates/slate-server/src/service.rs established where the head falls -- after the cursor opens, before any row -- so what is unmeasured is narrower than it looked: the per-row start, not the whole setup. Unconfounded by the consumer, unlike time to the last row, and therefore worth measuring rather than refused.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-rows-that-asked-two-questions-at-once.md",
+      "key": "The sweep is one threshold on one metric.",
+      "verdict": "deliberate",
+      "by": "this entry: 0.80 on a character similarity over the tracker's own sixty-character key. A lower threshold buys the false-positive surface three of today's five pairs already are -- 'Nothing measures the cost' against four unrelated subjects -- and a different metric is a different guess. The pairs are confirmed by reading both entries, which is what the threshold exists to shortlist rather than to decide.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-rows-that-asked-two-questions-at-once.md",
+      "key": "Nothing re-runs it.",
+      "verdict": "open",
+      "by": "the sweep is fifteen lines in a scratch directory, run twice today and committed nowhere. The next duplicate pair arrives unnoticed. Same gap as 'Nothing stops the next duplicate' in ledger/2026-09-29-two-rows-for-one-gap.md, from the mechanical end rather than the judgement end -- that one argues no guard can decide two claims are one gap, and this one is only about running the shortlist.",
       "checked": "2026-09-29"
     }
   ]
