@@ -8843,9 +8843,10 @@
     {
       "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
       "key": "No client can express it.",
-      "verdict": "open",
-      "by": "`notIn` is a front-end operator; the wire carries Expr and the three SDKs build Expr::In with no negation helper. A client that wants it builds the Not itself, which is possible and undocumented.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-three-could-be-anothers-counted.md: wrong as written, and the bullet's own second sentence said so. All three clients have a negation helper -- slate.not_ in clients/python/src/slate/expr.py, slate.Not in clients/go/slate/query.go, not in clients/typescript/src/query.ts -- so not_(col.in_([...])) is the expression in every one of them.",
+      "residual": "no notIn convenience, nothing documents the composition, and -- found while checking -- no test in any of the three clients uses the negation helper at all, so three doors have nobody walking through them",
+      "checked": "2026-09-29"
     },
     {
       "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
@@ -12126,13 +12127,17 @@
     {
       "entry": "2026-09-29-the-path-in-a-command-was-the-one-nobody-checked.md",
       "key": "The site's link checker and this one still do not know about",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-three-could-be-anothers-counted.md: counted, and the count reversed the conclusion. The site's HTML holds 33 distinct href values, 21 of them relative, and none names a repository source file -- they are site pages and stylesheets. Three would match a tracked file by the suffix rule -- the docs index and two of its pages, which are links relative to the site and resolve under the site's own directory by coincidence rather than by meaning -- so widening the citation guard to read links would add three wrong-for-the-right-reason resolutions and close nothing. The two checkers being separate is correct.",
+      "residual": "a path genuinely written as a link rather than as code would still be read by neither, and nothing keeps the count at zero",
       "checked": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-proto-roster-named-one-copy-of-three.md",
       "key": "It compares two trees, and there could be a third.",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-three-could-be-anothers-counted.md: counted. git ls-files '*.proto' is six files in exactly two directories -- crates/slate-server/proto and clients/typescript/proto -- holding the same three paths each. There is no third tree.",
+      "residual": "nothing keeps it that way: a copy vendored into a fourth place would be as unguarded as google/rpc was, and the walk is over two directories named in the source",
       "checked": "2026-09-29"
     },
     {
@@ -12206,7 +12211,9 @@
     {
       "entry": "2026-09-29-one-allocator-instead-of-two.md",
       "key": "Nothing stops a third copy appearing.",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-three-could-be-anothers-counted.md: counted. grep for ip_local_port_range across the shell, Python, TypeScript and Go in the tree finds scripts/free_ports.py and nothing else, so there is one allocator and the two callers named in scripts/test_free_ports.py are all of them.",
+      "residual": "a new harness writing its own allocator is not in CALLERS and nothing adds it; the two run.sh are checked by name",
       "checked": "2026-09-29"
     },
     {
@@ -12254,6 +12261,25 @@
       "verdict": "deliberate",
       "by": "this entry: the alternative is a release that moves an existing tag, and a module version whose contents change is the one thing the Go proxy's immutability guarantee exists to prevent -- it caches by version and a moved tag is served as whatever it saw first. Refusing to move it is correct; that the refusal is quiet is the part worth knowing, and is why it is written down here.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-could-be-anothers-counted.md",
+      "key": "It counts four, and there are a hundred and twenty-two.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-could-be-anothers-counted.md",
+      "key": "A count is true on the day it is taken.",
+      "verdict": "deliberate",
+      "by": "this entry: that is what the checked date records, and it is why all four are narrowed rather than closed. Re-taking a count automatically means a guard per count, which is the right answer for the ones worth guarding (check_proto_copies.py walks its two trees) and overkill for the rest.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-could-be-anothers-counted.md",
+      "key": "The `NOT IN` work is named, not done.",
+      "verdict": "open",
+      "checked": "2026-09-29"
     }
   ]
 }
