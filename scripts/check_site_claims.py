@@ -31,7 +31,7 @@ it against the page can see exactly how much of the page is load-bearing.
 
 # Why `scripts/` rather than `site/check/`
 
-It reads `crates/`, `clients/` and `site/`, so it is not a site check that
+It reads `crates/`, `clients/`, `docs/` and `site/`, so it is not a site check that
 happens to look outward — it is a repository check whose *subject* is the
 site. The three files in `site/check/` all confine themselves to `site/`.
 

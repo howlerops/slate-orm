@@ -11698,8 +11698,10 @@
     {
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
       "key": "Eighteen guards still have no real-tree mutation.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md: seventeen of twenty-eight now, and the seven added found a fifth defect -- check_guard_scope checking only half its property",
+      "residual": "eleven remain"
     },
     {
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
@@ -11725,6 +11727,32 @@
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
       "key": "The cost-prose marker's granularity is unchanged.",
       "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "Eleven guards still have no real-tree mutation.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "The scope rule only sees `<root> / \"\u2026\"` paths.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "Nothing checks the two sentences beyond their tree lists.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "`check_toolchain_pins` and `check_handlers` were mutated at ",
+      "verdict": "narrowed",
+      "by": "both guards' fixture tests cover the other sites over a tree they build; what the single real-tree mutation establishes is that the guard is pointed at the real file at all, which was the whole finding for check_toolchain_pins",
+      "residual": "thirteen of check_handlers' fourteen call sites have never been broken in the real tree, so a guard that saw one and not the others would pass",
       "checked": "2026-09-29"
     }
   ]
