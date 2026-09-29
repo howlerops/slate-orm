@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-29T15:21:52+00:00",
+  "file": "examples/explorer/run.sh",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_run_teardown.py"
+  ],
+  "commit": "5dd399a",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the group TERM becomes a TERM to the recorded pid, so a grandchild outlives it",
+      "old": "    kill -TERM -- \"-$pid\" 2>/dev/null || kill -TERM \"$pid\" 2>/dev/null || true",
+      "new": "    kill -TERM \"$pid\" 2>/dev/null || true",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

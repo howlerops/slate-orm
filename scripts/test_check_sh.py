@@ -68,6 +68,12 @@ ELSEWHERE = {
         " false of anybody's machine mid-change"
     ),
     "ls -l dist": "listing an artefact another job built",
+    "python3 scripts/test_run_teardown.py": (
+        "starts the explorer's whole stack — a head node, a Go binary and two"
+        " npm trees — and leaves listeners on four ports if it fails. `check.sh`"
+        " promises to need no built binary and to be safe to run beside another"
+        " session's work, and this is neither"
+    ),
     # Suites. Each needs a built binary, a browser or a container, which is
     # what `check.sh` promises not to need. Listed one by one rather than by a
     # pattern, so that a *new* suite is a decision rather than a match.

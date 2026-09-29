@@ -7969,9 +7969,9 @@
     {
       "entry": "2026-09-14-the-demo-runner-left-processes-behind.md",
       "key": "Nothing tests the teardown. There is no case that starts the",
-      "verdict": "open",
-      "by": "still unwritten. There is no case that starts the stack, kills it and asserts nothing survives, so a future edit reintroduces this and only a CI cleanup line notices.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/test_run_teardown.py starts the stack in --headless, records every descendant while the tree is intact, sends SIGTERM to run.sh and asserts none survives. It passes (seven processes), it is the last step of ci.yml's demo job, and `set -m` to `set +m` in run.sh is caught by it. ledger/2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-14-the-demo-runner-left-processes-behind.md",
@@ -11318,25 +11318,30 @@
     {
       "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
       "key": "It closes nothing.",
-      "verdict": "moment"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "it closes the caveat it was written for now. scripts/test_run_teardown.py passes \u2014 seven processes under the runner, all reaped on SIGTERM \u2014 and is the last step of CI's demo job. ledger/2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md"
     },
     {
       "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
       "key": "No mutation test.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "three mutations against the real examples/explorer/run.sh, recorded under ledger/mutations/ with the 20260929T1521, T1522 and T1524 stamps. `set -m` to `set +m` is caught by the named check `the runner reaps everything it started, on SIGTERM`; the other two are findings the entry records. ledger/2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md"
     },
     {
       "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
       "key": "The `SIGTERM`-to-`run.sh` observation is unresolved and may ",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "resolved, and it was not a regression. A SIGTERM to run.sh reaps all seven processes; the survivors seen on the wedged container came from the test's own cleanup, which killpg'd the runner's group while `set -m` had put each service in its own. ledger/2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md"
     },
     {
       "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
       "key": "It is not in `check.sh` and not in `ci.yml`.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "it is the last step of ci.yml's demo job, which already pays for run.sh twice. Not in check.sh, deliberately and for the reason that script states about itself, and scripts/test_check_sh.py carries that reason in ELSEWHERE. ledger/2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md"
     },
     {
       "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
@@ -11980,6 +11985,41 @@
       "verdict": "open",
       "checked": "2026-09-29",
       "by": "nothing yet. CLAUDE.md prints the one-line re.findall that answers it, so a guard is cheap; deciding which of CLAUDE.md's numbers should be checked is the part that is not, and this entry fixed one sentence rather than building the rule."
+    },
+    {
+      "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
+      "key": "The two group kills in `run.sh` are not independently tested",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry, on a measured survivor (ledger/mutations/20260929T152152-examples-explorer-run-sh.json): cleanup sends a group TERM then a group KILL, so either alone reaps the tree and a single-point mutation cannot express the leak. That is redundancy working, not a missing test, and mutate.py takes one anchor per case while the two lines are forty apart."
+    },
+    {
+      "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
+      "key": "A mutation that breaks the teardown cannot verify its own re",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. The `set +m` run left listeners by construction, so mutate.py's restore check hit the port pre-flight and reported the tree unclean while `git diff` on run.sh was empty. Nothing distinguishes a dirty machine from a dirty tree."
+    },
+    {
+      "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
+      "key": "The port pre-flight names four addresses and `run.sh` binds ",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: --headless does not start the frontend, so this test cannot collide on 7440 and probing it would refuse to run for a reason that does not apply. The list is beside run.sh's own defaults where a reader compares them."
+    },
+    {
+      "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
+      "key": "`RUN_DIR` duplicates an expression from `run.sh`.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. The test derives $TMPDIR/slate-explorer-<head port> itself, so a change to that convention makes the log tails vanish silently. The fix is run.sh printing its run directory in --headless, which it does in the plain mode's banner and not there."
+    },
+    {
+      "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
+      "key": "It has never run in CI.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet, and this is the trap CLAUDE.md names: a check that never fires is a check nobody has debugged. It has been seen to pass and to fail here; CI's demo job is where it runs next, on a different kernel and a different Go."
     }
   ]
 }

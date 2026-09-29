@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-29T15:24:04+00:00",
+  "file": "examples/explorer/run.sh",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_run_teardown.py"
+  ],
+  "commit": "5dd399a",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "job control off, so no service gets its own process group and both group kills miss",
+      "old": "\nset -m\n",
+      "new": "\nset +m\n",
+      "verdict": "caught",
+      "caught_by": [
+        "the runner reaps everything it started, on SIGTERM"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": false
+}

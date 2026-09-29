@@ -675,6 +675,21 @@ jobs:
         working-directory: examples/explorer
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+      # Last in this job, and here rather than in `scripts/check.sh`, because
+      # it starts the whole stack: a head node, a Go binary and two npm trees.
+      # This job already pays for `run.sh` twice, so the third is the cheapest
+      # place in CI to assert that stopping it stops everything.
+      #
+      # `ledger/2026-09-14-the-demo-runner-left-processes-behind.md` is the
+      # leak: `go run` compiles then runs the binary as a child and `npm start`
+      # spawns node, so killing the recorded pid left grandchildren, and this
+      # runner's own cleanup line reported three orphans after this job.
+      #
+      # Last for a second reason: a failure leaves listeners on 7421 and
+      # 7431-7433, which would make any later step in this job fail to bind.
+      - run: python3 scripts/test_run_teardown.py
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
 
   # The batch benchmark, run rather than asserted.
   #

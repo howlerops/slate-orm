@@ -585,6 +585,27 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "help-lists-adapters": (
      "case_help_lists_every_adapter",
      "scripts/test_mutate.py",
+ ),
+
+ # The demo runner's teardown, tested at last, 2026-09-29. Four needles for
+ # four closures, because they are four different claims and one needle would
+ # keep saying "done" after three of them regressed — the coarseness argued
+ # for above is about *renames*, not about collapsing distinct properties.
+ "teardown-passes": (
+     "the runner reaps everything it started, on SIGTERM",
+     "scripts/test_run_teardown.py",
+ ),
+ "teardown-in-ci": (
+     "python3 scripts/test_run_teardown.py",
+     ".github/workflows/ci.yml",
+ ),
+ # `--headless` is what made it able to pass at all: the mode whose readiness
+ # line the test waits for. A revert to the plain mode takes this with it.
+ "teardown-headless": ('MODE = "--headless"', "scripts/test_run_teardown.py"),
+ # And the SIGTERM-before-killpg that stopped the test leaking what it tests.
+ "teardown-cleanup-terms-first": (
+     "started.send_signal(signal.SIGTERM)",
+     "scripts/test_run_teardown.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -2123,7 +2144,21 @@ WITNESSED: dict[tuple[str, str], str] = {
      "Nothing checks this workflow's steps the way `test_check_sh."):
         'every-workflow-roster',    ('2026-09-29-the-dialect-mutate-py-was-missing.md',
      'It is a runner, not a dialect, so `mutate.py --help` does no'):
-        'help-lists-adapters',
+        'help-lists-adapters',    ('2026-09-14-the-demo-runner-left-processes-behind.md',
+     'Nothing tests the teardown. There is no case that starts the'):
+        'teardown-passes',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'It closes nothing.'):
+        'teardown-headless',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'No mutation test.'):
+        'teardown-passes',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'The `SIGTERM`-to-`run.sh` observation is unresolved and may '):
+        'teardown-cleanup-terms-first',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'It is not in `check.sh` and not in `ci.yml`.'):
+        'teardown-in-ci',
 }
 
 
