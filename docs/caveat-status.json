@@ -8946,9 +8946,9 @@
     {
       "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
       "key": "`--check` proves the file matches the catalog, not that anyb",
-      "verdict": "open",
-      "by": "still proved by mutation rather than by a check. Closing it means asserting a refusal \u2014 a deliberately wrong declaration that must fail \u2014 and the conformance harness has no way to express 'this case should break'.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/check_generated_is_used.py reads every path `codegen.py --check` is given out of ci.yml and requires two things of each: an import-shaped mention inside the file's own package, and the call named in REACHES that puts its declarations on a request. An adapter that stopped calling `declaring` now fails the guards job. The first draft of rule 1 grepped the bare module stem and was itself vacuous -- 483 files match `\\bschema\\b` -- which its own test caught; see ledger/2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
@@ -11375,6 +11375,41 @@
       "verdict": "deliberate",
       "by": "this entry: the generated file's currency is a different job's to check, and duplicating it here would be a second implementation of the same rule",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "It does not prove the fingerprint reaches the server.",
+      "verdict": "open",
+      "by": "true and the strongest remaining half. Rule 2 checks that a named call appears in a named file; an adapter calling `Declaring` on an empty map, or building a second client that skips it, stays green. The run-time version belongs in examples/explorer/run.sh --conformance, which still has no way to express 'this case should break'.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "The Python entry's rule 2 is weaker than the other two.",
+      "verdict": "deliberate",
+      "by": "that client takes a `Table` per call, so there is no single attachment to look for and rule 2 restates rule 1 for that one file. Inventing a call to grep for would mean changing the client to suit the guard. The REACHES comment records it, and closing it properly is the run-time claim above.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "`examples/retention/purge.py` reaches its declaration dynami",
+      "verdict": "deliberate",
+      "by": "it imports the module its `--schema` argument names at run time, which no static rule can follow. The check reads seed.py's static import instead and the roster comment says so. Following it would mean executing purge.py in the guards job, which needs a server.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "The import shape is approximate.",
+      "verdict": "open",
+      "by": "true. Both arms are regexes over lines, and a re-export chain satisfies rule 1 for the right reason today while continuing to satisfy it after the middle link stops re-exporting. Nothing in the five real files is a re-export, so this is a hazard rather than a defect.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "Nothing checks the other four caveats in that entry.",
+      "verdict": "open",
+      "by": "true: `One catalog is generated from` and `Nothing generates the catalog itself` are untouched and still open in this file.",
+      "checked": "2026-09-29"
     }
   ]
 }

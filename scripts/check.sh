@@ -143,6 +143,8 @@ transport-door|.|python3 scripts/check_transport_door.py
 transport-door-guard|.|python3 scripts/test_check_transport_door.py
 wasm-runtime|.|python3 scripts/check_wasm_runtime.py
 wasm-runtime-guard|.|python3 scripts/test_check_wasm_runtime.py
+generated-is-used|.|python3 scripts/check_generated_is_used.py
+generated-is-used-guard|.|python3 scripts/test_check_generated_is_used.py
 go-client-fmt|clients/go|gofmt -l .
 go-client-vet|clients/go|go vet ./...
 go-adapter-fmt|examples/explorer/backends/go|gofmt -l .

@@ -419,6 +419,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- the generated declaration nobody imports, 2026-09-29 --------------------
+ "generated-is-used": (
+     "imported but {where} no longer matches",
+     "scripts/check_generated_is_used.py",
+ ),
+
  # --- the decimal renderers above scale four, 2026-09-29 ----------------------
  "decimal-at-max-scale": (
      "rendering_is_exact_at_the_schema_s_maximum_scale",
@@ -691,6 +697,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-the-kernel-on-wasm.md',
      'Nothing else in the workspace is checked for the same proble'):
         'wasm-runtime-guard',
+    ('2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md',
+     '`--check` proves the file matches the catalog, not that anyb'):
+        'generated-is-used',
     ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
      'Scale above 4 is untested.'): 'decimal-at-max-scale',
     # The TypeScript test rather than Go's type: a refusal Go makes

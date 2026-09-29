@@ -385,6 +385,12 @@ jobs:
       # the manifests; the exemptions outside it are a person's call.
       - run: python3 scripts/check_wasm_runtime.py
       - run: python3 scripts/test_check_wasm_runtime.py
+      # `codegen.py --check` proves a generated declaration matches the
+      # catalog, never that anybody imports it or puts it on a request. An
+      # adapter that stopped declaring would keep passing --check and send
+      # every request with no schema claim on it.
+      - run: python3 scripts/check_generated_is_used.py
+      - run: python3 scripts/test_check_generated_is_used.py
 
   quickstarts:
     name: the landing page's code
