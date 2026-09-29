@@ -448,16 +448,20 @@ func TestRelatedCarriesTheFreshnessFloor(t *testing.T) {
 		t.Errorf("the request carried no freshness floor: %v", related[0])
 	}
 
-	// And a session that does not want monotonic reads sends none, so the
-	// assertion above is about the watermark rather than about a field that
-	// is always populated.
+	// A session that does not want monotonic reads still reads its own writes,
+	// so it *also* carries a floor once it has written.
 	//
-	// **The loose session writes first, and that is the whole control.**
-	// Without it this passed for the wrong reason for a fortnight: a fresh
-	// session has no watermark, so the floor is absent whether or not
-	// `freshness()` consults `s.monotonic`, and dropping that half of the
-	// condition survived. Found on 2026-09-29 by mutating it while porting
-	// this test to the TypeScript client, which had copied the hole.
+	// This asserted the opposite until 2026-09-29, when comparing the three
+	// clients found that Python did it this way and Go and TypeScript did not:
+	// gating the floor on the flag dropped read-your-writes along with
+	// monotonic reads, and a caller who wrote and read back could miss their
+	// own write with no error anywhere. The flag is named for monotonic reads
+	// and now decides only that. See
+	// ledger/2026-09-29-read-your-writes-is-not-monotonic-reads.md.
+	//
+	// The write still comes first, and is still the point: without it the
+	// session has no watermark and the assertion would hold for a reason that
+	// has nothing to do with the flag. That hole was here for a fortnight.
 	related = nil
 	loose := client.SessionWithoutMonotonicReads()
 	if _, err := loose.Insert(ctx, "libraries",
@@ -472,8 +476,34 @@ func TestRelatedCarriesTheFreshnessFloor(t *testing.T) {
 	if len(related) != 1 {
 		t.Fatalf("want one Related request, got %d", len(related))
 	}
-	if hasField(t, related[0], "freshness") {
-		t.Errorf("a non-monotonic session should send no floor: %v", related[0])
+	if !hasField(t, related[0], "freshness") {
+		t.Errorf("a non-monotonic session that wrote still reads its own "+
+			"writes, so it carries a floor: %v", related[0])
+	}
+
+	// And the half that gives the flag its meaning: a loose session that has
+	// only *read* still sends no floor, because a read's `served_by` is not
+	// folded into its watermark. Two reads, not one — with a single read there
+	// is nothing for the first to have folded in, so the assertion would hold
+	// against a client that ignored the flag entirely.
+	//
+	// Written because a mutation found it missing: removing the `!s.monotonic`
+	// guard from `observeServedBy` survived the whole file.
+	related = nil
+	reader := client.SessionWithoutMonotonicReads()
+	for range 2 {
+		if _, err := reader.Related(ctx, "shelves",
+			slate.Relation{On: "shelves", Through: "shelf_library", Way: slate.Children},
+			[]slate.Value{slate.Uint(1)}); err != nil {
+			t.Fatalf("related: %v", err)
+		}
+	}
+	if len(related) != 2 {
+		t.Fatalf("want two Related requests, got %d", len(related))
+	}
+	if hasField(t, related[1], "freshness") {
+		t.Errorf("a read must not advance a non-monotonic session's "+
+			"watermark, so the second read carries no floor: %v", related[1])
 	}
 }
 

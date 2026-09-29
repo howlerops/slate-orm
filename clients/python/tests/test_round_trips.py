@@ -357,30 +357,24 @@ def test_a_read_after_a_write_carries_the_freshness_floor(server: Serving) -> No
     assert _queries_carrying_a_floor(server, monotonic=True, key=FIRST_KEY + 80) == [True]
 
 
-def test_a_non_monotonic_session_still_carries_it_here_and_not_in_the_other_two(
-    server: Serving,
-) -> None:
-    """**A measured three-client divergence, pinned rather than resolved.**
+def test_a_non_monotonic_session_still_reads_its_own_writes(server: Serving) -> None:
+    """The behaviour the other two clients adopted on 2026-09-29.
 
-    `monotonic_reads=False` in this client stops the watermark advancing from
-    *reads* — see `Session`'s own docstring — and leaves it advancing from this
-    session's own commits, so a read after a write still carries a floor and
-    read-your-writes survives. Go's `SessionWithoutMonotonicReads` and
-    TypeScript's `sessionWithoutMonotonicReads` drop the floor entirely: both
-    check the flag inside the helper that builds it, so a session that wrote
-    sends nothing and can miss its own write.
+    `monotonic_reads=False` stops the watermark advancing from *reads* — see
+    `Session`'s own docstring — and leaves it advancing from this session's own
+    commits, so a read after a write still carries a floor.
 
-    Measured on 2026-09-29, all three, with an interceptor. Each client is
-    self-consistent and each documents what it does; they simply disagree, and
-    nothing had compared them because the conformance runner does not reach a
-    per-session flag.
+    This client always did that. Go and TypeScript gated the floor on the flag
+    instead, so a session that wrote sent nothing and could miss its own write
+    with no error anywhere. Measured across all three with an interceptor,
+    written up in
+    `ledger/2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md`,
+    and resolved in favour of this client in
+    `ledger/2026-09-29-read-your-writes-is-not-monotonic-reads.md`: the flag is
+    named for monotonic reads and read-your-writes is a different guarantee.
 
-    Which side is right is a real decision and is not made here. The flag is
-    named for *monotonic reads*, and read-your-writes is a different guarantee
-    — which argues for this client. Go's own doc says the session "does not
-    carry its watermark", which argues for that one. Changing either is a
-    shipped client's contract, so it wants its own change with its own
-    reasoning; this pins today's answer so the change is visible when somebody
-    makes it.
+    So this test no longer pins a divergence. It pins the agreement, and the
+    assertion is unchanged — which is the point of having written it before the
+    decision rather than after.
     """
     assert _queries_carrying_a_floor(server, monotonic=False, key=FIRST_KEY + 81) == [True]

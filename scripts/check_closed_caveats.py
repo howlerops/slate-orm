@@ -447,12 +447,18 @@ WITNESS: dict[str, tuple[str | None, str]] = {
 
  # --- the freshness floor read off the wire, 2026-09-29 -----------------------
  "typescript-freshness-floor": (
-     "a monotonic session sends a freshness floor and a loose one does not",
+     "a session that has written sends a freshness floor, monotonic or not",
      "clients/typescript/test/related.test.ts",
  ),
  "python-freshness-floor": (
-     "test_a_non_monotonic_session_still_carries_it_here_and_not_in_the_other_two",
+     "test_a_non_monotonic_session_still_reads_its_own_writes",
      "clients/python/tests/test_round_trips.py",
+ ),
+ # The Go side, because Go is where the behaviour changed and where the
+ # two-read case that gives the flag its remaining meaning lives.
+ "read-your-writes-restored": (
+     "a read must not advance a non-monotonic session's",
+     "clients/go/slate/related_test.go",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -647,6 +653,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md',
+     'It does not resolve the divergence.'): 'read-your-writes-restored',
     # The witness is the divergence test rather than the plain one: the caveat
     # asked for an assertion in this client, and what the assertion found is
     # the thing worth keeping alive.

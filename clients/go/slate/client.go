@@ -161,11 +161,18 @@ func (c *Client) Session() *Session {
 	return &Session{client: c, monotonic: true}
 }
 
-// SessionWithoutMonotonicReads starts one that does not carry its watermark.
+// SessionWithoutMonotonicReads starts one whose *reads* do not advance its
+// watermark.
 //
 // For a caller that genuinely wants the cheapest read available and has
 // decided that going backwards is acceptable — a dashboard, a cache warmer.
 // Named at length so that choosing it is deliberate.
+//
+// It still reads its own writes. This used to say "does not carry its
+// watermark", and that is what it did: a session that wrote and read back
+// could miss its own write, with no error anywhere. Both of the named callers
+// are read-only, so nothing they do changes; what changed is the caller who
+// writes, for whom the old behaviour was a surprise rather than a saving.
 func (c *Client) SessionWithoutMonotonicReads() *Session {
 	return &Session{client: c, monotonic: false}
 }
@@ -196,17 +203,34 @@ func (s *Session) observeLocked(token *ReadToken) {
 }
 
 // freshness is the floor this session's reads carry.
+//
+// Gated on the watermark alone, and *not* on s.monotonic. The flag decides
+// whether a read advances the watermark -- see observeServedBy -- and a write
+// advances it either way, so a session that has written carries a floor even
+// with monotonic reads off. That is read-your-writes, which is a different
+// guarantee from monotonic reads and is not the one the flag names.
+//
+// It used to be gated here, which meant SessionWithoutMonotonicReads silently
+// dropped read-your-writes too: write, read back, miss your own write, no
+// error anywhere. The Python client never did that, and the three-way
+// comparison in
+// ledger/2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md
+// is what found the disagreement.
 func (s *Session) freshness() *pb.Freshness {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.monotonic || s.watermark == nil {
+	if s.watermark == nil {
 		return nil
 	}
 	return &pb.Freshness{Level: &pb.Freshness_AtLeast{AtLeast: uint64(*s.watermark)}}
 }
 
 func (s *Session) observeServedBy(sb *pb.ServedBy) {
-	if sb == nil {
+	// The one place the flag belongs: folding a *read's* view into the
+	// watermark is what stops a later read going backwards, and is exactly
+	// what a caller turning monotonic reads off is asking not to pay for.
+	// A write's sequence is folded in elsewhere and is never gated.
+	if sb == nil || !s.monotonic {
 		return
 	}
 	token := ReadToken(sb.Sequence)

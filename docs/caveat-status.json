@@ -11284,8 +11284,9 @@
     {
       "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
       "key": "It does not resolve the divergence.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-read-your-writes-is-not-monotonic-reads.md: Go and TypeScript adopted Python's semantics \u2014 the flag gates only whether a read advances the watermark, so a session that wrote reads its own writes in all three",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
@@ -11326,6 +11327,32 @@
     {
       "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
       "key": "It is not in `check.sh` and not in `ci.yml`.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "No conformance case compares the three on this.",
+      "verdict": "deliberate",
+      "by": "this entry and the one before it: the runner reaches endpoints, not per-session flags, and an endpoint existing only to expose one is a worse home than the three suites that each have an interceptor",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "It does not touch `Freshness.any()` or an explicitly passed ",
+      "verdict": "deliberate",
+      "by": "this entry: only the implied floor moved; a named freshness level and a transaction's reads are unchanged by construction",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "Nothing measures what the restored floor costs.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "The `monotonic` field is now consulted in exactly one place ",
       "verdict": "open",
       "checked": "2026-09-29"
     }
