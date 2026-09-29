@@ -888,13 +888,29 @@ class Adapter {
         throw new Error(`no such grouping: ${body.groupBy}`);
     }
 
-    const column = body.sort === "key" ? groupKey(0) : agg(0);
+    // `total` sorts by the decimal sum, which is `agg(1)`.
+    //
+    // It is what makes the sum load-bearing rather than a field beside the
+    // answer. Three clients agreeing is blind to all three dropping the second
+    // aggregate — the groups would still carry a count and still match — but a
+    // sort naming `agg(1)` when there is no second aggregate is refused by the
+    // server, and the runner reports a case that is supposed to answer.
+    const column =
+      body.sort === "key" ? groupKey(0) : body.sort === "total" ? agg(1) : agg(0);
     const direction = body.direction === "desc" ? ("desc" as const) : ("asc" as const);
     return {
       join: { ...b.query(), compute },
       grouping: {
         groupBy: [key],
-        aggregates: [count()],
+        // `SUM` over a decimal, beside the count and on every grouping.
+        //
+        // It is the one aggregate that returns money, and until it was here
+        // the corpus compared no aggregate returning anything but a u64. A sum
+        // over a decimal is *exact* — the kernel adds units of the column's
+        // smallest unit and never a float — which is the claim worth comparing
+        // across three clients, and the one a client that reached for a float
+        // somewhere would break by a cent rather than visibly.
+        aggregates: [count(), sumOf(at(books, 7))],
         ...(body.having ? { having: groupGe(agg(0), uint(body.having.minCount)) } : {}),
         // A tie-break on the key, so equal counts do not come back in whatever
         // order the hash produced — which would differ between adapters.
@@ -915,6 +931,7 @@ class Adapter {
       groups: groups.map((group) => ({
         key: encodeRow(group.key),
         ...(group.values[0] ? { count: encode(group.values[0]) } : {}),
+        ...(group.values[1] ? { total: encode(group.values[1]) } : {}),
       })),
     };
   }

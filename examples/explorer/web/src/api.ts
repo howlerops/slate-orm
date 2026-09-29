@@ -137,6 +137,15 @@ export interface JoinedRow {
 export interface GroupRow {
   key: Tagged[];
   count?: Tagged;
+  /**
+   * `SUM(books.price)` for the group, as a decimal.
+   *
+   * Beside the count rather than instead of it: the chart draws the count, and
+   * the sum is here because it is the one aggregate in this contract that
+   * returns money — which is what makes it worth comparing across three
+   * clients, and which no chart of counts would show.
+   */
+  total?: Tagged;
 }
 
 /** What a predicate write reports. */

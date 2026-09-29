@@ -333,6 +333,25 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("a computed decade, ordered by count", "/api/aggregate",
      {"groupBy": "decade", "sort": "count", "direction": "desc"}, "app"),
 
+    # Sorted by the decimal SUM rather than by the count, which is the one
+    # thing that makes the sum load-bearing.
+    #
+    # Every aggregate case above now carries a `total`, and three clients
+    # agreeing about it is blind to all three dropping the second aggregate:
+    # the groups would still carry a count and still match. A sort naming
+    # `Agg(1)` where there is no second aggregate is refused by the server, so
+    # this case answers only while the sum is really being asked for.
+    #
+    # `author` because the two orders genuinely differ on this data — Le Guin
+    # and Lem both have three books and Le Guin's are worth more, so sorting
+    # by money moves her above him and Banks above them both. The pair below
+    # is what checks that.
+    ("authors by what their books are worth", "/api/aggregate",
+     {"groupBy": "author", "sort": "total", "direction": "desc"}, "app"),
+
+    ("authors by how many books they have", "/api/aggregate",
+     {"groupBy": "author", "sort": "count", "direction": "desc"}, "app"),
+
     ("a computed decade with a HAVING", "/api/aggregate",
      {"groupBy": "decade", "having": {"minCount": 2}, "sort": "key",
       "direction": "asc"}, "app"),
@@ -948,6 +967,15 @@ MUST_DIFFER: list[tuple[str, str, str]] = [
     ("three keyset pages cost three requests",
      "a relation for three parents costs one request", "calls"),
     ("four singles cost four requests", "three keyset pages cost three requests", "calls"),
+
+    # The decimal aggregate, which has the weakness in a form none of the
+    # others do: `total` is a *field inside* the answer rather than the answer,
+    # so three clients that all dropped the second aggregate would agree on
+    # groups with no `total` and every case above would pass. Sorting by it is
+    # what makes it load-bearing — and the two orders genuinely differ, because
+    # Le Guin and Lem have three books each and hers are worth more.
+    ("authors by what their books are worth",
+     "authors by how many books they have", "groups"),
 ]
 
 #: What `MUST_DIFFER` is for, and what it is *not* needed for.

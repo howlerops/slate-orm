@@ -381,6 +381,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "must-differ-names-the-field": (
      "def must_differ_findings",
      "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- a decimal aggregate in the corpus, 2026-09-29 ---------------------------
+ "decimal-aggregate-case": (
+     "authors by what their books are worth",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "decimal-aggregate-sum": (
+     "slate.SumOf(slate.At(books, 7))",
+     "examples/explorer/backends/go/handlers.go",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -575,6 +585,14 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # Two entries, four days apart, saying the same thing: the one aggregate
+    # that returns money is compared by no client case. One names the case
+    # that sorts by it, one the adapter that asks for it — because a case
+    # comparing a field nobody computes compares three absences.
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     '`price` is not in any aggregate case.'): 'decimal-aggregate-case',
+    ('2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md',
+     'No `sum(price)` anywhere in the corpus.'): 'decimal-aggregate-sum',
     # A roster for the plan text itself, which the pair check cannot see: it
     # compares two plans to each other, so a server renaming both keeps every
     # pair differing.

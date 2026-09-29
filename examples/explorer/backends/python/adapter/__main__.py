@@ -715,10 +715,38 @@ class Adapter:
         grouped = GroupedJoinQuery(join)
         grouped.group_by(key)
         grouped.aggregate(Agg.count())
+        # `SUM` over a decimal, beside the count and on every grouping.
+        #
+        # It is the one aggregate that returns money, and until it was here
+        # the corpus compared no aggregate that returned anything but a `u64`.
+        # A sum over a decimal is *exact* — the kernel adds units of the
+        # column's smallest unit and never a float — which is the claim worth
+        # comparing across three clients, and the one a client that reached
+        # for a float somewhere would break by a cent rather than visibly.
+        #
+        # On every grouping rather than behind a flag: the groups differ per
+        # grouping and so do the sums, so twelve cases compare it instead of
+        # one, and the aggregate list is the same for `/api/explain-aggregate`
+        # — which is where `decodes` now has to include `price`.
+        grouped.aggregate(Agg.sum(books.c.price))
         if body.get("having"):
             grouped.having(grouped.agg(0).ge(u64(int(body["having"]["minCount"]))))
 
-        column = grouped.key(0) if body.get("sort") == "key" else grouped.agg(0)
+        # `total` sorts by the decimal sum, which is `Agg(1)`.
+        #
+        # It is what makes the sum load-bearing rather than a field beside the
+        # answer. Three clients agreeing is blind to all three dropping the
+        # second aggregate — the groups would still carry a count and still
+        # match — but a sort naming `Agg(1)` when there is no second aggregate
+        # is refused by the server, and the runner reports a case that is
+        # supposed to answer and did not.
+        sort = body.get("sort")
+        if sort == "key":
+            column = grouped.key(0)
+        elif sort == "total":
+            column = grouped.agg(1)
+        else:
+            column = grouped.agg(0)
         direction = desc if body.get("direction") == "desc" else asc
         # A tie-break on the key, so equal counts do not come back in whatever
         # order the hash produced — which would differ between adapters.
@@ -735,6 +763,8 @@ class Adapter:
             values = list(group.aggregates)
             if values:
                 entry["count"] = encode(values[0])
+            if len(values) > 1:
+                entry["total"] = encode(values[1])
             groups.append(entry)
         return {"groups": groups}
 

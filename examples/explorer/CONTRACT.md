@@ -212,7 +212,7 @@ could never catch it, because all three would be equally wrong.
 
 ```json
 {"groupBy": "<name>", "having": null | {"minCount": 2},
- "sort": "count"|"key", "direction": "asc"|"desc", "limit": 20}
+ "sort": "count"|"key"|"total", "direction": "asc"|"desc", "limit": 20}
 ```
 
 A grouped join, which is what the chart draws.
@@ -256,7 +256,21 @@ on *negative* epoch seconds; some are in daylight saving and some are not, so
 
 An unknown name is refused, which is a case of its own below.
 
-→ `{"groups": [{"key": [tagged...], "count": {"u64":"3"}}, ...]}`
+→ `{"groups": [{"key": [tagged...], "count": {"u64":"3"},
+    "total": {"decimal":"4250"}}, ...]}`
+
+`total` is `SUM(books.price)` for the group, and it is on every grouping rather
+than behind a flag. It is the only aggregate in this contract that returns
+anything but a `u64`, and a sum over a decimal is **exact** — the kernel adds
+counts of the column's smallest unit and never a float — so a client that
+reached for a float anywhere on that path is wrong by a cent rather than
+visibly. Twelve groupings compare it, and it is in the aggregate list
+`/api/explain-aggregate` plans too, which is why `decodes` there includes the
+price column.
+
+The sort and the `having` still read the **count**: `Agg(0)` in all three
+adapters. A sum in either would be a different case rather than the same one
+with a field added.
 
 ### `POST /api/nearest`
 

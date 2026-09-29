@@ -10042,9 +10042,9 @@
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
       "key": "`price` is not in any aggregate case.",
-      "verdict": "open",
-      "by": "SUM over a decimal is exact and that is the claim worth comparing across three clients; it is the obvious next case and is not there.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: every /api/aggregate case now carries `total`, a SUM over books.price, and two cases sort by it \u2014 which is what makes it load-bearing, because a sort naming Agg(1) where there is no second aggregate is refused by the server. Measured on the demo's data: Le Guin 4144, Banks 3249, Lem 3025, Butler 2625, exact counts of cents.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
@@ -10062,9 +10062,9 @@
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
       "key": "No `sum(price)` anywhere in the corpus.",
-      "verdict": "open",
-      "by": "/api/aggregate returns counts only, so the one aggregate that returns a decimal is compared by no client case. The SQL front end's HAVING sum(price) covers it in the browser; the three SDKs do not.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: every /api/aggregate case now carries `total`, a SUM over books.price, and two cases sort by it \u2014 which is what makes it load-bearing, because a sort naming Agg(1) where there is no second aggregate is refused by the server. Measured on the demo's data: Le Guin 4144, Banks 3249, Lem 3025, Butler 2625, exact counts of cents.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
@@ -10965,6 +10965,41 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-29",
       "by": "CONTRACT.md: row-level security changes which rows a read returns and not how many requests fetching them takes, so honouring the header would offer a knob that cannot move the answer. Not offered, rather than offered and meaningless."
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "A top-level field is not a path.",
+      "verdict": "deliberate",
+      "by": "this entry: every pair in the file today is satisfied by a top-level key, so a path syntax would be an expression language written for no current caller. Narrower than 'not byte-identical' and wider than each pair's comment, which is the trade recorded rather than smoothed over.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "The roster is a snapshot of this planner on this fixture.",
+      "verdict": "deliberate",
+      "by": "this entry: eleven books and one text index, so `Point Get` and `Table Scan` are what the demo's data produces. The failure names both strings so the diff is readable; deciding whether the planner or the fixture moved is the reading, and no roster can do that.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "Nothing rosters the rest of an `EXPLAIN`.",
+      "verdict": "open",
+      "by": "nothing yet. `indexOnly`, `sorts`, `residual` and `display` are compared across the three adapters and asserted against nothing, exactly as `access` was. The same roster would hold them; this stopped at the field the caveat named.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "The other field in that entry's pair of caveats is untouched",
+      "verdict": "open",
+      "by": "nothing yet. Inherited from 2026-09-19-which-guard-covers-which-field.md: the access hints, `build_limit` and the freshness token are unprobed, and each answer costs a full run.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "The harness change is about reporting, not about correctness",
+      "verdict": "deliberate",
+      "by": "this entry: a raised group becomes one failing check naming the exception, and the traceback is gone. Running the group directly is the way back to it, and keeping the traceback would mean not catching \u2014 which is the thing that made two mutations unscoreable.",
+      "reviewed": "2026-09-29"
     }
   ]
 }
