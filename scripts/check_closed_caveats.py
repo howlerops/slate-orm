@@ -459,6 +459,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "read-your-writes-restored": (
      "a read must not advance a non-monotonic session's",
      "clients/go/slate/related_test.go",
+ ),
+ "ui-tab-order": (
+     "the UI's tabs are in the catalog's order",
+     "examples/explorer/web/test/api.test.ts",
+ ),
+ # The derivation itself, not a test: the caveat was that the list was
+ # hand-maintained, and what closes it is that it is not.
+ "ui-tables-derived": (
+     "export const TABLES: Record<string, string[]> = shown(CATALOG_TABLES);",
+     "examples/explorer/web/src/api.ts",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -653,6 +663,11 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-19-the-fifth-table-list.md',
+     "Nothing checks that the *order* of tables matches, only the "): 'ui-tab-order',
+    ('2026-09-19-the-fifth-table-list.md',
+     'The constant is still hand-maintained, and the next table to'):
+        'ui-tables-derived',
     ('2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md',
      'It does not resolve the divergence.'): 'read-your-writes-restored',
     # The witness is the divergence test rather than the plain one: the caveat

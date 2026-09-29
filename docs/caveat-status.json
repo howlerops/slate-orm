@@ -9333,16 +9333,16 @@
     {
       "entry": "2026-09-19-the-fifth-table-list.md",
       "key": "The constant is still hand-maintained, and the next table to",
-      "verdict": "deliberate",
-      "by": "and the test says so when it breaks, which is the whole argument for leaving it: a list that fails loudly on the next table is a list somebody updates, where a derived one would silently absorb a table nobody meant to add.",
-      "reviewed": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/api.ts: TABLES is shown(CATALOG_TABLES), derived from the generated catalog rather than hand-written. Closed by the codegen work and confirmed in ledger/2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-fifth-table-list.md",
       "key": "Nothing checks that the *order* of tables matches, only the ",
-      "verdict": "open",
-      "by": "`deepEqual` over an object compares neither order, so the test's name slightly overstates what it holds \u2014 which the entry says and nothing has fixed.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-the-fifth-table-list-is-derived-now.md: the tab order is pinned against the catalog's, and the column-order half was already pinned \u2014 measured, deepEqual compares arrays in order and object keys as a set, so 'compares neither' was half a sentence too strong",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
@@ -11355,6 +11355,26 @@
       "key": "The `monotonic` field is now consulted in exactly one place ",
       "verdict": "open",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "key": "It does not reduce the count.",
+      "verdict": "deliberate",
+      "by": "this entry: five places still name the tables and none is hand-maintained now; the 2026-09-19 entry's argument that the count is the problem is untouched and is its own caveat",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "key": "Nothing checks the order a visitor actually sees.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "key": "The `--check` that keeps `catalog.ts` honest is CI's, not th",
+      "verdict": "deliberate",
+      "by": "this entry: the generated file's currency is a different job's to check, and duplicating it here would be a second implementation of the same rule",
+      "reviewed": "2026-09-29"
     }
   ]
 }

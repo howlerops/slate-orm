@@ -193,6 +193,25 @@ test("the UI shows every table the catalog has, minus the ones it names", () => 
   assert.ok(Object.keys(TABLES).length > 0, "a UI showing no tables would pass everything above");
 });
 
+test("the UI's tabs are in the catalog's order, not some order of their own", () => {
+  // `deepEqual` above does not check this, and measuring is how that was
+  // settled rather than read: `assert.deepEqual({a:1,b:2},{b:2,a:1})` does not
+  // throw, while `{a:[1,2]}` against `{a:[2,1]}` does. So the column order
+  // inside each table *is* pinned up there and the order of the tables is not
+  // — which `ledger/2026-09-19-the-fifth-table-list.md` half-noticed, saying
+  // `deepEqual` compared neither.
+  //
+  // It holds today by construction, because `shown` is
+  // `Object.fromEntries(Object.entries(…).filter(…))` and that preserves
+  // insertion order. This is the case that says so out loud: the tab order a
+  // visitor sees is the catalog's declaration order, and a refactor that
+  // sorted the keys or built the object some other way would change what the
+  // demo looks like with nothing to object.
+  const catalog = Object.keys(CATALOG_TABLES).filter((name) => !(name in NOT_IN_THE_UI));
+  assert.deepEqual(Object.keys(TABLES), catalog);
+  assert.ok(catalog.length > 1, "one table cannot be out of order");
+});
+
 test("every view the UI offers reads a table, with that table's columns", () => {
   // Not a column list of its own, which is the point: `docs/views.md` refuses
   // a projection in a view, so a view's ordinals are its base table's and the
