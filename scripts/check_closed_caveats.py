@@ -405,6 +405,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "demo-money-measure": (
      "the chart can be drawn in money instead of rows",
      "examples/explorer/web/e2e/explorer.mjs",
+ ),
+
+ # --- the limit measured rather than read, 2026-09-29 -------------------------
+ "open-streams-unbounded": (
+     "open_streams_are_not_bounded_by_the_concurrency_limit",
+     "crates/slate-serverd/tests/ceilings.rs",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -599,6 +605,12 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # One test closes two readings: that the permit is released before a row
+    # is read, and that open streams are therefore bounded by nothing.
+    ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',
+     'It bounds admission, not open streams.'): 'open-streams-unbounded',
+    ('2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md',
+     'The streaming observation is read, not measured.'): 'open-streams-unbounded',
     # The e2e check rather than the panel: a control that renders and sends
     # nothing is still a control, and the check is what says it reaches the
     # database. Both were mutation-tested through it.

@@ -10420,9 +10420,9 @@
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
       "key": "The streaming observation is read, not measured.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "that tower's permit is released when the response future resolves is read off its shape and tonic's use of it, not instrumented. It is consistent with the timeout result \u2014 both follow from a streaming handler returning before its rows do \u2014 and consistency is not a measurement."
+      "verdict": "closed",
+      "by": "crates/slate-serverd/tests/ceilings.rs: open_streams_are_not_bounded_by_the_concurrency_limit is the instrument. That tower's permit is released when the response future resolves was read off its shape; ten streams held open under a limit of one is that shape observed, and the server's counter says all ten were admitted.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
@@ -10829,16 +10829,17 @@
     {
       "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
       "key": "Nothing has seen the concurrency limit bind.",
-      "verdict": "open",
+      "verdict": "narrowed",
       "checked": "2026-09-29",
-      "by": "nothing yet. A tower permit is released when the response future resolves, and every read RPC is server-streaming, so a client cannot hold one long enough to watch a refusal. Making the limit node-wide fixed its scope and not this."
+      "by": "narrowed from 'nothing has seen it bind' to 'nothing has seen it bind on a unary call'. The streaming half is settled: crates/slate-serverd/tests/ceilings.rs shows ten streams admitted under a limit of one, so it provably does not bind there.",
+      "residual": "a unary handler held long enough to keep a permit. Every read RPC is server-streaming and releases its permit before a row is read, which is measured now; a write is unary and nothing here makes one slow without a test-only knob."
     },
     {
       "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
       "key": "It bounds admission, not open streams.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. A caller who opens ten thousand slow streams is bounded by nothing here; a cap on concurrent response streams is a different mechanism and does not exist."
+      "verdict": "closed",
+      "by": "crates/slate-serverd/tests/ceilings.rs: open_streams_are_not_bounded_by_the_concurrency_limit \u2014 ten Query streams opened and none drained until all ten exist, against max_concurrent_requests = 1, and the node's own /metrics counts ten admitted. The claim is measured now rather than argued, as a count and not a duration; it is still the same claim, which is that the limit does not bound this.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
@@ -11104,6 +11105,41 @@
       "key": "Nothing shows both measures at once.",
       "verdict": "deliberate",
       "by": "this entry: a second series answers 'which author is expensive per book', which is a chart change that has to argue for itself rather than a control with an endpoint already behind it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "It still has not seen the limit bind.",
+      "verdict": "narrowed",
+      "by": "this entry closed the streaming half \u2014 ten streams open under a limit of one, measured at the node's own counter; the residual is a unary call held long enough to keep its permit, which needs a slow handler and so needs the test-only knob this entry rejected",
+      "residual": "no unary RPC has been observed holding a permit",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "Ten is not ten thousand.",
+      "verdict": "deliberate",
+      "by": "this entry: ten establishes that the setting does not bound the count at all, which is the fact a deployment needs; ten thousand would measure the container, not the node",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "Nothing bounds concurrent streams instead.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "The metrics port is now part of this test's configuration.",
+      "verdict": "deliberate",
+      "by": "this entry: the count needs a witness, and the node's own counter is the one thing the client cannot get wrong about on its own",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "`observing.rs`'s fix is latent-only.",
+      "verdict": "deliberate",
+      "by": "this entry: the mutation that demonstrates the anchoring lives where the count is ten; duplicating it where the counts are 2 and 1 would demonstrate nothing a prefix match could not satisfy",
       "reviewed": "2026-09-29"
     }
   ]
