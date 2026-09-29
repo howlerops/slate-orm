@@ -1,0 +1,73 @@
+{
+  "at": "2026-09-29T22:57:45+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "42c1a8a",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the widened half is keyed on the bare function name",
+      "old": "                key = f\"{path.relative_to(root).as_posix()}::{owners[at]}\"",
+      "new": "                key = owners[at]",
+      "verdict": "caught",
+      "caught_by": [
+        "a handler that authorises before fingerprinting passes",
+        "a fingerprint whose table arrives already authorised passes",
+        "a tree with no authenticators needs no roster",
+        "a handler that authorises its inputs first passes",
+        "a function taking a catalog but no request is not a converter",
+        "a converter holding a context can check for itself",
+        "one converter delegating to another is not a handler",
+        "a handler that authenticates passes, even with no table to authorise"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the widened half skips crates SOURCES does not cover",
+      "old": "        if any(where == one or one in where.parents or where in one.parents for one in covered):\n            continue\n        for path in sorted(where.rglob(\"*.rs\")):\n            lines = path.read_text(encoding=\"utf-8\", errors=\"replace\").splitlines()",
+      "new": "        if not any(where == one or one in where.parents or where in one.parents for one in covered):\n            continue\n        for path in sorted(where.rglob(\"*.rs\")):\n            lines = path.read_text(encoding=\"utf-8\", errors=\"replace\").splitlines()",
+      "verdict": "caught",
+      "caught_by": [
+        "a handler that authorises before fingerprinting passes",
+        "a fingerprint whose table arrives already authorised passes",
+        "a tree with no authenticators needs no roster",
+        "a handler that authorises its inputs first passes",
+        "a function taking a catalog but no request is not a converter",
+        "a converter holding a context can check for itself",
+        "one converter delegating to another is not a handler",
+        "a handler that authenticates passes, even with no table to authorise"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the widened half's never-fires branch is gone",
+      "old": "    if outside == 0:",
+      "new": "    if outside < 0:",
+      "verdict": "caught",
+      "caught_by": [
+        "no name lookup outside SOURCES at all fails, not passes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the widened roster is not checked for stale keys",
+      "old": "        if key not in found_outside:",
+      "new": "        if key not in found_outside and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a roster key whose lookup is gone is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

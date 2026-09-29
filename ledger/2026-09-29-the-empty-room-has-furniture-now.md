@@ -139,12 +139,13 @@ mutation above holds it there.
 
 ## What this does not do
 
-**`tables()` is the hole, and rostering it does not close it.** Any crate that
-is neither `slate-server` nor `slate-serverd` can call `catalog.tables()` and
-walk the slice comparing `name()`, and nothing anywhere fails. Rule 8 catches
-that line in two crates; rule 10 catches a method on `Catalog`; the gap
-between them is every other crate in the workspace. The roster entry for
-`tables` says so, which is not the same as fixing it.
+~~**`tables()` is the hole, and rostering it does not close it.** Any crate
+that is neither `slate-server` nor `slate-serverd` can call `catalog.tables()`
+and walk the slice comparing `name()`, and nothing anywhere fails.~~
+**Narrowed the same day.** Rule 8 now reads every workspace crate's `src/`,
+so that line fails wherever it is written. What is left is a lookup this
+pattern cannot see — a map keyed by name, a comparison spelled some other
+way. See `ledger/2026-09-29-the-hole-rule-ten-could-only-write-down.md`.
 
 ~~**It reads one file by path.** A `Catalog` accessor added in another module
 of `slate-schema` — an `impl Catalog` in `lib.rs`, a trait implementation, an

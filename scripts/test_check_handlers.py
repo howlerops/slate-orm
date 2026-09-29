@@ -658,11 +658,34 @@ impl Catalog {
 """
 
 
+#: The other `name()` comparison rule 8's widened half must find: a lookup
+#: that is not a table, in the crate that holds the anchor.
+#:
+#: Written into every fixture rather than into the cases that need it,
+#: because `FINDS_BY_NAME_OUTSIDE` is checked in both directions — an entry
+#: whose subject is absent is reported, so a fixture missing this file fails
+#: every case for a reason none of them is about.
+TABLE_RS = """\
+impl TableBuilder {
+    pub fn build(self) -> Result<TableDef> {
+        if self.checks.iter().any(|c| c.name() == check.name()) {
+            return Err(SchemaError::DuplicateCheck);
+        }
+        Ok(TableDef {})
+    }
+}
+"""
+
+
 def workspace(
     root: pathlib.Path, catalog: str | dict[str, str] | None = CATALOG
 ) -> None:
+    # `crates/slate-schema` is a member because rule 8's widened half walks
+    # the manifest, exactly as rule 9 does, and skips what `SOURCES` already
+    # covers. A fixture that listed only `crates/quiet` would leave that half
+    # reading nothing while the real repository read three files.
     (root / "Cargo.toml").write_text(
-        '[workspace]\nmembers = ["crates/quiet"]\n'
+        '[workspace]\nmembers = ["crates/quiet", "crates/slate-schema"]\n'
     )
     src = root / "crates" / "quiet" / "src"
     src.mkdir(parents=True)
@@ -682,6 +705,10 @@ def workspace(
         files = {"catalog.rs": catalog} if isinstance(catalog, str) else catalog
         for name, text in files.items():
             (schema / name).write_text(text)
+        # Unless a case wrote its own, which is how the both-directions
+        # case takes the lookup away without taking the file away.
+        if "table.rs" not in files:
+            (schema / "table.rs").write_text(TABLE_RS)
 
 
 def run(
@@ -702,7 +729,9 @@ def run(
         root = pathlib.Path(directory)
         workspace(root, catalog)
         if crates:
-            listed = ['"crates/quiet"'] + [f'"crates/{name}"' for name in crates]
+            listed = ['"crates/quiet"', '"crates/slate-schema"'] + [
+                f'"crates/{name}"' for name in crates
+            ]
             (root / "Cargo.toml").write_text(
                 "[workspace]\nmembers = [" + ", ".join(listed) + "]\n"
             )
@@ -999,6 +1028,56 @@ CATALOG_CASES: list[tuple[str, str | dict[str, str] | None, int, str]] = [
         "    }\n}\n",
         0,
         "",
+    ),
+    (
+        # Rule 8's widened half. The shape rule 10 cannot see: the slice from
+        # `tables()` walked by name, in a crate that is neither
+        # `slate-server` nor `slate-serverd`.
+        "a name lookup in another workspace crate is reported",
+        {
+            "catalog.rs": CATALOG,
+            "loader.rs": "impl Loader {\n"
+            "    pub fn resolve(&self, catalog: &Catalog, n: &str) -> bool {\n"
+            "        catalog.tables().iter().any(|t| t.name() == n)\n"
+            "    }\n}\n",
+        },
+        1,
+        "`resolve` resolves something by comparing `name()`",
+    ),
+    (
+        # And it names the key a person would add, path and function
+        # together — not the bare `resolve`, which would exempt every
+        # `resolve` in thirteen crates.
+        "and it says which key to add, with the path in it",
+        {
+            "catalog.rs": CATALOG,
+            "loader.rs": "impl Loader {\n"
+            "    pub fn resolve(&self, catalog: &Catalog, n: &str) -> bool {\n"
+            "        catalog.tables().iter().any(|t| t.name() == n)\n"
+            "    }\n}\n",
+        },
+        1,
+        "crates/slate-schema/src/loader.rs::resolve` to FINDS_BY_NAME_OUTSIDE",
+    ),
+    (
+        # The roster is checked both ways, and keyed on path *and* function:
+        # a `build` elsewhere does not satisfy the entry for this one.
+        "a roster key whose lookup is gone is reported",
+        {
+            "catalog.rs": CATALOG,
+            "table.rs": "impl TableBuilder {\n"
+            "    pub fn build(self) -> Result<TableDef> {\n"
+            "        Ok(TableDef {})\n"
+            "    }\n}\n",
+        },
+        1,
+        "FINDS_BY_NAME_OUTSIDE lists `crates/slate-schema/src/table.rs::build`",
+    ),
+    (
+        "no name lookup outside SOURCES at all fails, not passes",
+        None,
+        1,
+        "rule 8's widened half checked nothing",
     ),
     (
         "a roster entry for a method that is gone is reported",

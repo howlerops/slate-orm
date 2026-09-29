@@ -57,13 +57,23 @@ loudly instead:
    that authorises later would go back to calling a declared view a typo.
 
 8. **Every lookup that finds something by comparing `.name()`** is listed in
-   `FINDS_BY_NAME`. The step-1 entry's whole argument — that a view kept out
-   of the `Catalog` is refused by every path that exists, *without a line
+   `FINDS_BY_NAME`, **in every workspace crate's `src/`, not just the two in
+   `SOURCES`**. The step-1 entry's whole argument — that a view kept out of
+   the `Catalog` is refused by every path that exists, *without a line
    written* — rests on `Catalog::table_by_name` being the only way a name
    becomes a `TableDef`. A second one reopens every path at once, and there
    is already one in `slate-serverd` resolving a view's base table at load,
    which is exactly the kind of thing that should be named rather than
    noticed.
+
+   The whole workspace because `Catalog::tables()` hands out the slice, so
+   `catalog.tables().iter().find(|t| t.name() == n)` is a name-to-table
+   lookup that any crate can write. Rule 10 rosters the methods on `Catalog`
+   and cannot see that line; rule 8 reads the line and, until this widened,
+   could not see the crates. Measured before widening: six matches in the
+   workspace, four already rostered or the anchor itself, and two in
+   `slate-schema/src/table.rs` that look up a check and a foreign key rather
+   than a table.
 
 10. **Every public `Catalog` method that hands out a `TableDef`** is listed
     in `HANDS_OUT_A_TABLE`. Rule 8 keeps the *server* crates from growing a
@@ -362,12 +372,15 @@ NAMES_A_MISSING_TABLE = {
 # author what it exists to do on everyone else, and it is the reason a roster
 # of names is worth more than a paragraph claiming the same thing.
 
-#: The functions allowed to resolve something by comparing `name()`.
+#: The functions in `SOURCES` allowed to resolve something by comparing
+#: `name()`.
 #:
-#: `Catalog::table_by_name` is deliberately absent: it lives in `slate-schema`,
-#: outside the directories this reads, and it is the one this roster exists to
-#: keep singular. Everything here is a lookup in the *server* crates that had
-#: to be justified against it.
+#: `Catalog::table_by_name` used to be absent, with this note: "it lives in
+#: `slate-schema`, outside the directories this reads, and it is the one this
+#: roster exists to keep singular". Keeping a roster's own subject out of it
+#: because of where the subject lives is a boundary, not a decision. Rule 8
+#: now reads every other workspace crate too — through
+#: `FINDS_BY_NAME_OUTSIDE` below, which is keyed differently and says why.
 FINDS_BY_NAME = {
     "resolve_relation": (
         "finds a foreign key by name, not a table — the `TableDef` it goes on "
@@ -384,6 +397,41 @@ FINDS_BY_NAME = {
         "caller to authorise. It is a second name-to-`TableDef` lookup and it "
         "is here so that it is a named one; a third would have to argue the "
         "same case"
+    ),
+}
+
+
+#: The same, for every *other* workspace crate's `src/`, keyed on path and
+#: function together.
+#:
+#: Two rosters rather than one, and the key is the difference. Inside
+#: `SOURCES` a bare function name is unambiguous enough: two directories of
+#: one service, whose functions are the subject of the other rules. Across
+#: thirteen crates it is not — `build` is the enclosing function of both
+#: matches in `slate-schema`, and an entry spelled "build" would exempt every
+#: `build` in the workspace, including ones written after it. A roster whose
+#: entries are wider than the things they exempt is the failure every other
+#: roster in this file is shaped to avoid.
+#:
+#: Measured before this widening: six `name()` comparisons across the
+#: workspace's `src/` trees, three already in `FINDS_BY_NAME` and these
+#: three. **Nothing walks `Catalog::tables()` comparing names** — the hole
+#: rule 10 could only write down, because `tables()` hands out the slice and
+#: a lookup over it is a line in a file rather than a method on `Catalog`.
+#: This is the check that keeps that true.
+FINDS_BY_NAME_OUTSIDE = {
+    "crates/slate-schema/src/catalog.rs::table_by_name": (
+        "the anchor itself. Rule 10 holds it to being the only *method on "
+        "`Catalog`* that turns a name into a table; this is the other half — "
+        "the only `name()` comparison in the workspace that may produce one. "
+        "The two rules fail on different edits and neither implies the other"
+    ),
+    "crates/slate-schema/src/table.rs::build": (
+        "`TableBuilder::build`'s two duplicate refusals: a `CheckDef` name "
+        "against the checks already declared, and a `ForeignKeyDef` name "
+        "against the keys. Neither looks up a table — both are inside the "
+        "type being built, before any catalog exists, and both answer a bool "
+        "that makes the build fail"
     ),
 }
 
@@ -768,6 +816,55 @@ def unrostered_catalog_lookups(found: set[str]) -> list[str]:
     return problems
 
 
+
+def lookups_outside_sources(
+    root: Path, sources: list[Path]
+) -> tuple[int, set[str], list[str]]:
+    """Rule 8's other half: `name()` lookups in the crates `SOURCES` misses.
+
+    Same member walk and same skip-what-is-covered test as `unscanned`, so a
+    crate cannot be checked by both and reported twice, and a crate added to
+    `SOURCES` moves from this roster to the other one rather than to neither.
+
+    Returns the match count and the keys matched as well as the problems.
+    Zero matches is the never-fires condition, which an empty problem list
+    cannot be told from a clean tree; the keys are what the stale-exemption
+    pass needs, and a roster entry for a lookup that is gone is its own
+    defect.
+    """
+    covered = [one.resolve() for one in sources]
+    count = 0
+    seen: set[str] = set()
+    problems: list[str] = []
+    for member in members(root):
+        where = (root / member / "src").resolve()
+        if any(where == one or one in where.parents or where in one.parents for one in covered):
+            continue
+        for path in sorted(where.rglob("*.rs")):
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            owners = enclosing_functions(lines)
+            for at, line in enumerate(lines):
+                if not BY_NAME.search(line):
+                    continue
+                count += 1
+                key = f"{path.relative_to(root).as_posix()}::{owners[at]}"
+                seen.add(key)
+                if key in FINDS_BY_NAME_OUTSIDE:
+                    continue
+                problems.append(
+                    f"{path.relative_to(root)}:{at + 1}: `{owners[at]}` "
+                    "resolves something by comparing `name()`, outside the "
+                    "crates rule 8 used to read.\n"
+                    "  `Catalog::table_by_name` is meant to be the only way a "
+                    "name becomes a `TableDef`, and `Catalog::tables()` hands "
+                    "out the slice — so this line is where a second resolver\n"
+                    "  would be written. Use `table_by_name`, or add "
+                    f"`{key}` to FINDS_BY_NAME_OUTSIDE saying what it looks up "
+                    "and why it is not a table."
+                )
+    return count, seen, problems
+
+
 def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     # The subject is an argument so the tests beside this file can run the real
     # checks over a file they wrote, rather than against `service.rs` — where a
@@ -883,6 +980,21 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     handlers = wire_handlers(files)
     problems.extend(unauthenticated_handlers(files, handlers))
     problems.extend(unscanned(root, sources))
+    # Counted apart from `by_name` rather than added to it, so each half of
+    # rule 8 has its own never-fires. Summed, a live lookup in `SOURCES`
+    # would hide a widened half that had stopped reading anything — which is
+    # the failure the never-fires branches exist to catch, reintroduced by
+    # the arithmetic.
+    outside, found_outside, said = lookups_outside_sources(root, sources)
+    problems.extend(said)
+    if outside == 0:
+        problems.append(
+            "no `name()` comparison in any workspace crate outside SOURCES, "
+            "so rule 8's widened half checked nothing. `Catalog::"
+            "table_by_name` is one, and it is the anchor: if it is not "
+            "matching, either the pattern stopped seeing it or the manifest "
+            "stopped listing the crate. Both need a person, not a pass."
+        )
 
     # Rule 10, on its own `if` rather than in the never-fires chain below.
     # That chain reports one cause at a time because its branches all diagnose
@@ -1008,6 +1120,18 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
                     f"exempts. Delete it; its reason was: {reason}"
                 )
 
+    # Keyed on path and function, so it cannot share the loop above: `seen`
+    # holds bare names from the `SOURCES` pass and a bare `build` matching a
+    # `…/table.rs::build` entry would be exactly the collision the second
+    # roster exists to prevent.
+    for key, reason in FINDS_BY_NAME_OUTSIDE.items():
+        if key not in found_outside:
+            problems.append(
+                f"FINDS_BY_NAME_OUTSIDE lists `{key}`, which no longer "
+                "resolves anything by `name()`. Delete it; its reason was: "
+                f"{reason}"
+            )
+
     if problems:
         for problem in problems:
             print(problem, file=sys.stderr)
@@ -1023,7 +1147,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
         f"{authenticators} authenticators all rostered, "
         f"{views} view-registry reads all rostered, "
         f"{missing} missing-table refusals all rostered, "
-        f"{by_name} lookups by name all rostered, "
+        f"{by_name} lookups by name here and {outside} in the other crates, "
+        "all rostered, "
         f"{len(handing_out)} public `Catalog` methods handing out a table all "
         "rostered, "
         f"{len(members(root))} workspace crates and none outside SOURCES "

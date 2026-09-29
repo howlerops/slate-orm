@@ -99,4 +99,6 @@ yet, so nothing says how it feels.
 
 **Nothing in this change touches the `tables()` hole**, which remains the way
 a name becomes a table without rule 10 seeing it, in any crate outside the
-two rule 8 reads.
+two rule 8 reads. **Narrowed the same day** by widening rule 8 to every
+workspace crate — see
+`ledger/2026-09-29-the-hole-rule-ten-could-only-write-down.md`.

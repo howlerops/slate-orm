@@ -108,7 +108,11 @@ without rule 10 seeing it. It is a form of the `tables()` hole the previous
 entry recorded: the method body has to get its tables from somewhere, and the
 only public source is the slice. Nothing new is unguarded by this change; the
 sentence "rule 10 covers the inherent surface" is exact, and "the inherent
-surface is the whole surface" is not.
+surface is the whole surface" is not. **Narrowed the same day**: rule 8 now
+reads every workspace crate, and a trait method that resolves a name has to
+compare one, so the line inside it fails even though the method does not
+appear on `Catalog`. See
+`ledger/2026-09-29-the-hole-rule-ten-could-only-write-down.md`.
 
 ~~**Column zero is still the test for an `impl` block.** An `impl Catalog`
 indented inside a `mod` — legal, and how a `#[cfg(test)]` helper would be
