@@ -8197,9 +8197,9 @@
     {
       "entry": "2026-09-16-a-durability-check-that-cried-data-loss.md",
       "key": "The batch cap is still enforced only server-side, and no cli",
-      "verdict": "open",
-      "by": "still server-side only. No client checks a batch's length before sending, so an over-cap batch is a round trip that fails rather than a local refusal.",
-      "checked": "2026-09-28"
+      "verdict": "deliberate",
+      "by": "ledger/2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md, which this caveat itself points at with \"noted in the previous entry\": the limit is configurable, so a client-side copy is a second number that has to agree with a server the client cannot read. One wasted round trip for an over-cap caller against a client that refuses a batch the server would have accepted. Two rows for one gap, and the reasoning lives there.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-16-a-line-break-hid-fourteen-minutes-of-checks.md",
@@ -9819,9 +9819,9 @@
     {
       "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
       "key": "No offline tool.",
-      "verdict": "open",
-      "by": "a stopped node's keyspace still cannot be purged; the sweep needs a running server to talk to.",
-      "checked": "2026-09-28"
+      "verdict": "deliberate",
+      "by": "ledger/2026-09-19-a-purge-something-can-call.md, whose identically-named caveat carries the argument: purging a stopped node's keyspace needs a binary that opens the store directly, outside the writer's lease, which is a second way into the data and a second place the retention rule has to be true. Purge is an operation on a running writer, deliberately. Two rows for one gap.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
@@ -12311,6 +12311,130 @@
       "verdict": "deliberate",
       "by": "this entry: a notIn would be a second name for a composition that already works in three languages, needing its own tests, its own place in the generated surface and its own conformance case, to save a caller six characters. The gap was never expressibility. That nothing guards the choice is true of most API-shape decisions here and is not worth a guard until a second spelling exists to diverge from.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md",
+      "key": "It measures no latency, and that is now a decision rather th",
+      "verdict": "deliberate",
+      "by": "this entry's Alternatives: timing to the last frame reports the consumer's appetite as the server's latency, which is the confound the module doc has argued since the layer was built. A histogram mixing the two is worse than one that admits it measures the head. Time to the first frame is the unconfounded version and is named as the next thing rather than done here.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md",
+      "key": "It does not count the framing, the headers or the trailers.",
+      "verdict": "deliberate",
+      "by": "this entry: the value of the number is comparability with the three clients' own request weights, which are protobuf payloads. A server figure including framing and a client figure excluding it would invite a subtraction that means nothing. Both the help strings and the module doc say payload rather than wire.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md",
+      "key": "A head failure's body is not weighed.",
+      "verdict": "deliberate",
+      "by": "arithmetically empty, and named so the counter is not misread: a refusal carries the status and no body, so wrapping it would pay for a box to watch a stream with nothing in it. What it costs is that the family is 'bytes sent by calls that answered', which is what its help string says.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md",
+      "key": "Nothing compares a request with its response.",
+      "verdict": "open",
+      "by": "ordinary undone work, and the reason this change was worth making. Both directions are measured, in the same unit, in different processes, and no test or harness puts the two numbers side by side.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md",
+      "key": "The per-frame cost is inherited, not re-measured.",
+      "verdict": "open",
+      "by": "the 4.7 ns a frame comes from ledger/2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md and predates the two atomics this change adds to that path. Re-timing it is a benchmark nobody has run.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-seventy-two-deliberate-verdicts-read.md",
+      "key": "It is a sample, and the rate has a wide interval.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-29-seventy-two-deliberate-verdicts-read.md",
+      "key": "Fifty-eight of the seventy-two were read for plausibility, n",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-29-seventy-two-deliberate-verdicts-read.md",
+      "key": "It does not change how `deliberate` is maintained.",
+      "verdict": "open",
+      "by": "unchanged, and the standing gap both audit entries point at: no `checked` field on a deliberate row, no sweep, no guard. ledger/2026-09-28-the-invisible-backlog-is-triaged.md argues the general version cannot be automated; a date field is not the general version and is not written.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-seventy-two-deliberate-verdicts-read.md",
+      "key": "It says nothing about `closed`.",
+      "verdict": "deliberate",
+      "by": "out of scope by construction and covered elsewhere: `closed` carries a witness scripts/check_closed_caveats.py verifies, and ledger/2026-09-26-the-closed-verdicts-audited.md is that bucket's own audit. Sampling it again here would be a second pass at the one bucket that already has a mechanism.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-seventy-two-deliberate-verdicts-read.md",
+      "key": "The sampling script is not committed.",
+      "verdict": "deliberate",
+      "by": "this entry: the script prints a seeded slice of a JSON file, and committing it means another thing under scripts/ with its own test, its own ty and ruff pass and its own place in check.sh, to re-run a reading that is not repeatable anyway because the reader is the instrument. The seed and the method are written down, which is what a successor needs.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-168.md",
+      "key": "It does not re-read the first 72.",
+      "verdict": "deliberate",
+      "by": "a second pass by the same reader on the same day is not independent evidence, which ledger/2026-09-28-the-invisible-backlog-is-triaged.md already argues about this whole exercise. Re-reading them would produce agreement and no information.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-168.md",
+      "key": "Most of the 168 were read for plausibility.",
+      "verdict": "narrowed",
+      "by": "twenty-six of the 168 were checked against the tree rather than read, and both entries table them by claim and artefact, so the mechanically-checked fraction is stated rather than implied.",
+      "residual": "the other 142 are judgement calls whose `by` is an argument; finding one still reasonable is weak evidence, and the measured rate is a lower bound rather than an estimate.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-168.md",
+      "key": "It did not look for stale reasons systematically.",
+      "verdict": "open",
+      "by": "the one found was noticed because it happened to count something. Nothing swept for the class. A `by` that argues rather than counts cannot be swept for at all, but the counting subclass could be, and was not.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-168.md",
+      "key": "The interval is a normal approximation and 2 successes is fe",
+      "verdict": "deliberate",
+      "by": "this entry: an exact binomial interval on 2/168 runs slightly wider at the top and the conclusion -- tens, not hundreds -- does not turn on which is used. Reporting the approximation and saying so is honest; reporting a rigorous interval to three figures would dress up a sample whose real weakness is the reader, not the arithmetic.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-168.md",
+      "key": "Nothing schedules the next sample.",
+      "verdict": "open",
+      "by": "no third reading planned, no `checked` field on a deliberate row, nothing that notices a year passing. The same gap as 'It does not change how `deliberate` is maintained', from the other end.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-rows-for-one-gap.md",
+      "key": "It does not sweep the other 124 open rows for duplicates.",
+      "verdict": "open",
+      "by": "the sweep was run open-against-settled and its output read. Open-against-open, where two rows duplicate each other with neither settled, was not run at all -- ordinary undone work, and one command.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-rows-for-one-gap.md",
+      "key": "Nothing stops the next duplicate.",
+      "verdict": "deliberate",
+      "by": "this entry: the tracker keys on entry::claim and has no notion of one gap spanning two entries, and a guard would have to decide two claims are the same gap from their prose. That is the prose-against-prose problem ledger/2026-09-21-a-view-over-a-view-is-refused.md and ledger/2026-09-26-a-guard-that-reads-the-guards.md both record as the half no pattern settles.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-rows-for-one-gap.md",
+      "key": "The fifteen verdicts are one reader's, same-day.",
+      "verdict": "narrowed",
+      "by": "the weakness is measured rather than merely admitted: ledger/2026-09-29-the-deliberate-sample-carried-to-168.md puts the deliberate bucket's false rate at 2 in 168, so these fifteen inherit a known rate rather than an unknown one.",
+      "residual": "that rate was measured by the same kind of reader on the same kind of same-day verdict, so it bounds these fifteen only as well as it bounds itself. Nothing independent has read any of them.",
+      "checked": "2026-09-29"
     }
   ]
 }
