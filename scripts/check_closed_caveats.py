@@ -447,6 +447,14 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_mutations_roster.py",
  ),
 
+ # --- a verdict that was stale, 2026-09-29 ------------------------------------
+ # The needle is the conformance case, not a decoder call: three adapters each
+ # decoding three tables is only a closure because something compares them.
+ "typed-rows-compared": (
+     "two rows through the generated decoders",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
  # --- a convention inferred from one entry, 2026-09-29 -----------------------
  # The needle is the corrected count, in the docstring of the rule the wrong
  # reason was attached to: what closed the caveat is the measurement, and the
@@ -836,6 +844,8 @@ WITNESSED: dict[tuple[str, str], str] = {
      'Nothing re-runs any real-tree mutation, and this entry adds '): 'mutations-roster',
     ('2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md',
      'Eight guards still have no mutation.'): 'mutations-roster',
+    ('2026-09-20-the-third-decoder-test.md',
+     'No live-row case for `authors`, `sales` or `editions` in any'): 'typed-rows-compared',
     # One test closes two readings: that the permit is released before a row
     # is read, and that open streams are therefore bounded by nothing.
     ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',

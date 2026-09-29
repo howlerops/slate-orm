@@ -8639,9 +8639,9 @@
     {
       "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
       "key": "No `tracing`.",
-      "verdict": "open",
-      "by": "untouched. A span per request with a subscriber is the other half of the observability row.",
-      "checked": "2026-09-28"
+      "verdict": "deliberate",
+      "by": "crates/slate-serverd/src/observe.rs carries a `Why not `tracing`` section: tracing without a subscriber logs nothing, so adopting it means adopting a subscriber and its configuration surface. The file names the condition under which that becomes the right answer. A decision with its reasoning written down, not a gap.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
@@ -9854,16 +9854,17 @@
     {
       "entry": "2026-09-20-the-third-decoder-test.md",
       "key": "The decoders still never see a row the server sent.",
-      "verdict": "open",
-      "by": "the live-row coverage exists for books and shipments only; these build values by hand, like the Go and TypeScript cases.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "the /api/typed handlers in all three adapters decode rows the server actually sent, for all five tables, and the conformance runner compares the three",
+      "residual": "the three decoder *test files* still build their values by hand, which is what this caveat's own sentence is about; what is no longer true is the gap it names",
+      "checked": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-third-decoder-test.md",
       "key": "No live-row case for `authors`, `sales` or `editions` in any",
-      "verdict": "open",
-      "by": "tracked separately from the language gap this entry closed, and still open.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "all three demo adapters' /api/typed read authors 1, sales 100 and editions 500 and decode each with the generated row type -- examples/explorer/backends/python/adapter/__main__.py, backends/go/handlers.go, backends/node/src/main.ts -- and the conformance runner's `two rows through the generated decoders` case compares the three",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-third-decoder-test.md",
@@ -11872,6 +11873,25 @@
       "verdict": "deliberate",
       "by": "this entry: it catches a mutation left behind within the job. A run killed by the runner leaves nothing to check, and mutate.py's in-flight marker is read only by the next run on the same checkout -- never the case in CI, where every run starts clean.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
+      "key": "Seventy-six open caveats last checked on 2026-09-28 were not",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
+      "key": "The heuristic that surfaced candidates is nearly useless.",
+      "verdict": "moment",
+      "by": "a record of how the three were found, not a tool anybody should reuse: grepping a caveat's backticked identifiers finds `Value` in 352 files. The three came from reading a cluster directly.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
+      "key": "Nothing stops this recurring.",
+      "verdict": "open",
+      "checked": "2026-09-29"
     }
   ]
 }
