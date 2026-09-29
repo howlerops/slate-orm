@@ -10703,9 +10703,10 @@
     {
       "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
       "key": "It says nothing about latency or bytes.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. examples/deployed is where a network round trip would be timed and it does not exercise paging; the README's 495-against-5 figure is still the only measurement of what a page reads from the store."
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "the bytes half is measured. The same interceptor now weighs every request with ByteSize(), and two tests read the numbers: a batch of twenty costs 1382 bytes against 1300 sent singly (exactly 4n+2 more), and four cursor pages cost 215 against 198 by offset. Both go against the phrase they were meant to confirm. See ledger/2026-09-29-bytes-do-not-need-a-network.md",
+      "residual": "latency. A duration on a loopback socket against an in-memory store is mostly scheduling, and this session already published one timing claim that reversed on another machine. examples/deployed is still where it would be timed and it still needs MinIO."
     },
     {
       "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
@@ -10739,8 +10740,8 @@
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "It still says nothing about latency or bytes.",
       "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Inherited unchanged from 2026-09-28-round-trips-counted-at-the-clients-channel.md: examples/deployed is where a network round trip would be timed, it needs MinIO, and it does not exercise paging."
+      "checked": "2026-09-29",
+      "by": "the bytes half is no longer blocked and is done in Python only: ByteSize() at the interceptor needs no network, and ledger/2026-09-29-bytes-do-not-need-a-network.md measures batching and paging with it. Go's related_test.go and round_trip_test.go and TypeScript's roundTrip.test.ts count and do not weigh, so the three-client comparison is still counts alone. Latency still needs a network and examples/deployed still needs MinIO."
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
@@ -10801,9 +10802,10 @@
     {
       "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
       "key": "It does not measure what a page costs in bytes or seconds.",
-      "verdict": "open",
+      "verdict": "narrowed",
       "checked": "2026-09-29",
-      "by": "nothing yet. The finding is about request counts; an offset page's request carries an integer where a cursor's carries a key, and nothing weighs them. examples/deployed is where it would be answered and it needs MinIO."
+      "by": "the bytes half is measured, and it answers this caveat's own question -- \"an offset page's request carries an integer where a cursor's carries a key, and nothing weighs them\". Weighed: four cursor pages are 215 bytes against 198 by offset, +17, about 9%. The cursor costs more, not less. See ledger/2026-09-29-bytes-do-not-need-a-network.md",
+      "residual": "seconds. Same reason as the sibling caveat: a loopback duration is mostly scheduling, and examples/deployed needs MinIO."
     },
     {
       "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
@@ -10930,7 +10932,7 @@
       "key": "It says nothing about latency or bytes.",
       "verdict": "open",
       "checked": "2026-09-29",
-      "by": "nothing yet. examples/deployed is where a network round trip would be timed, it needs MinIO, and this container has none."
+      "by": "the bytes half is no longer blocked and is done in Python only -- see ledger/2026-09-29-bytes-do-not-need-a-network.md, which found batching costs 4n+2 bytes and a cursor page costs more than an offset page. The other two clients do not weigh, which is what keeps this one open rather than narrowed: the caveat is about the three-client comparison. Latency still needs a network."
     },
     {
       "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
@@ -11486,6 +11488,41 @@
       "key": "It leaves the entry's other caveat open.",
       "verdict": "open",
       "by": "true, and it is now that entry's only open one: nothing fails if a future Catalog grows a second name-to-TableDef lookup a view could satisfy. check_handlers.py rule 1 covers the handlers, not the catalog.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "It measures no latency, and that half is still blocked.",
+      "verdict": "open",
+      "by": "true, and deliberately not faked. A loopback duration against an in-memory store is mostly scheduling; examples/deployed is where it would be timed and needs MinIO, which this container has none of.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "It measures the request only.",
+      "verdict": "deliberate",
+      "by": "ByteSize() is the protobuf payload. Draining a server-streaming response to weigh it would make the batch comparison meaningless -- the same twenty rows come back either way -- and the caveats are about what a caller sends. The class docstring says so rather than letting \"bytes\" imply \"on the wire\".",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "Only the Python client weighs.",
+      "verdict": "open",
+      "by": "true. Go and TypeScript count and do not weigh, so the three-client comparison is still counts alone. The change is one line per interceptor and was not made because the finding was worth publishing first.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "It does not explain the `4n + 2` from the wire format.",
+      "verdict": "open",
+      "by": "true. The arithmetic fits five points exactly and the explanation -- a tag byte and a length prefix per nested statement -- is read off the protobuf encoding rules rather than shown by decoding a message field by field. A different framing producing the same slope would be indistinguishable.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "Nothing weighs a relation load, a join or an aggregate.",
+      "verdict": "open",
+      "by": "true. The two workloads weighed are the two the caveats named; the others have counts and no weights.",
       "checked": "2026-09-29"
     }
   ]

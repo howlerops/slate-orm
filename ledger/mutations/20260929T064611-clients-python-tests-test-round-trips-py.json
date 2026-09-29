@@ -1,0 +1,82 @@
+{
+  "at": "2026-09-29T06:46:11+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_round_trips.py -q"
+  ],
+  "commit": "8a2e68f",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the interceptor weighs nothing",
+      "old": "        self.bytes[name] += request.ByteSize()",
+      "new": "        self.bytes[name] += 0",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_batching_saves_round_trips_and_costs_bytes",
+        "tests/test_round_trips.py::test_paging_by_cursor_costs_more_bytes_than_paging_by_offset"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the batch delta is read as a saving",
+      "old": "    assert batched > singly, (",
+      "new": "    assert batched >= 0, (",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the envelope term is dropped from the formula",
+      "old": "    assert batched - singly == 4 * ROWS + 2, (",
+      "new": "    assert batched - singly == 4 * ROWS, (",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_batching_saves_round_trips_and_costs_bytes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the per-statement term is dropped",
+      "old": "    assert batched - singly == 4 * ROWS + 2, (",
+      "new": "    assert batched - singly == 2, (",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_batching_saves_round_trips_and_costs_bytes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the cursor is dropped from the paged request",
+      "old": "        page = client.page(q.where(q.c.kind.eq(\"counted\")).after(cursor))\n        cursor = page.cursor\n        assert cursor is not None, \"the fixture ran out of rows before the pages did\"\n    by_cursor = counter.weight()",
+      "new": "        page = client.page(q.where(q.c.kind.eq(\"counted\")))\n        cursor = page.cursor\n        assert cursor is not None, \"the fixture ran out of rows before the pages did\"\n    by_cursor = counter.weight()",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_paging_by_cursor_costs_more_bytes_than_paging_by_offset"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "weight() reads calls instead of bytes",
+      "old": "        return sum(self.bytes.values())",
+      "new": "        return sum(self.calls.values())",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_batching_saves_round_trips_and_costs_bytes",
+        "tests/test_round_trips.py::test_paging_by_cursor_costs_more_bytes_than_paging_by_offset"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

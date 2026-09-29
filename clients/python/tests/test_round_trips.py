@@ -62,21 +62,44 @@ from .fixture import DOCS
 
 
 class Counting(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor):
-    """Counts calls per method, and forwards them untouched.
+    """Counts calls per method and weighs them, forwarding them untouched.
 
     Both interfaces, because a read is server-streaming and a write is unary:
     an interceptor registered for only the first would count writes and report
     zero for every query, which reads as "queries are free" rather than as a
     hole in the instrument.
+
+    # Why it weighs as well as counts
+
+    Five caveats across three entries said this work "says nothing about
+    latency or bytes", and every one of them deferred both to
+    `examples/deployed`, which needs MinIO. That conflates two questions. A
+    *latency* needs a network and this container has none. A *byte* does not:
+    `request.ByteSize()` is the serialized length of the message the client is
+    about to send, it is exact, and it has no spread — the same request
+    weighs the same on every run and every machine, because protobuf
+    serialization is deterministic.
+
+    So the bytes are here, beside the counts, measured by the same instrument
+    on the same workloads. The latency half stays where it was and says why.
+
+    Request bytes only, and the name says `bytes` rather than `on the wire`:
+    this is the protobuf payload, not the HTTP/2 frame, not the headers, not
+    the identity metadata, and not the response. Those are real and this does
+    not measure them. What it measures is the part that scales with the
+    caller's data, which is the part the batching and paging claims are about.
     """
 
     def __init__(self) -> None:
         self.calls: collections.Counter[str] = collections.Counter()
+        self.bytes: collections.Counter[str] = collections.Counter()
 
-    def _count(self, method: str) -> None:
+    def _count(self, method: str, request: Any) -> None:
         # The method arrives as `/slate.v1.Records/Write`; the last segment is
         # what a reader of a failure message wants.
-        self.calls[method.rsplit("/", 1)[-1]] += 1
+        name = method.rsplit("/", 1)[-1]
+        self.calls[name] += 1
+        self.bytes[name] += request.ByteSize()
 
     def intercept_unary_unary(
         self, continuation: Any, client_call_details: Any, request: Any
@@ -84,17 +107,21 @@ class Counting(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientIntercept
         # Named `client_call_details` because the base class is: `grpc`'s
         # interceptor protocols take it as a keyword, so a shorter name is a
         # Liskov violation the type checker refuses rather than a style choice.
-        self._count(client_call_details.method)
+        self._count(client_call_details.method, request)
         return continuation(client_call_details, request)
 
     def intercept_unary_stream(
         self, continuation: Any, client_call_details: Any, request: Any
     ) -> Any:
-        self._count(client_call_details.method)
+        self._count(client_call_details.method, request)
         return continuation(client_call_details, request)
 
     def total(self) -> int:
         return sum(self.calls.values())
+
+    def weight(self) -> int:
+        """Serialized request bytes across every method."""
+        return sum(self.bytes.values())
 
 
 @pytest.fixture
@@ -167,6 +194,7 @@ def test_writing_n_rows_one_at_a_time_is_n_round_trips(
     """The control. Without it the batch case proves only that a batch works."""
     client, counter = counted
     counter.calls.clear()
+    counter.bytes.clear()
 
     for n in range(ROWS):
         client.insert(DOCS, [_row(n)])
@@ -185,6 +213,7 @@ def test_writing_n_rows_in_a_batch_is_one_round_trip(
     """
     client, counter = counted
     counter.calls.clear()
+    counter.bytes.clear()
 
     batch = Batch(Atomicity.INDEPENDENT)
     for n in range(ROWS, ROWS * 2):
@@ -194,6 +223,146 @@ def test_writing_n_rows_in_a_batch_is_one_round_trip(
     assert counter.calls["Batch"] == 1, f"one Batch for {ROWS} rows; got {counter.calls}"
     assert counter.calls["Insert"] == 0, f"a batch must not also Insert; got {counter.calls}"
     assert counter.total() == 1, f"one call in total; got {counter.calls}"
+
+
+def test_batching_saves_round_trips_and_costs_bytes(
+    counted: tuple[Client, Counting],
+) -> None:
+    """The half the counts could not see, and it goes the other way.
+
+    "A batch is a round trip" is true and this file already shows it: twenty
+    writes, one call. The unstated companion — that batching is therefore
+    cheaper — is false on the request. **A batch of twenty costs more bytes
+    than twenty singles, not fewer**, because each statement gains a tag and a
+    length prefix from being nested in a `repeated` field and the batch adds an
+    envelope of its own.
+
+    Measured, at five sizes, twice each, and exactly linear:
+
+    | rows | batch | singles | delta |
+    | --- | --- | --- | --- |
+    | 1 | 71 | 65 | +6 |
+    | 2 | 140 | 130 | +10 |
+    | 5 | 347 | 325 | +22 |
+    | 10 | 692 | 650 | +42 |
+    | 20 | 1382 | 1300 | +82 |
+
+    `delta = 4n + 2`: four bytes per statement, two for the envelope. The
+    *totals* depend on the rows — `_row` writes a fixed `note` and a key whose
+    varint widens past 2^14 — so the assertion below is on the delta and this
+    table is what these twenty rows happen to weigh. An earlier run of the
+    same measurement at a different key range read 1402 against 1320: the
+    totals moved by 20, the delta did not move at all. That is the reason the
+    formula is the assertion and the totals are only narration.
+
+    The two numbers together are the honest version of the claim: **twenty
+    writes go from twenty requests to one, and from 1300 bytes to 1382.** On
+    any real link that is an enormous win, because a round trip costs a
+    latency and 82 bytes costs nothing — but it is a trade and the entries
+    describing batching as "cheaper on the wire" did not say so.
+
+    No spread, and none is reported: `ByteSize()` is deterministic for a given
+    request, so the only thing that moves these numbers is the rows.
+    """
+    client, counter = counted
+
+    for n in range(ROWS):
+        client.insert(DOCS, [_row(n)], upsert=True)
+    singly = counter.weight()
+
+    counter.calls.clear()
+    counter.bytes.clear()
+    batch = Batch(Atomicity.INDEPENDENT)
+    for n in range(ROWS):
+        batch.upsert(DOCS, [_row(n)])
+    client.batch(batch)
+    batched = counter.weight()
+
+    # The same rows both ways, so the payload is identical and the difference
+    # is framing. Written as one assertion on the *formula* rather than on
+    # 1402: a literal would pin the row contents too, and a wider `note`
+    # column would then read as a regression in batching.
+    assert batched - singly == 4 * ROWS + 2, (
+        f"a batch should cost 4 bytes per statement plus a 2-byte envelope; "
+        f"{ROWS} rows weighed {batched} batched against {singly} singly"
+    )
+    # There is deliberately no second assertion that `batched > singly`. It
+    # was written, and the mutation weakening it to `batched >= 0` survived —
+    # correctly, because `4 * ROWS + 2` is positive for any `ROWS`, so the
+    # formula above already forces the direction. An assertion that cannot
+    # fail while its neighbour holds is not a second check, it is a sentence
+    # in the wrong place; the direction is the finding and the docstring is
+    # where the finding belongs.
+    assert counter.calls["Batch"] == 1, f"still one call; got {counter.calls}"
+
+
+def test_paging_by_cursor_costs_more_bytes_than_paging_by_offset(
+    counted: tuple[Client, Counting],
+) -> None:
+    """The other phrase counting could not settle, and it goes the other way too.
+
+    `2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md`
+    left this exactly: *"an offset page's request carries an integer where a
+    cursor's carries a key, and nothing weighs them."* Weighed:
+
+    | | four pages, total request bytes |
+    | --- | --- |
+    | by cursor | 215 |
+    | by offset | 198 |
+
+    A cursor page is heavier than an offset page once there is a cursor to
+    send: **+17 bytes over four pages, about 9%.** Per page it is a few bytes,
+    and how few depends on the key — a cursor carries the last row's primary
+    key as a varint, so it widens with the value, where an offset carries a
+    small integer. An earlier run over a different key range read 218 against
+    198. Hence the assertion below is a range and not a literal: what is being
+    pinned is *a cursor costs more than an offset and is not free*, which a
+    cursor dropped from the request would break by making them equal.
+
+    Which is the same shape as the batch finding and the same correction to the
+    same phrase. What keyset paging saves is *store* reads — the README's 495
+    key-value pairs by offset against 5 by cursor — and that saving is on the
+    server. On the request it is a small loss. "Cheaper on the wire" is wrong
+    about the wire and right about the store, and those are different places.
+
+    Sibling of `test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor`
+    above, which found the counts identical; this is why identical counts were
+    not the end of the question.
+    """
+    client, counter = counted
+
+    seeding = Batch(Atomicity.INDEPENDENT)
+    for n in range(PAGES * PAGE_SIZE):
+        seeding.insert(DOCS, [_row(n)])
+    client.batch(seeding)
+
+    counter.calls.clear()
+    counter.bytes.clear()
+    cursor = None
+    for _ in range(PAGES):
+        q = Query(DOCS).limit(PAGE_SIZE)
+        page = client.page(q.where(q.c.kind.eq("counted")).after(cursor))
+        cursor = page.cursor
+        assert cursor is not None, "the fixture ran out of rows before the pages did"
+    by_cursor = counter.weight()
+
+    counter.calls.clear()
+    counter.bytes.clear()
+    for page_n in range(PAGES):
+        q = Query(DOCS).limit(PAGE_SIZE).offset(page_n * PAGE_SIZE)
+        list(client.query(q.where(q.c.kind.eq("counted"))))
+    by_offset = counter.weight()
+
+    assert counter.calls["Query"] == PAGES, f"four offset pages; got {counter.calls}"
+    # A range rather than the literal 20, for the reason the batch test gives:
+    # the difference is a key and a flag, and the key is a `u64` whose varint
+    # grows with the value. Pinned tightly enough that a cursor dropped from
+    # the request — which would make the two equal — fails.
+    assert 12 <= by_cursor - by_offset <= 40, (
+        f"a cursor page carries a key where an offset page carries an integer, "
+        f"so four cursor pages should be ~20 bytes heavier; "
+        f"got {by_cursor} against {by_offset}"
+    )
 
 
 def test_paging_by_cursor_is_one_round_trip_per_page(
@@ -219,6 +388,7 @@ def test_paging_by_cursor_is_one_round_trip_per_page(
         seeding.insert(DOCS, [_row(n)])
     client.batch(seeding)
     counter.calls.clear()
+    counter.bytes.clear()
 
     cursor, seen = None, []
     for _ in range(PAGES):
@@ -281,6 +451,7 @@ def test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor(
         seeding.insert(DOCS, [_row(n)])
     client.batch(seeding)
     counter.calls.clear()
+    counter.bytes.clear()
 
     seen: list[PyValue] = []
     for page in range(PAGES):
