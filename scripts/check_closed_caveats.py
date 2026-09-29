@@ -834,6 +834,8 @@ WITNESSED: dict[tuple[str, str], str] = {
      'Nothing re-runs any of them.'): 'mutations-roster',
     ('2026-09-29-a-guard-whose-roster-was-itself.md',
      'Nothing re-runs any real-tree mutation, and this entry adds '): 'mutations-roster',
+    ('2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md',
+     'Eight guards still have no mutation.'): 'mutations-roster',
     # One test closes two readings: that the permit is released before a row
     # is read, and that open streams are therefore bounded by nothing.
     ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',

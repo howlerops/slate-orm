@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:02:52+00:00",
+  "file": "docs/performance.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_cost_prose.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a docs page restates a cost constant with the wrong value",
+      "old": "1.02 requests per row, against `POINT_READ_COST = 1.0`.",
+      "new": "1.02 requests per row, against `POINT_READ_COST = 3.0`.",
+      "verdict": "caught",
+      "caught_by": [
+        "check_cost_prose: docs/performance.md:2046-2048 restates POINT_READ_COST as 3.0; it is 1. Print it from `slate_kernel::stats` rather than copying it."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

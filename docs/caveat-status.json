@@ -11790,8 +11790,9 @@
     {
       "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
       "key": "Eight guards still have no mutation.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/mutations.json: twenty-seven of twenty-eight, all clean; the one left is check_build_output, whose subject is the absence of a tracked artifact and which mutate.py's one-file patch cannot express",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
@@ -11813,6 +11814,32 @@
       "key": "The measurement was taken once.",
       "verdict": "open",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "Nothing runs `run_mutations.py` on a schedule.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "One mutation per guard is one sample.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "The defect rate is five in twenty-eight, not a prediction.",
+      "verdict": "moment",
+      "by": "a count of this repository's guards on 2026-09-29, most written in the preceding three weeks. It is a record of what the survey found, not a rate anything can re-derive; the measurement that would make it one has nobody to take it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "Four of the five findings are the same failure.",
+      "verdict": "deliberate",
+      "by": "this entry declines to generalise: four instances is the evidence base that produced the wrong rule in ledger/2026-09-29-a-caveat-closed-by-a-line-through-it.md, where a convention inferred from one entry would have failed 48. Counted before generalising is the habit; the count here is four and the rule is not built.",
+      "reviewed": "2026-09-29"
     }
   ]
 }

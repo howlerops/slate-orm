@@ -240,16 +240,93 @@
           "new": "husk"
         }
       ]
+    },
+    {
+      "guard": "check_build_stamp",
+      "file": "crates/slate-slatedb/src/stamp.rs",
+      "why": "A measurement whose build is unrecorded cannot be re-read later; #278 turned on a cache that had been compiled out and no number said which build it came from.",
+      "cases": [
+        {
+          "name": "a feature drops out of the stamp",
+          "old": "    (\"cache\", cfg!(feature = \"cache\")),\n",
+          "new": ""
+        }
+      ]
+    },
+    {
+      "guard": "check_demo_surface",
+      "file": "examples/explorer/web/src/api.ts",
+      "why": "Every adapter endpoint the UI does not call is one somebody decided about, rather than one that quietly stopped being shown.",
+      "cases": [
+        {
+          "name": "the UI stops calling an adapter endpoint",
+          "old": "\"/api/join\"",
+          "new": "\"/api/joins\""
+        }
+      ]
+    },
+    {
+      "guard": "check_site_claims",
+      "file": "site/workbench.html",
+      "why": "The site's numbers are claims about this repository, and a page a visitor reaches first is the worst place for a stale one.",
+      "cases": [
+        {
+          "name": "a site page states a row count the data does not have",
+          "old": "100,000 New York yellow-taxi trip",
+          "new": "900,000 New York yellow-taxi trip"
+        }
+      ]
+    },
+    {
+      "guard": "check_closed_caveats",
+      "file": "scripts/test_check_transport_door.py",
+      "why": "A closed caveat naming a witness that is gone is a closure nobody can check, which is the whole point of recording a `by`.",
+      "cases": [
+        {
+          "name": "a witness needle is renamed out of the test that carries it",
+          "old": "\"a fourth client with no door fails and names it\"",
+          "new": "\"a fourth client without a door fails and names it\""
+        }
+      ]
+    },
+    {
+      "guard": "check_examples_roster",
+      "file": "scripts/run_examples.sh",
+      "why": "run_examples.sh's per-crate floor is what stops a run that built nothing reporting success; a floor below the real count makes the suite vacuous for the difference.",
+      "cases": [
+        {
+          "name": "a crate's floor drops below the examples it has",
+          "old": "    slate-slatedb) least=9 ;;",
+          "new": "    slate-slatedb) least=2 ;;"
+        }
+      ]
+    },
+    {
+      "guard": "check_caveat_citations",
+      "file": "docs/caveat-status.json",
+      "why": "A verdict citing a path that does not resolve is a closure a reader cannot check, and the tracker is the only record of which caveats are still true.",
+      "cases": [
+        {
+          "name": "a verdict cites a script that does not exist",
+          "old": "scripts/check_renamed_column.py, run by check.sh and ci.yml's guards job",
+          "new": "scripts/check_renamed_columns.py, run by check.sh and ci.yml's guards job"
+        }
+      ]
+    },
+    {
+      "guard": "check_mutation_claims",
+      "file": "ledger/2026-09-29-the-mutations-run-again-now.md",
+      "why": "An entry counting mutations must cite the run that produced them; #290 added this because a count was transcribed from a run that was not there.",
+      "cases": [
+        {
+          "name": "an entry cites a mutation record that does not exist",
+          "old": "- `ledger/mutations/20260929T084515-clients-python-tests-test-fixture-py.json`",
+          "new": "- `ledger/mutations/20260929T084515-clients-python-tests-test-fixtures-py.json`"
+        }
+      ]
     }
   ],
   "unmutated": {
-    "check_build_output": "Its subject is the absence of a thing: no build output is tracked, and every package root ignores its own. A mutation would have to *add* a tracked artifact, which `scripts/mutate.py` cannot express -- its patches replace text in one file, and this needs a new file plus a .gitignore edit. Its fixture tests cover the rules over a tree they build.",
-    "check_build_stamp": "Deferred. The stamp is generated at build time from the Cargo manifests, so the honest mutation is to a manifest and the guard's answer depends on a rebuild -- which does not fit on this container's disk beside a mutation run. See the disk note in CLAUDE.md.",
-    "check_caveat_citations": "Deferred. Its input is docs/caveat-status.json, which every entry in this session edits; a mutation run against it races any concurrent triage and the restore would fight it.",
-    "check_closed_caveats": "Deferred. Its witnesses are needles in test files, so the mutation is a rename in a file another guard's suite already mutates -- and two suites mutating one file cannot run at once safely.",
-    "check_demo_surface": "Deferred. Its roster is the demo's adapter endpoints against the UI that calls them, and the UI is TypeScript the guard reads as text; a mutation is cheap but the surface moved twice this month and the anchor would rot faster than the suite is worth.",
-    "check_examples_roster": "Deferred. Its subject is scripts/run_examples.sh's floors and handshake roster, which are also what scripts/test_check_examples_roster.py builds fixtures for; picking an anchor that is not also in that fixture needs a read this session did not do.",
-    "check_mutation_claims": "Deferred. Its input is ledger entries' mutation counts, and a mutation to one would be a deliberate falsehood written into the ledger for the length of a run. It has been exercised for real twice this session, refusing a count this session got wrong.",
-    "check_site_claims": "Deferred. It reads four trees and its claims are counts derived from them, so a one-line anchor that is a real claim rather than incidental prose needs a read this session did not do."
+    "check_build_output": "Its subject is the absence of a thing: no build output is tracked, and every package root ignores its own. A mutation would have to *add* a tracked artifact, which `scripts/mutate.py` cannot express -- its patches replace text in one file, and this needs a new file plus a .gitignore edit. Its fixture tests cover the rules over a tree they build."
   }
 }

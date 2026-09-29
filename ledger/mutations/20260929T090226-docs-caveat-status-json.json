@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:02:26+00:00",
+  "file": "docs/caveat-status.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_caveat_citations.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a verdict cites a script that does not exist",
+      "old": "scripts/check_renamed_column.py, run by check.sh and ci.yml's guards job",
+      "new": "scripts/check_renamed_columns.py, run by check.sh and ci.yml's guards job",
+      "verdict": "caught",
+      "caught_by": [
+        "check_caveat_citations: ok    docs/caveat-status.json parses  (1749 verdicts)"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
