@@ -9715,9 +9715,9 @@
     {
       "entry": "2026-09-20-the-column-the-catalog-knew-about.md",
       "key": "`--print-schema`'s output is not versioned.",
-      "verdict": "open",
-      "by": "a consumer parsing it gets a new key without warning, and the shape has grown twice in two days.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "crates/slate-serverd/src/main.rs publishes `format: 1`, held to the output in both directions by `the_published_shape_and_its_version_move_together`, and scripts/codegen.py -- the one program that parses it -- refuses a format it was not written against. ledger/2026-09-29-a-shape-that-says-which-shape-it-is.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-estimate-a-preview-cannot-make.md",
@@ -12712,6 +12712,34 @@
       "key": "The 1.6 figure is one day.",
       "verdict": "open",
       "by": "46 entries dated 2026-09-29, which are unusually dense in guards and measurements -- both shapes that name their own limits freely. No day of feature work has been counted, so the rate is one sample.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-shape-that-says-which-shape-it-is.md",
+      "key": "It pins key names, not paths.",
+      "verdict": "deliberate",
+      "by": "this entry: modelling the nesting means a second description of `describe` to keep in step, and the failure the version exists for is an added key, not a moved one. The same trade the roster itself makes -- hold the declaration, do not generate it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-shape-that-says-which-shape-it-is.md",
+      "key": "The demo's three adapters do not check the format.",
+      "verdict": "open",
+      "by": "examples/explorer/backends/{go,node} and web/src/api.ts read the generated output rather than the printed schema, so they sit downstream of codegen.py's refusal. Nothing checks that stays true, and a fourth adapter reading --print-schema directly would not be seen.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-shape-that-says-which-shape-it-is.md",
+      "key": "Version 1 is where the shape is today, not a promise about t",
+      "verdict": "deliberate",
+      "by": "this entry: added, removed and renamed keys all bump it, because a compatibility guarantee is a promise this project is too young to keep. KNOWN_FORMATS in scripts/codegen.py is a set rather than a maximum for the same reason.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-shape-that-says-which-shape-it-is.md",
+      "key": "Nothing publishes the format anywhere a human reads it.",
+      "verdict": "open",
+      "by": "docs/validation.md and docs/views.md describe what --print-schema contains and neither mentions the version, so a reader meets it through the refusal or the source.",
       "checked": "2026-09-29"
     }
   ]

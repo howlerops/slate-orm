@@ -756,6 +756,17 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "def stale_skips(",
      "scripts/check_toolchain_pins.py",
  ),
+
+ # --- the published shape says which shape it is, 2026-09-29 -----------------
+ #
+ # `--print-schema` grew two keys in two days with no version. The needle is
+ # the roster the version is pinned to, not `SCHEMA_VERSION` itself: a constant
+ # can survive with nothing holding it to the output, which is the state this
+ # closed. Unique in the file.
+ "print-schema-format": (
+     "const PUBLISHED_KEYS:",
+     "crates/slate-serverd/src/main.rs",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -953,6 +964,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-20-the-column-the-catalog-knew-about.md',
+     '`--print-schema`\'s output is not versioned.'): 'print-schema-format',
     ('2026-09-29-two-rows-for-one-gap.md',
      'It does not sweep the other 124 open rows for duplicates.'): '=read',
     ('2026-09-20-the-attribute-the-builder-already-had.md',

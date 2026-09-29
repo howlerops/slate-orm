@@ -1,0 +1,53 @@
+{
+  "at": "2026-09-29T21:21:11+00:00",
+  "file": "crates/slate-serverd/src/main.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bin",
+    "slate-serverd",
+    "--no-fail-fast"
+  ],
+  "commit": "aeeeb00",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the shape grows a key and the roster is not told",
+      "old": "\"soft_delete\": table.soft_delete().map(|o| o.0),",
+      "new": "\"soft_delete\": table.soft_delete().map(|o| o.0), \"row_count_hint\": 0,",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::the_published_shape_and_its_version_move_together"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the version key stops being published",
+      "old": "&serde_json::json!({ \"format\": SCHEMA_VERSION, \"tables\": tables, \"views\": views }),",
+      "new": "&serde_json::json!({ \"tables\": tables, \"views\": views }),",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::the_published_shape_and_its_version_move_together"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the fixture stops reaching the foreign-key branch",
+      "old": "[[tables.foreign_keys]]",
+      "new": "[tables.__no_foreign_keys]",
+      "verdict": "caught",
+      "caught_by": [
+        "tests::the_published_shape_and_its_version_move_together"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

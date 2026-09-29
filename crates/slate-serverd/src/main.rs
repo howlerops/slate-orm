@@ -971,6 +971,89 @@ fn render_plan(plan: &slate_kernel::migrate::MigrationPlan, catalog: &Catalog) -
     out
 }
 
+/// The shape `--print-schema` publishes, as a number a consumer can branch on.
+///
+/// Spelled `format` in the output rather than `version`, because each table
+/// already carries a `schema_version` — its own, from the catalog — and two
+/// keys a level apart with near-identical names is a consumer reading the
+/// wrong one. `format` says what it versions: the document, not the data.
+///
+/// The output is read by a program — `scripts/codegen.py` generates three
+/// languages' row types from it — and it grew two new keys in two days without
+/// saying so, which is what
+/// `ledger/2026-09-20-the-column-the-catalog-knew-about.md` recorded as
+/// unversioned. A generator reading an unknown key silently is the shape of
+/// defect this repository keeps meeting from the other side.
+///
+/// **A version nobody bumps is worse than no version**, because a consumer
+/// branches on it and is wrong. So it is not a constant somebody remembers:
+/// `the_published_shape_and_its_version_move_together` pins every key the
+/// output can produce, and adding one fails that test until this number moves
+/// in the same commit. That is the same trade
+/// `scripts/check_cost_prose.py` and `scripts/test_check_sh.py` make — hold the
+/// declaration to the tree rather than generate it.
+///
+/// Semantics are deliberately weak, because anything stronger would be a
+/// promise this project is too young to keep: **an added key bumps it, and so
+/// does a removed or renamed one.** A consumer that finds a version it does not
+/// know should say so rather than guess, and the keys it already reads are not
+/// promised to survive a bump.
+const SCHEMA_VERSION: u32 = 1;
+
+/// Every key `describe` can emit, at every depth, as `parent.child`.
+///
+/// Written out rather than derived from the output of one fixture, which is
+/// what makes it a check at all: a fixture with no views or no checks emits
+/// none of their keys, so deriving the roster from a run would pin whatever the
+/// fixture happened to exercise and call a missing branch clean. The test walks
+/// a catalog built to reach every branch and compares against this.
+#[cfg(test)]
+const PUBLISHED_KEYS: &[&str] = &[
+    // the document
+    "format",
+    "tables",
+    "views",
+    // a table
+    "checks",
+    "columns",
+    "foreign_keys",
+    "id",
+    "indexes",
+    "name",
+    "primary_key",
+    "schema_version",
+    "soft_delete",
+    "tenant_column",
+    // a column
+    "added_in",
+    "dropped_in",
+    "element_type",
+    "managed",
+    "nullable",
+    "ordinal",
+    "previous_names",
+    "scale",
+    "type",
+    // an index
+    "descending",
+    "expression",
+    "partial",
+    "predicate",
+    "unique",
+    // a check
+    "column",
+    "message",
+    // a foreign key
+    "on_delete",
+    "parent",
+    // a view, and the filters its spec lowers to
+    "filters",
+    "op",
+    "spec",
+    "table",
+    "value",
+];
+
 fn describe(catalog: &Catalog, views: &views::Views) -> String {
     let tables: Vec<serde_json::Value> = catalog
         .tables()
@@ -1128,8 +1211,13 @@ fn describe(catalog: &Catalog, views: &views::Views) -> String {
             })
         })
         .collect();
-    serde_json::to_string_pretty(&serde_json::json!({ "tables": tables, "views": views }))
-        .unwrap_or_else(|why| format!("{{\"error\": \"{why}\"}}"))
+    // `version` first in source order and irrelevant in the output, which is a
+    // JSON object: a consumer reads it by name. It is here rather than beside
+    // each table because the shape is one contract, not one per table.
+    serde_json::to_string_pretty(
+        &serde_json::json!({ "format": SCHEMA_VERSION, "tables": tables, "views": views }),
+    )
+    .unwrap_or_else(|why| format!("{{\"error\": \"{why}\"}}"))
 }
 
 #[cfg(test)]
@@ -1205,6 +1293,141 @@ mod tests {
         assert!(routing(&empty).unwrap().tenant_affinity);
         let off: config::Routing = toml::from_str("tenant_affinity = false").unwrap();
         assert!(!routing(&off).unwrap().tenant_affinity);
+    }
+
+    /// A configuration reaching every branch `describe` has.
+    ///
+    /// Deliberately not the demo's `head.toml`: that file exists to show a
+    /// product and is edited for reasons that have nothing to do with this
+    /// roster, so a branch would stop being covered the day somebody simplified
+    /// it. This one has exactly one job and its comment says so.
+    const EVERY_BRANCH: &str = r#"
+[listen]
+address = "127.0.0.1:0"
+[storage]
+backend = "memory"
+
+[[tables]]
+name = "orders"
+id = 1
+columns = [
+  { name = "tenant", type = "uuid" },
+  { name = "id", type = "u64" },
+  { name = "state", type = "str" },
+  { name = "total", type = "decimal", scale = 2 },
+  { name = "tags", type = "array", element = "str", nullable = true },
+  { name = "note", type = "str", nullable = true, previous_names = ["memo"] },
+  { name = "created_at", type = "i64", managed = "created_at" },
+  { name = "deleted_at", type = "i64", nullable = true },
+]
+primary_key = ["tenant", "id"]
+tenant_column = "tenant"
+soft_delete = "deleted_at"
+
+[[tables.indexes]]
+name = "by_state"
+id = 10
+columns = ["state"]
+unique = true
+
+[[tables.indexes]]
+name = "by_live_total"
+id = 11
+columns = [{ column = "total", direction = "desc" }]
+where = "deleted_at is null"
+
+[[tables.checks]]
+name = "state_is_known"
+predicate = "state in ('new', 'paid')"
+column = "state"
+message = "state must be new or paid"
+
+[[tables]]
+name = "lines"
+id = 2
+columns = [
+  { name = "tenant", type = "uuid" },
+  { name = "id", type = "u64" },
+  { name = "order_id", type = "u64" },
+]
+primary_key = ["tenant", "id"]
+tenant_column = "tenant"
+
+[[tables.foreign_keys]]
+name = "line_belongs_to_order"
+columns = ["tenant", "order_id"]
+parent = "orders"
+on_delete = "cascade"
+
+[[views]]
+name = "paid_orders"
+query = "SELECT * FROM orders WHERE state = 'paid'"
+"#;
+
+    /// Every key `--print-schema` publishes is in `PUBLISHED_KEYS`, and every
+    /// key in `PUBLISHED_KEYS` is published.
+    ///
+    /// This is what makes `SCHEMA_VERSION` a contract rather than a constant
+    /// somebody remembers. The output is read by `scripts/codegen.py`, it grew
+    /// two keys in two days without saying so, and a version that does not move
+    /// when the shape does is worse than none — a consumer branches on it and
+    /// is wrong.
+    ///
+    /// **Both directions, for different failures.** A key in the output and not
+    /// in the roster is the shape growing silently, which is the defect. A key
+    /// in the roster and not in the output means the fixture below stopped
+    /// reaching a branch, so the roster would be pinning a subset and calling
+    /// it whole — the failure `ledger/2026-09-28-five-column-types-no-pinned-table-carried.md`
+    /// met, where a coverage guard computed its own subject and always agreed
+    /// with itself.
+    ///
+    /// Key *names* at any depth, not paths. A key that moved between nesting
+    /// levels would pass, which is a real hole and a cheap one: modelling the
+    /// nesting means a second description of `describe` to keep in step, and
+    /// the failure this exists to catch is an added key, not a moved one.
+    #[test]
+    fn the_published_shape_and_its_version_move_together() {
+        fn keys(value: &serde_json::Value, into: &mut std::collections::BTreeSet<String>) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, nested) in map {
+                        into.insert(key.clone());
+                        keys(nested, into);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        keys(item, into);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let document: config::Document = toml::from_str(EVERY_BRANCH).unwrap();
+        let catalog = schema::catalog(&document.tables).unwrap();
+        let views = views::views(&document.views, catalog.tables()).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&describe(&catalog, &views)).unwrap();
+
+        let mut found = std::collections::BTreeSet::new();
+        keys(&json, &mut found);
+        let pinned: std::collections::BTreeSet<String> =
+            PUBLISHED_KEYS.iter().map(|k| (*k).to_owned()).collect();
+
+        let added: Vec<_> = found.difference(&pinned).collect();
+        assert!(
+            added.is_empty(),
+            "`--print-schema` publishes {added:?}, which `PUBLISHED_KEYS` does not name. \
+             Add them there and bump `SCHEMA_VERSION` in the same commit: a consumer \
+             branching on an unmoved version reads a shape it does not have."
+        );
+        let missing: Vec<_> = pinned.difference(&found).collect();
+        assert!(
+            missing.is_empty(),
+            "`PUBLISHED_KEYS` names {missing:?}, which `EVERY_BRANCH` no longer produces. \
+             Either the key is gone — drop it and bump `SCHEMA_VERSION` — or the fixture \
+             stopped reaching that branch, in which case this roster is pinning a subset."
+        );
     }
 
     #[test]

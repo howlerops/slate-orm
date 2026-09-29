@@ -14,6 +14,7 @@ Run directly (`python3 scripts/test_codegen.py`) or under pytest.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -1075,6 +1076,88 @@ def test_the_web_module_says_it_is_generated() -> None:
     in a `src/` directory beside hand-written code and assume is editable."""
     body = codegen.web_module([table("t", [column("id", "u64", 0)], [0])], [])
     assert body.startswith("// " + codegen.BANNER), body[:120]
+
+
+def test_a_known_print_schema_format_is_read() -> None:
+    """The version the generator was written against passes silently."""
+    codegen.refuse_unknown_format({"format": 1, "tables": [], "views": []})
+
+
+def test_an_unknown_print_schema_format_is_refused() -> None:
+    """A server ahead of this generator stops it rather than being guessed at.
+
+    The row types this file emits are positional, so reading a shape it does not
+    know is how a decoder compiles and returns the wrong column — the failure the
+    version exists to prevent, and the reason this refuses instead of warning.
+    """
+    for shape in ({"format": 2}, {"format": "1"}, {"format": None}):
+        try:
+            codegen.refuse_unknown_format(shape)
+        except SystemExit as stopped:
+            assert "this generator reads 1" in str(stopped), stopped
+        else:
+            raise AssertionError(f"{shape} was accepted")
+
+
+def test_a_print_schema_with_no_format_is_refused() -> None:
+    """Absent is not 1.
+
+    The shape grew twice in two days before anybody versioned it, so a document
+    with no `format` is some shape from before the counting started rather than
+    the first one. Assuming 1 would read those as current.
+    """
+    try:
+        codegen.refuse_unknown_format({"tables": [], "views": []})
+    except SystemExit as stopped:
+        assert "published format None" in str(stopped), stopped
+    else:
+        raise AssertionError("a document with no `format` was accepted")
+
+
+def test_the_generator_checks_the_format_before_it_reads_a_table() -> None:
+    """The refusal is *called*, not merely correct.
+
+    A mutation that deleted the call from `main` and left the function intact
+    survived the three tests above — the "generated, compiled, never called"
+    shape this repository has met five times, and the one the function's own
+    docstring cites.
+
+    Driven through the real path rather than by replacing `codegen.catalog`:
+    `ty` refuses to assign anything to a module's function attribute, and the
+    stub would have skipped `catalog()` anyway. A three-line script standing in
+    for `slate-serverd` exercises the subprocess call, the JSON parse and the
+    refusal, which is what a wrong `--serverd` on a real machine would do.
+    """
+    argv = sys.argv[:]
+    with tempfile.TemporaryDirectory() as directory:
+        where = Path(directory)
+        fake = where / "serverd"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, sys\n"
+            'print(json.dumps({"format": 999, "tables": [], "views": []}))\n',
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        (where / "head.toml").write_text("", encoding="utf-8")
+        try:
+            sys.argv = [
+                "codegen.py",
+                "--config",
+                str(where / "head.toml"),
+                "--serverd",
+                str(fake),
+                "--python",
+                str(where / "out.py"),
+            ]
+            try:
+                codegen.main()
+            except SystemExit as stopped:
+                assert "published format 999" in str(stopped), stopped
+            else:
+                raise AssertionError("main() read a shape it does not know")
+        finally:
+            sys.argv = argv
 
 
 def main() -> int:

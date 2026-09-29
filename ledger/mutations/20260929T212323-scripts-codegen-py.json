@@ -1,0 +1,50 @@
+{
+  "at": "2026-09-29T21:23:23+00:00",
+  "file": "scripts/codegen.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_codegen.py"
+  ],
+  "commit": "aeeeb00",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an absent format is read as the first one",
+      "old": "    found = printed.get(\"format\")",
+      "new": "    found = printed.get(\"format\", 1)",
+      "verdict": "caught",
+      "caught_by": [
+        "test_a_print_schema_with_no_format_is_refused: AssertionError: a document with no `format` was accepted"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the generator stops checking the format at all",
+      "old": "    refuse_unknown_format(printed)",
+      "new": "    pass",
+      "verdict": "caught",
+      "caught_by": [
+        "test_the_generator_checks_the_format_before_it_reads_a_table: AssertionError: main() read a shape it does not know"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unknown format warns instead of refusing",
+      "old": "    raise SystemExit(\n        f\"`--print-schema` published format {found!r}, and this generator reads \"",
+      "new": "    print(\n        f\"`--print-schema` published format {found!r}, and this generator reads \"",
+      "verdict": "caught",
+      "caught_by": [
+        "test_a_print_schema_with_no_format_is_refused: AssertionError: a document with no `format` was accepted",
+        "test_an_unknown_print_schema_format_is_refused: AssertionError: {'format': 2} was accepted",
+        "test_the_generator_checks_the_format_before_it_reads_a_table: AssertionError: main() read a shape it does not know"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
