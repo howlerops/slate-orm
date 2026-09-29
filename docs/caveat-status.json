@@ -8381,9 +8381,9 @@
     {
       "entry": "2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md",
       "key": "No freshness-floor assertion on the TypeScript side. The Go ",
-      "verdict": "open",
-      "by": "still absent. The Go client's interceptor test covers the shape of the mistake and not every instance of it, and the entry is explicit that this is weaker than it sounds.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-a-control-that-controlled-nothing-in-two-clients.md: the TypeScript suite reads the floor off the wire through an interceptor, which Client.connect's `options` argument made possible; and the Go control it was ported from was vacuous and is fixed",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md",
@@ -11258,6 +11258,26 @@
       "key": "The packaging caveat was closed by reading, not by running.",
       "verdict": "deliberate",
       "by": "this entry: the four tests do run, inside the 345 \u2014 what was not checked is their behaviour on a machine without network, and their own file records the one time they skipped silently",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
+      "key": "It covers `Related` and no other RPC.",
+      "verdict": "deliberate",
+      "by": "this entry: the floor is built in one shared helper per client, so a mutation there breaks every read and surfaces here \u2014 the same weaker claim the 09-16 entry made about Go, restated honestly",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
+      "key": "The Python client still has no such assertion.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
+      "key": "The harness's staleness guard fired twice on unrelated crate",
+      "verdict": "deliberate",
+      "by": "this entry: the guard's own comment calls modification times crude and erring toward refusal is the safe direction; recorded because two false positives in one session is the first evidence the crudeness costs anything",
       "reviewed": "2026-09-29"
     }
   ]

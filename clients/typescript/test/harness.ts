@@ -18,7 +18,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 
-import { Client, type Identity } from "../src/index.js";
+// `grpc` through the client rather than from `@grpc/grpc-js` directly:
+// depending on it here would install a second copy, and the objects cross
+// the boundary. The re-export exists for exactly this.
+import { Client, grpc, type Identity } from "../src/index.js";
+
+type ChannelOptions = grpc.ChannelOptions;
 
 export const CONFIG = `
 [listen]
@@ -158,7 +163,19 @@ function refuseIfStale(binaryPath: string): void {
 
 export interface Serving {
   readonly address: string;
-  client(identity?: Identity): Client;
+  /**
+   * A client on this node.
+   *
+   * `options` reaches `Client.connect`'s fourth argument untouched, which is
+   * how a test installs a grpc-js interceptor. It is here because some
+   * properties of a client are properties of the *request* and not of the
+   * answer — a dropped freshness floor returns exactly the right rows — so the
+   * only place to assert them is the wire. The Go suite has done this since
+   * 2026-09-16; this client had no argument to pass an interceptor through
+   * until `ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`
+   * added one.
+   */
+  client(identity?: Identity, options?: ChannelOptions): Client;
   stop(): void;
 }
 
@@ -195,8 +212,8 @@ export async function start(extra = ""): Promise<Serving> {
   const clients: Client[] = [];
   return {
     address,
-    client(identity = APP) {
-      const c = Client.connect(address, identity);
+    client(identity = APP, options: ChannelOptions = {}) {
+      const c = Client.connect(address, identity, grpc.credentials.createInsecure(), options);
       clients.push(c);
       return c;
     },

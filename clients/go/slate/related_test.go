@@ -451,8 +451,19 @@ func TestRelatedCarriesTheFreshnessFloor(t *testing.T) {
 	// And a session that does not want monotonic reads sends none, so the
 	// assertion above is about the watermark rather than about a field that
 	// is always populated.
+	//
+	// **The loose session writes first, and that is the whole control.**
+	// Without it this passed for the wrong reason for a fortnight: a fresh
+	// session has no watermark, so the floor is absent whether or not
+	// `freshness()` consults `s.monotonic`, and dropping that half of the
+	// condition survived. Found on 2026-09-29 by mutating it while porting
+	// this test to the TypeScript client, which had copied the hole.
 	related = nil
 	loose := client.SessionWithoutMonotonicReads()
+	if _, err := loose.Insert(ctx, "libraries",
+		[]slate.Value{slate.Uint(2), slate.String("annexe")}); err != nil {
+		t.Fatalf("seeding the loose session: %v", err)
+	}
 	if _, err := loose.Related(ctx, "shelves",
 		slate.Relation{On: "shelves", Through: "shelf_library", Way: slate.Children},
 		[]slate.Value{slate.Uint(1)}); err != nil {

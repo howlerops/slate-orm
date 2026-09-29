@@ -5,6 +5,7 @@ import { start, type Serving } from "./harness.js";
 import {
   bytes,
   eq,
+  grpc,
   int,
   isKind,
   str,
@@ -253,4 +254,80 @@ test("the grouping key tells an i64 from a u64", () => {
   // And bytes from the uuid with the same sixteen bytes.
   const sixteen = new Uint8Array(16).fill(3);
   assert.notEqual(valueKey(bytes(sixteen)), valueKey(uuid(sixteen)));
+});
+
+/**
+ * Every request this client sent, by RPC path, with its message.
+ *
+ * The freshness floor and the request count are properties of the *request*,
+ * not of the answer: a client that dropped the floor returns exactly the right
+ * rows, and nothing assertable about the result distinguishes it. So the
+ * request itself is what has to be looked at.
+ *
+ * The Go suite has done this since 2026-09-16 and this one could not:
+ * `Client.connect` had no argument to pass an interceptor through until
+ * `ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`
+ * added `options`, which is the whole reason that entry left the caveat this
+ * closes.
+ *
+ * One interceptor covers a unary write and a server-streaming read both,
+ * because grpc-js runs `interceptors` on every call regardless of shape — Go
+ * needs two, and the Go adapter shipped with only one for a day. `sendMessage`
+ * rather than the call itself, because the message is what carries the field.
+ */
+function recording(seen: (method: string, message: unknown) => void) {
+  return {
+    interceptors: [
+      (options: grpc.InterceptorOptions, nextCall: grpc.NextCall) =>
+        new grpc.InterceptingCall(nextCall(options), {
+          sendMessage(message: unknown, next: (message: unknown) => void) {
+            seen(options.method_definition.path, message);
+            next(message);
+          },
+        }),
+    ],
+  };
+}
+
+test("a monotonic session sends a freshness floor and a loose one does not", async () => {
+  const server = await start(RELATED_TABLES);
+  servers.push(server);
+
+  const related: unknown[] = [];
+  const client = server.client(undefined, recording((method, message) => {
+    if (method.endsWith("/Related")) related.push(message);
+  }));
+
+  // A write first: the floor is the watermark, and a session that has read and
+  // written nothing has no watermark to send. Without this the assertion below
+  // would pass against a client that never sets the field at all.
+  const session = client.session();
+  await session.insert("libraries", [uint(1), str("main")]);
+  await session.related("shelves", CHILDREN, [uint(1)]);
+
+  assert.equal(related.length, 1, "want exactly one Related request");
+  assert.ok(
+    (related[0] as { freshness?: unknown }).freshness,
+    `the request carried no freshness floor: ${JSON.stringify(related[0])}`,
+  );
+
+  // And the control: a session that does not want monotonic reads sends none,
+  // so the assertion above is about the watermark rather than about a field
+  // that is always populated.
+  //
+  // **The loose session writes first, and that is the whole control.** Without
+  // it this passed for the wrong reason: a fresh session has no watermark, so
+  // the floor is absent whether or not the client consults `#monotonic`, and
+  // the mutation that drops the monotonic half survived. Found by running it.
+  related.length = 0;
+  const loose = client.sessionWithoutMonotonicReads();
+  await loose.insert("libraries", [uint(2), str("annexe")]);
+  await loose.related("shelves", CHILDREN, [uint(1)]);
+
+  assert.equal(related.length, 1, "want exactly one Related request");
+  assert.equal(
+    (related[0] as { freshness?: unknown }).freshness ?? undefined,
+    undefined,
+    `a non-monotonic session should send no floor: ${JSON.stringify(related[0])}`,
+  );
 });

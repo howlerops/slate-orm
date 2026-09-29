@@ -443,6 +443,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "python-wheel-imports": (
      "test_the_installed_package_imports",
      "clients/python/tests/test_packaging.py",
+ ),
+
+ # --- the freshness floor read off the wire, 2026-09-29 -----------------------
+ "typescript-freshness-floor": (
+     "a monotonic session sends a freshness floor and a loose one does not",
+     "clients/typescript/test/related.test.ts",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -637,6 +643,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md',
+     'No freshness-floor assertion on the TypeScript side. The Go '):
+        'typescript-freshness-floor',
     ('2026-09-14-withdrawing-the-rename-caveat.md',
      'The Python client has no equivalent test. Its fingerprint is'):
         'python-rename-declared',
