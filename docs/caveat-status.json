@@ -11270,8 +11270,9 @@
     {
       "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
       "key": "The Python client still has no such assertion.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md: a Recording interceptor in the Python suite, and the assertion found that this client's floor survives monotonic_reads=False where Go's and TypeScript's do not",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
@@ -11279,6 +11280,31 @@
       "verdict": "deliberate",
       "by": "this entry: the guard's own comment calls modification times crude and erring toward refusal is the safe direction; recorded because two false positives in one session is the first evidence the crudeness costs anything",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "It does not resolve the divergence.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "It does not check the other RPCs.",
+      "verdict": "deliberate",
+      "by": "this entry: the floor is built in one helper per client, so a mutation there breaks every read and surfaces here \u2014 the same position all three suites take",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "Nothing compares the three automatically.",
+      "verdict": "deliberate",
+      "by": "this entry: the conformance runner compares answers and this is a per-session flag that changes only the request; an endpoint existing only for the flag is a worse home than the three suites that each already have an interceptor",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "The probe is not in the tree.",
+      "verdict": "moment"
     }
   ]
 }

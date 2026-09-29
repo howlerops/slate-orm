@@ -449,6 +449,10 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "typescript-freshness-floor": (
      "a monotonic session sends a freshness floor and a loose one does not",
      "clients/typescript/test/related.test.ts",
+ ),
+ "python-freshness-floor": (
+     "test_a_non_monotonic_session_still_carries_it_here_and_not_in_the_other_two",
+     "clients/python/tests/test_round_trips.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -643,6 +647,11 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # The witness is the divergence test rather than the plain one: the caveat
+    # asked for an assertion in this client, and what the assertion found is
+    # the thing worth keeping alive.
+    ('2026-09-29-a-control-that-controlled-nothing-in-two-clients.md',
+     'The Python client still has no such assertion.'): 'python-freshness-floor',
     ('2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md',
      'No freshness-floor assertion on the TypeScript side. The Go '):
         'typescript-freshness-floor',

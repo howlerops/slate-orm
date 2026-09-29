@@ -54,7 +54,7 @@ from typing import Any
 import grpc
 import pytest
 
-from slate import Atomicity, Batch, Client, Query
+from slate import Atomicity, Batch, Client, Query, i64, u64
 from slate.values import PyValue
 
 from .conftest import APP, Serving
@@ -249,8 +249,7 @@ def test_paging_by_cursor_is_one_round_trip_per_page(
     # cursor twin has the same hole — `after(cursor)` mutated to `after(None)`
     # returns twenty rows in four calls — so both tests walk the keys.
     assert seen == list(range(FIRST_KEY, FIRST_KEY + PAGES * PAGE_SIZE)), (
-        f"{PAGES} pages of {PAGE_SIZE} should walk the keys once, in order; "
-        f"got {seen}"
+        f"{PAGES} pages of {PAGE_SIZE} should walk the keys once, in order; got {seen}"
     )
 
 
@@ -290,8 +289,7 @@ def test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor(
         seen += [row[0] for row in rows]
 
     assert counter.calls["Query"] == PAGES, (
-        f"{PAGES} offset pages cost {PAGES} calls, the same as by cursor; "
-        f"got {counter.calls}"
+        f"{PAGES} offset pages cost {PAGES} calls, the same as by cursor; got {counter.calls}"
     )
     # The *keys*, not a count of them. A count cannot tell four pages from four
     # copies of the first page, and that is not hypothetical: a mutation pinning
@@ -299,6 +297,90 @@ def test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor(
     # cursor twin has the same hole — `after(cursor)` mutated to `after(None)`
     # returns twenty rows in four calls — so both tests walk the keys.
     assert seen == list(range(FIRST_KEY, FIRST_KEY + PAGES * PAGE_SIZE)), (
-        f"{PAGES} pages of {PAGE_SIZE} should walk the keys once, in order; "
-        f"got {seen}"
+        f"{PAGES} pages of {PAGE_SIZE} should walk the keys once, in order; got {seen}"
     )
+
+
+class Recording(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor):
+    """Keeps every request this client sent, by RPC name.
+
+    `Counting` above answers how many; this answers what was in them. The
+    freshness floor is a property of the *request*: a client that dropped it
+    returns exactly the right rows on a single-node fixture, so nothing about
+    the answer distinguishes one that sends it from one that does not.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[tuple[str, Any]] = []
+
+    def _note(self, details: Any, request: Any) -> None:
+        self.seen.append((details.method.rsplit("/", 1)[-1], request))
+
+    def intercept_unary_unary(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        self._note(client_call_details, request)
+        return continuation(client_call_details, request)
+
+    def intercept_unary_stream(
+        self, continuation: Any, client_call_details: Any, request: Any
+    ) -> Any:
+        self._note(client_call_details, request)
+        return continuation(client_call_details, request)
+
+
+def _queries_carrying_a_floor(server: Serving, *, monotonic: bool, key: int) -> list[bool]:
+    """Write, then read, and report whether each `Query` carried a floor."""
+    recorder = Recording()
+    channel = grpc.intercept_channel(grpc.insecure_channel(server.address), recorder)
+    client = Client(server.address, APP, channel=channel, monotonic_reads=monotonic)
+    client.wait_for_ready()
+    try:
+        # The write first: the floor is the watermark, and a session that has
+        # read and written nothing has none to send. Without this the
+        # assertions below would hold against a client that never sets the
+        # field — the hole this same test had in Go and TypeScript, found on
+        # 2026-09-29 and fixed there in the same change as this.
+        client.insert(DOCS, [(u64(key), "floor", i64(1), None)], upsert=True)
+        recorder.seen.clear()
+        q = Query(DOCS)
+        list(client.query(q.where(q.c.id.eq(u64(key)))))
+        return [
+            request.HasField("freshness") for method, request in recorder.seen if method == "Query"
+        ]
+    finally:
+        client.delete(DOCS, [[u64(key)]])
+        client.close()
+
+
+def test_a_read_after_a_write_carries_the_freshness_floor(server: Serving) -> None:
+    assert _queries_carrying_a_floor(server, monotonic=True, key=FIRST_KEY + 80) == [True]
+
+
+def test_a_non_monotonic_session_still_carries_it_here_and_not_in_the_other_two(
+    server: Serving,
+) -> None:
+    """**A measured three-client divergence, pinned rather than resolved.**
+
+    `monotonic_reads=False` in this client stops the watermark advancing from
+    *reads* — see `Session`'s own docstring — and leaves it advancing from this
+    session's own commits, so a read after a write still carries a floor and
+    read-your-writes survives. Go's `SessionWithoutMonotonicReads` and
+    TypeScript's `sessionWithoutMonotonicReads` drop the floor entirely: both
+    check the flag inside the helper that builds it, so a session that wrote
+    sends nothing and can miss its own write.
+
+    Measured on 2026-09-29, all three, with an interceptor. Each client is
+    self-consistent and each documents what it does; they simply disagree, and
+    nothing had compared them because the conformance runner does not reach a
+    per-session flag.
+
+    Which side is right is a real decision and is not made here. The flag is
+    named for *monotonic reads*, and read-your-writes is a different guarantee
+    — which argues for this client. Go's own doc says the session "does not
+    carry its watermark", which argues for that one. Changing either is a
+    shipped client's contract, so it wants its own change with its own
+    reasoning; this pins today's answer so the change is visible when somebody
+    makes it.
+    """
+    assert _queries_carrying_a_floor(server, monotonic=False, key=FIRST_KEY + 81) == [True]
