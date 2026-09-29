@@ -12487,6 +12487,56 @@
       "verdict": "deliberate",
       "by": "this entry: check.sh has a shell function and ci.yml has a one-liner because `gofmt -l` exits zero whatever it finds, so both places have to read its output and neither can be the other's byte-for-byte copy. SPELLED_IN_CI records that the two correspond, which is what a tool can hold; that they still agree is prose against prose. Extracting a shared script would be a third file in the loop to keep true, for a duplication of one line.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
+      "key": "CLAUDE.md's half is still a loop over every word before \"job",
+      "verdict": "open",
+      "by": "ordinary undone work, and this change made it likelier rather than less: extending COUNTED down to `one` means `four` and `six` now resolve, so prose like 'the four jobs that build binaries' would be compared against the job total. The check.sh half is anchored on the claim; the CLAUDE.md half is not, and the same anchoring would do it.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
+      "key": "Nothing derives the prose from the count.",
+      "verdict": "deliberate",
+      "by": "this entry: both files state a number a rule compares, and generating the sentence instead means prose assembled at build time in a repository whose docs are read in the editor. The guard telling an editor afterwards is the trade, and it is the same one scripts/check_cited_docs.py and scripts/check_cost_prose.py make \u2014 hold the prose, do not write it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
+      "key": "Only two files were swept.",
+      "verdict": "open",
+      "by": "the sweep was two greps, for `test_check_sh` and for `seventeen`. A third file describing the guard in words matching neither is exactly as stale as these two were, and nothing looked.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
+      "key": "The eleven is a count of jobs, not of coverage.",
+      "verdict": "deliberate",
+      "by": "this entry: the sentence says how scattered the static checks are, which is what a reader deciding whether one command can replace them needs. A coverage figure is a different number \u2014 check.sh runs 71 of the scripts job's steps and 1 of typescript's \u2014 and stating it would need a definition of what fraction of what.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-first-run-said-red-and-it-was-ordering.md",
+      "key": "`check.sh` has the same hidden prerequisite and still claims",
+      "verdict": "open",
+      "by": "ordinary undone work, and a live wrong sentence: check.sh's header says it needs no built binary, and its ts-adapter-types step needs the declarations clients/typescript/package.json points `types` at, which only its build produces. On a clean checkout that step fails the way CI just did. Either the sentence gains a fifth exception or the script builds, and neither is chosen.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-first-run-said-red-and-it-was-ordering.md",
+      "key": "Thirteen errors, one cause, and nothing says so.",
+      "verdict": "deliberate",
+      "by": "this entry: tsc has no mode that reports only the root error, and post-processing a compiler's output to guess which diagnostic caused the others is a heuristic that would hide a real second failure the first time two were independent. The log is complete and badly ordered, which is the compiler's shape rather than this repository's.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-first-run-said-red-and-it-was-ordering.md",
+      "key": "The other four toolchain checks passed once.",
+      "verdict": "narrowed",
+      "by": "one green CI run each, on run 502 -- the run whose only failure was the fifth -- against zero before today. That is the evidence that they run at all, which is what the previous entry could not claim.",
+      "residual": "one run on one runner image says nothing about stability across images, and CLAUDE.md records four separate cases of a check green in one toolchain and red in another.",
+      "checked": "2026-09-29"
     }
   ]
 }

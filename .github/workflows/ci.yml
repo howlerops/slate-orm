@@ -698,8 +698,6 @@ jobs:
         working-directory: examples/explorer/backends/go
       - run: test -z "$(gofmt -l .)" || { echo "gofmt would rewrite:"; gofmt -l .; exit 1; }
         working-directory: examples/explorer/backends/go
-      - run: npx --no-install tsc -p tsconfig.json --noEmit
-        working-directory: examples/explorer/backends/node
       # The node adapter resolves `@slate-orm/client` to a symlink into
       # `clients/typescript` and imports its *built* `dist/`, which `npm ci`
       # does not produce — `run.sh` builds it explicitly for exactly this
@@ -708,6 +706,15 @@ jobs:
       # on a missing module rather than on anything it was testing.
       - run: npm run build
         working-directory: clients/typescript
+      # After that build, not before it. The adapter imports
+      # `@slate-orm/client`, whose type declarations are what `npm run build`
+      # above produces, so placing this earlier gave `TS2307: cannot find
+      # module` and then twelve cascading `implicitly has an 'any' type` —
+      # twelve errors with one cause. It passed on a laptop because `dist/`
+      # was already there from an earlier run, which is the whole reason a
+      # check has to fire in CI before anyone believes it.
+      - run: npx --no-install tsc -p tsconfig.json --noEmit
+        working-directory: examples/explorer/backends/node
       - run: npm test
         working-directory: examples/explorer/backends/node
       # The only thing anywhere that compares the three clients to *each

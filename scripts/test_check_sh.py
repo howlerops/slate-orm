@@ -457,6 +457,26 @@ def joining() -> list[str]:
 #: a list nobody maintains, and one too short fails loudly the day a
 #: twenty-sixth job lands, which is the right failure.
 COUNTED = {
+    # `check.sh` says how many jobs hold a static check, which is a different
+    # quantity from the job total and lives lower: eleven of twenty-three
+    # today. The map covers both because the alternative is two maps of number
+    # words, and a second one would go stale on its own schedule.
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
     "seventeen": 17,
     "eighteen": 18,
     "nineteen": 19,
@@ -475,7 +495,35 @@ COUNTED = {
 A_JOB = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.M)
 
 
-def job_count_matches() -> list[str]:
+def jobs_holding_a_static_check(steps: list[tuple[str, str]]) -> int:
+    """How many `ci.yml` jobs run at least one step `check.sh` also runs.
+
+    `check.sh`'s own header says the static checks are "spread across N of
+    them", which is the second number in that file with the same weakness as
+    the first — prose beside a thing that grows. It said *six* against eleven.
+
+    Derived rather than counted by hand, and from the same `script_checks()`
+    the rules above use, so the sentence and the roster cannot disagree about
+    what is being counted. `SPELLED_IN_CI`'s values are included because a job
+    whose only overlap is the `gofmt` wrapper is still a job holding a check
+    the script runs.
+    """
+    commands = {command for _, command in script_checks()} | set(SPELLED_IN_CI.values())
+    text = (ROOT / ".github/workflows/ci.yml").read_text()
+    holding: set[str] = set()
+    current: str | None = None
+    for line in text.splitlines():
+        head = A_JOB.match(line)
+        if head:
+            current = head.group(1)
+            continue
+        step = re.match(r"^\s*- run: (.+)$", line)
+        if step and current and step.group(1).strip() in commands:
+            holding.add(current)
+    return len(holding)
+
+
+def job_count_matches(steps: list[tuple[str, str]]) -> list[str]:
     """Complaints about `CLAUDE.md`'s job count against `ci.yml`.
 
     `CLAUDE.md` says how many jobs CI runs, twice, and says of itself:
@@ -518,6 +566,61 @@ def job_count_matches() -> list[str]:
                 f"has drifted twice before; correct every occurrence, not the "
                 f"first."
             )
+
+    # `check.sh`'s own header carries the same two numbers and nothing read
+    # them. It said "seventeen jobs" against twenty-three and "spread across
+    # six of them" against eleven — the identical drift this function was
+    # written for, in the file the function is named after, found only because
+    # somebody grepped for the word `seventeen`.
+    # Unwrapped first: `check.sh` is a shell file whose prose is a comment
+    # block, so a sentence spans lines with a `# ` between them and a naive
+    # match sees "six" and "of them" as unrelated. The first draft of this
+    # missed the `spread across` sentence entirely for exactly that reason,
+    # and reported it as gone rather than as wrong — a guard saying "the
+    # sentence moved" about a sentence that is still there.
+    script = re.sub(r"\n#\s*", " ", (ROOT / "scripts/check.sh").read_text())
+
+    # Anchored on the claim rather than on the word "jobs", unlike
+    # `CLAUDE.md`'s loop above, because this file uses "jobs" as an ordinary
+    # noun too: "the jobs that find the *interesting* failures" is prose. A
+    # loop over every word before "jobs" reported `'the'` as a number it did
+    # not recognise, which is a guard crying wolf on English — and a guard
+    # that cries wolf is one people stop reading. Anchoring keeps the
+    # unknown-word case, which matters: a count past what `COUNTED` knows has
+    # to fail loudly rather than pass quietly.
+    claim = re.search(r"`ci\.yml` is ([a-z]+(?:-[a-z]+)?) jobs", script)
+    if not claim:
+        said.append(
+            "check.sh no longer says how many jobs ci.yml has, so this half "
+            "has nothing to hold to. Either the sentence moved — put this back "
+            "on it — or it is gone and so is the reason for this."
+        )
+    elif claim.group(1) not in COUNTED:
+        said.append(
+            f"check.sh says ci.yml is {claim.group(1)!r} jobs, which is not a "
+            f"number COUNTED knows; add it if CI really has that many"
+        )
+    elif COUNTED[claim.group(1)] != jobs:
+        said.append(f"check.sh says {claim.group(1)!r} jobs and ci.yml has {jobs}")
+
+    holding = jobs_holding_a_static_check(steps)
+    spread = re.search(r"spread across ([a-z]+(?:-[a-z]+)?) of them", script)
+    if not spread:
+        said.append(
+            "check.sh no longer says how many jobs hold the static checks, so "
+            "this half has nothing to hold to. Either the sentence moved — put "
+            "this back on it — or it is gone and so is the reason for this."
+        )
+    elif spread.group(1) not in COUNTED:
+        said.append(
+            f"check.sh says the checks are spread across {spread.group(1)!r} "
+            f"jobs, which is not a number COUNTED knows"
+        )
+    elif COUNTED[spread.group(1)] != holding:
+        said.append(
+            f"check.sh says the checks are spread across {spread.group(1)!r} "
+            f"jobs and {holding} of ci.yml's jobs run one"
+        )
     return said
 
 
@@ -596,7 +699,7 @@ def main() -> int:
         ),
         (
             "CLAUDE.md's job count is ci.yml's",
-            job_count_matches(),
+            job_count_matches(steps),
         ),
         (
             "every check.sh step runs in a workflow or is in ONLY_LOCAL",

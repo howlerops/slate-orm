@@ -3,8 +3,12 @@
 #
 # # Why this exists
 #
-# `ci.yml` is seventeen jobs and the static checks in it are spread across six
-# of them, in four languages, from five working directories. A session that runs
+# `ci.yml` is twenty-three jobs and the static checks in it are spread across
+# eleven of them, in four languages, from five working directories. Both
+# numbers said something else — seventeen and six — until
+# `scripts/test_check_sh.py` was taught to read them, which is the third time
+# a count in this repository's prose went stale beside a thing that grows.
+# A session that runs
 # "the lint" runs one of them. Three commits in one afternoon went red on a
 # check that existed, was cheap, and was run from the wrong directory or not at
 # all:

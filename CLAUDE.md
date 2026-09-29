@@ -124,9 +124,12 @@ It runs all of them and reports at the end rather than stopping at the first,
 because a session that fixes one and re-runs pays the whole cost again to find
 the second. It needs no built binary, no browser, no container and no network,
 which is what makes it worth running before every commit — and is exactly why
-it is not enough. `scripts/test_check_sh.py`, which CI runs, fails if a step is
-added to `ci.yml` and neither listed in the script nor written down as one it
-cannot run.
+it is not enough. `scripts/test_check_sh.py`, which CI runs, holds the two to
+each other **both ways**: a step added to `ci.yml` fails it unless the script
+runs it or `ELSEWHERE` says why not, and a step added to `check.sh` fails it
+unless a workflow runs it or `ONLY_LOCAL` says why not. The second half is new,
+and adding it found fourteen steps — nine guards and five toolchain checks —
+that had been running here and nowhere else.
 
 Then the suites it cannot reach, whichever your change touches:
 

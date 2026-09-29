@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-29T19:46:49+00:00",
+  "file": "scripts/check.sh",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "2ccf840",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "check.sh's job count drifts",
+      "old": "# `ci.yml` is twenty-three jobs and the static checks in it are spread across",
+      "new": "# `ci.yml` is seventeen jobs and the static checks in it are spread across",
+      "verdict": "caught",
+      "caught_by": [
+        "CLAUDE.md's job count is ci.yml's"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "check.sh's spread count drifts",
+      "old": "# eleven of them, in four languages",
+      "new": "# six of them, in four languages",
+      "verdict": "caught",
+      "caught_by": [
+        "CLAUDE.md's job count is ci.yml's"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the sentence carrying the job count is gone",
+      "old": "# `ci.yml` is twenty-three jobs and the static checks in it are spread across\n# eleven of them, in four languages, from five working directories.",
+      "new": "# CI runs a lot of jobs and the static checks are spread over several.",
+      "verdict": "caught",
+      "caught_by": [
+        "CLAUDE.md's job count is ci.yml's"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
