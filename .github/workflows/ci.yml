@@ -336,6 +336,13 @@ jobs:
       - run: python3 scripts/test_check_secret_types.py
       - run: python3 scripts/check_cited_docs.py
       - run: python3 scripts/test_check_cited_docs.py
+      # The same failure one level up from check_cited_tests.py, which
+      # matches identifiers: a docs page naming a *file* that has been
+      # renamed away points a reader at nothing, and nothing compiles a
+      # document. A citation may be written relative to a crate, so a path
+      # resolves when it is the tail of a tracked one.
+      - run: python3 scripts/check_cited_files.py
+      - run: python3 scripts/test_check_cited_files.py
       # A handler must authorise before it touches a table's shape.
       # Security finding 8 was fixed twice — the second time because
       # the first covered the handlers it was written about and the

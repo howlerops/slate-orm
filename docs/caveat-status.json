@@ -11649,8 +11649,10 @@
     {
       "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
       "key": "Only `check_renamed_column.py` was actually mutated against.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md: six guards now have one, and the survey found a gap -- not a guard green for the wrong reason, but a class no guard covered, now scripts/check_cited_files.py",
+      "residual": "twenty of the twenty-seven still have none, and the six were chosen by which mutation was cheapest to construct rather than by which guard was least examined"
     },
     {
       "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
@@ -11658,6 +11660,37 @@
       "verdict": "narrowed",
       "by": "scripts/test_mutate_guard.py removes them in a finally, which covers every exit but a kill; the six names (passes, refuses, raises, exits_two, silent, prints_a_traceback_and_passes) are not check_* so no guard's own roster picks them up while they exist",
       "residual": "a SIGKILL mid-run leaves six files in scripts/, which scripts/mutate.py solved for itself with an in-flight marker and this does not",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "Twenty guards still have no real-tree mutation.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "Nothing re-runs any of them.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "`EXTERNAL` has one entry and no test of its own reason.",
+      "verdict": "deliberate",
+      "by": "this entry: whose a file is is a claim about another repository, and no check this repository runs can settle it. What is checkable -- that the path is still cited and still does not resolve here -- is checked from both sides.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "The suffix rule accepts a citation that resolves to the wron",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "Only `docs/` is in scope.",
+      "verdict": "open",
       "checked": "2026-09-29"
     }
   ]
