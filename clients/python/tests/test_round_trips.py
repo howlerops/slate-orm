@@ -55,10 +55,11 @@ import grpc
 import pytest
 
 from slate import Atomicity, Batch, Client, Query, i64, u64
+from slate._proto.slate.v1 import records_pb2 as pb
 from slate.values import PyValue
 
 from .conftest import APP, Serving
-from .fixture import DOCS
+from .fixture import DOCS, SHELVES
 
 
 class Counting(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor):
@@ -362,6 +363,106 @@ def test_paging_by_cursor_costs_more_bytes_than_paging_by_offset(
         f"a cursor page carries a key where an offset page carries an integer, "
         f"so four cursor pages should be ~20 bytes heavier; "
         f"got {by_cursor} against {by_offset}"
+    )
+
+
+def test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope() -> None:
+    """Where `4n + 2` comes from, decoded rather than read off the rules.
+
+    The batch test above asserts the formula and the entry that found it could
+    only explain it — a tag byte and a length prefix per nested statement — by
+    reading the protobuf encoding rules. A different framing producing the same
+    slope would have been indistinguishable. This takes the messages apart:
+
+    | message | bytes |
+    | --- | --- |
+    | `InsertRequest` | 25 |
+    | `BatchOperation(insert=…)` | 27 |
+    | `BatchRequest`, no operations | 2 |
+    | `BatchRequest`, one operation | 31 |
+    | `BatchRequest`, two operations | 60 |
+
+    Two for the `oneof` that wraps the insert in a `BatchOperation`, two for
+    the `repeated` field that holds it in the `BatchRequest` — four per
+    statement. And the "envelope" is not framing at all: it is the two bytes of
+    the `atomicity` enum, a field a single `Insert` has no equivalent of.
+
+    No server: these are messages, and building them is the whole measurement.
+    """
+    row = pb.Row(
+        values=[
+            pb.Value(uint64_value=70_001),
+            pb.Value(string_value="x"),
+            pb.Value(int64_value=1),
+        ]
+    )
+    insert = pb.InsertRequest(table="docs", rows=[row], upsert=True)
+    operation = pb.BatchOperation(insert=insert)
+    empty = pb.BatchRequest(atomicity=pb.ATOMICITY_INDEPENDENT)
+    one = pb.BatchRequest(atomicity=pb.ATOMICITY_INDEPENDENT, operations=[operation])
+    two = pb.BatchRequest(atomicity=pb.ATOMICITY_INDEPENDENT, operations=[operation] * 2)
+
+    # The two wrappers, named separately: the whole point is that the four is
+    # two things and not one, so a change that moved a byte from one to the
+    # other would still satisfy a single assertion on the total.
+    assert operation.ByteSize() - insert.ByteSize() == 2, "the oneof's tag and length"
+    assert one.ByteSize() - empty.ByteSize() - operation.ByteSize() == 2, (
+        "the repeated field's tag and length"
+    )
+    # The envelope, and *what it is*. Asserting only that it weighs two leaves
+    # "two bytes of framing" and "two bytes of atomicity" indistinguishable,
+    # and the mutation weakening it to `>= 0` survived because two satisfies
+    # both. A `BatchRequest` with no atomicity and no operations weighs
+    # nothing, which is the falsifiable form: the envelope is a field the
+    # caller set, not a cost the wire imposes.
+    assert pb.BatchRequest().ByteSize() == 0, "an empty BatchRequest is not framing"
+    assert empty.ByteSize() == 2, "the envelope is the atomicity enum, not framing"
+    # And the slope, from the messages rather than from a server: adding a
+    # second statement costs the first one's size plus the same four.
+    assert two.ByteSize() - one.ByteSize() == insert.ByteSize() + 4
+
+
+def test_loading_a_relation_for_three_parents_saves_bytes_as_well_as_calls(
+    counted: tuple[Client, Counting],
+) -> None:
+    """Batching saves bytes here, and that is the opposite of the write path.
+
+    The write batch costs `4n + 2` because each statement carries its own
+    table, rows and schema claim: nothing is shared, and nesting adds framing.
+    A relation load shares everything — one table, one relationship name, one
+    schema claim — and varies only the parent keys. So folding three into one
+    saves the two copies of the header.
+
+    Measured: **one `Related` for three parents is 53 bytes; three `Related`
+    calls for one parent each are 147.** A 64% saving, against a 6% cost on the
+    write path, from the same word "batching".
+
+    That is the honest shape of the claim these entries have been circling:
+    batching saves bytes when the requests share a header and costs bytes when
+    they do not. Neither number alone says that; the pair does.
+    """
+    client, counter = counted
+    session = client.session()
+
+    counter.calls.clear()
+    counter.bytes.clear()
+    session.related(SHELVES, [u64(10), u64(11), u64(12)], through="shelf_library", on=SHELVES)
+    together = counter.weight()
+
+    counter.calls.clear()
+    counter.bytes.clear()
+    for parent in (10, 11, 12):
+        session.related(SHELVES, [u64(parent)], through="shelf_library", on=SHELVES)
+    apart = counter.weight()
+
+    assert counter.calls["Related"] == 3, f"three calls, one per parent; got {counter}"
+    # Strictly less, and by a margin no framing change could close: the saving
+    # is two whole copies of the request minus two keys, so it is roughly
+    # proportional to the header. Asserted as a ratio rather than a literal for
+    # the reason the sibling tests give — the totals move with the fixture.
+    assert together * 2 < apart, (
+        f"one call for three parents should cost well under half of three calls: "
+        f"{together} against {apart}"
     )
 
 

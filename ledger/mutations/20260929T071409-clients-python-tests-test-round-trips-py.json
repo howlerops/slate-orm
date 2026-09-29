@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-29T07:14:09+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_round_trips.py -q"
+  ],
+  "commit": "8230231",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the envelope is read as framing rather than as the atomicity enum",
+      "old": "    assert pb.BatchRequest().ByteSize() == 0, \"an empty BatchRequest is not framing\"",
+      "new": "    assert pb.BatchRequest().ByteSize() == 2, \"an empty BatchRequest is not framing\"",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the saving is asserted as merely non-worse",
+      "old": "    assert together * 2 < apart, (",
+      "new": "    assert together <= apart, (",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "Loosening a threshold cannot fail against a value that already satisfies the tighter one: 53 against 147 passes `<=` as happily as `* 2 <`. What the factor is for is refusing the *equal* case, which is what sending the three apart would produce, and that shape was mutated directly in the same run as `the relation load is sent apart rather than together` and was caught. Scoring a threshold by loosening it measures the fixture, not the rule."
+    }
+  ],
+  "restored_clean": true
+}

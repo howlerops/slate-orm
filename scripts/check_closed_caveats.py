@@ -419,6 +419,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- the framing cost decoded, 2026-09-29 -----------------------------------
+ "four-n-plus-two-decoded": (
+     "test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope",
+     "clients/python/tests/test_round_trips.py",
+ ),
+
  # --- the same framing cost in three clients, 2026-09-29 ---------------------
  "go-weighs-a-read": (
      "type sendingStream struct",
@@ -739,6 +745,9 @@ WITNESSED: dict[tuple[str, str], str] = {
         'wasm-runtime-guard',
     ('2026-09-29-bytes-do-not-need-a-network.md',
      'Only the Python client weighs.'): 'go-weighs-a-read',
+    ('2026-09-29-bytes-do-not-need-a-network.md',
+     'It does not explain the `4n + 2` from the wire format.'):
+        'four-n-plus-two-decoded',
     ('2026-09-14-frontend-tests-and-configurable-ports.md',
      'The bar chart is asserted on count and threshold, not on geo'):
         'bar-geometry-in-a-browser',

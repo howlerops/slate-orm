@@ -11516,16 +11516,17 @@
     {
       "entry": "2026-09-29-bytes-do-not-need-a-network.md",
       "key": "It does not explain the `4n + 2` from the wire format.",
-      "verdict": "open",
-      "by": "true. The arithmetic fits five points exactly and the explanation -- a tag byte and a length prefix per nested statement -- is read off the protobuf encoding rules rather than shown by decoding a message field by field. A different framing producing the same slope would be indistinguishable.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "decoded message by message rather than read off the encoding rules: two bytes for the oneof wrapping the insert in a BatchOperation, two for the repeated field holding it in the BatchRequest. And the `envelope` is not framing -- an empty BatchRequest weighs zero, so the two bytes are the atomicity enum. See ledger/2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-bytes-do-not-need-a-network.md",
       "key": "Nothing weighs a relation load, a join or an aggregate.",
-      "verdict": "open",
-      "by": "true. The two workloads weighed are the two the caveats named; the others have counts and no weights.",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "by": "narrowed: the relation load is weighed. One `Related` for three parents is 53 bytes; three calls for one parent each are 147 -- batching SAVES 64% here, against costing 6% on the write path, because a relation shares its header across keys and a write batch shares nothing. See ledger/2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "checked": "2026-09-29",
+      "residual": "the join and the aggregate. A join's fair comparison is one Join against two Query calls the caller folds; the aggregate's request side is uninformative because the saving is in the response this instrument does not weigh. The join is worth doing, the aggregate probably is not."
     },
     {
       "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
@@ -11558,8 +11559,30 @@
     {
       "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
       "key": "Nothing weighs a relation load, a join or an aggregate",
+      "verdict": "narrowed",
+      "by": "narrowed: the relation load is weighed. One `Related` for three parents is 53 bytes; three calls for one parent each are 147 -- batching SAVES 64% here, against costing 6% on the write path, because a relation shares its header across keys and a write batch shares nothing. See ledger/2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "checked": "2026-09-29",
+      "residual": "the join and the aggregate. A join's fair comparison is one Join against two Query calls the caller folds; the aggregate's request side is uninformative because the saving is in the response this instrument does not weigh. The join is worth doing, the aggregate probably is not."
+    },
+    {
+      "entry": "2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "key": "No join, no aggregate.",
       "verdict": "open",
-      "by": "true in all three clients, and unchanged from the Python entry: the workloads weighed are the two the caveats named.",
+      "by": "true, and the reason differs between them: a join's fair comparison is one Join against two Query calls, which is worth measuring; the aggregate's request side is uninformative because both requests are small and the saving is in the response. The join is the piece of work left.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "key": "The relation comparison is against the same RPC, not against",
+      "verdict": "deliberate",
+      "by": "three Related calls for one parent each is the honest no-batching alternative and shares the fixture's declaration, which is what makes the subtraction clean. Three filtered Query calls would send something different again and the difference would be the query shape rather than the batching.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "key": "Three parents, one shape.",
+      "verdict": "open",
+      "by": "true. The saving is roughly the header times n-1 so it grows with the fan-out, and nothing measures the slope the way the write path's five sizes did.",
       "checked": "2026-09-29"
     }
   ]
