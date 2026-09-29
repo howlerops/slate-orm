@@ -419,6 +419,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- a convention inferred from one entry, 2026-09-29 -----------------------
+ # The needle is the corrected count, in the docstring of the rule the wrong
+ # reason was attached to: what closed the caveat is the measurement, and the
+ # measurement is what must not quietly go away.
+ "the-pair-is-three-entries": (
+     "Three of fifty-one, counted",
+     "scripts/caveats.py",
+ ),
+
  # --- the framing cost decoded, 2026-09-29 -----------------------------------
  "four-n-plus-two-decoded": (
      "test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope",
@@ -743,6 +752,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-the-kernel-on-wasm.md',
      'Nothing else in the workspace is checked for the same proble'):
         'wasm-runtime-guard',
+    ('2026-09-29-a-caveat-closed-by-a-line-through-it.md',
+     'Nothing stops the pair being created wrongly in the first pl'):
+        'the-pair-is-three-entries',
     ('2026-09-29-bytes-do-not-need-a-network.md',
      'Only the Python client weighs.'): 'go-weighs-a-read',
     ('2026-09-29-bytes-do-not-need-a-network.md',

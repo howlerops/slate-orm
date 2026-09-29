@@ -225,10 +225,17 @@ def struck(root: Path = ROOT) -> set[str]:
     """`entry::key` for every caveat crossed out in a "does not do" section.
 
     A strike is how this ledger records that a caveat was answered *later*, by
-    another entry. The convention keeps the original bullet standing underneath
-    — `2026-09-19-the-count-a-refusal-did-not-write.md` says so in as many
-    words, because the estimate it got wrong is the useful part — so the
-    section ends up holding the same claim twice, once struck and once not.
+    another entry. **Three** entries also keep the original bullet standing
+    underneath — `2026-09-19-the-count-a-refusal-did-not-write.md` says so in
+    as many words, because the estimate it got wrong is the useful part — so
+    those sections hold the same claim twice, once struck and once not.
+
+    Three of fifty-one, counted. The first version of this docstring called
+    that "the convention", generalised from the one entry that explains itself;
+    48 struck caveats have no live twin at all. The rule below is unaffected,
+    because it fires on the pair and the pair is what it is for — but a wrong
+    reason attached to a right rule is how the next person builds the wrong
+    second rule. See `2026-09-29-a-convention-i-inferred-from-one-entry.md`.
 
     `ANNOTATION` drops the struck copy, which is right: a withdrawal is not a
     caveat. But it leaves the standing copy as the only one the tracker sees,

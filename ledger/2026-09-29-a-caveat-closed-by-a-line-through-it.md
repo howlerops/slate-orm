@@ -20,11 +20,20 @@ The same entry's `Result`-typed-signature caveat moved from `open` to
 ## Why
 
 This ledger records "answered later" by striking the caveat and writing the
-closure into the strike. The convention deliberately leaves the **original
-bullet standing underneath** — the count entry says so in as many words,
-because the estimate it got wrong is the useful part of it.
+closure into the strike. **Three entries also leave the original bullet
+standing underneath** — the count entry says so in as many words, because the
+estimate it got wrong is the useful part of it.
 
-So the section holds the claim twice: once struck, once not. `ANNOTATION`
+> **Corrected, later the same day.** This paragraph first called that the
+> convention. It is not: of 51 struck caveats, **3** keep a live twin and
+> **48** do not. Striking the caveat and putting the closure inside the strike
+> is the convention; keeping the original as well is a thing three entries do
+> on purpose. The rule below is unaffected — it fires on the pair, and the pair
+> is what it was built for — but its reason was generalised from one instance
+> and is written here as measured.
+> See `2026-09-29-a-convention-i-inferred-from-one-entry.md`.
+
+In those three the section holds the claim twice: once struck, once not. `ANNOTATION`
 drops the struck copy, correctly — a withdrawal is not a caveat. What it
 leaves is the standing copy, which is *history written in the present tense*,
 and it is the only thing the tracker can see. Anyone triaging from the tracker

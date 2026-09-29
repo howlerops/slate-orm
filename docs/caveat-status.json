@@ -11460,9 +11460,9 @@
     {
       "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
       "key": "Nothing stops the pair being created wrongly in the first pl",
-      "verdict": "open",
-      "by": "true: an entry that strikes without keeping the original, or rewrites without striking, is not checked either way. That is a rule about how an entry is written and belongs in the pre-commit hook, which does not have it.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "closed by counting: of 51 struck caveats, 3 keep a live twin and 48 do not, so the pair is three entries' practice rather than a convention and there is nothing to enforce. Building the proposed rule would have failed 48 entries. See ledger/2026-09-29-a-convention-i-inferred-from-one-entry.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
@@ -11584,6 +11584,20 @@
       "verdict": "open",
       "by": "true. The saving is roughly the header times n-1 so it grows with the fan-out, and nothing measures the slope the way the write path's five sizes did.",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-convention-i-inferred-from-one-entry.md",
+      "key": "It does not check the majority convention either.",
+      "verdict": "open",
+      "by": "true, and it is the rule worth having: an entry that strikes a caveat and writes no closure inside the strike says a claim was answered and names nothing that answered it -- the mirror of the `by`-is-required rule for `closed`. This entry found the wrong rule and stopped rather than building the right one in the same breath.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-convention-i-inferred-from-one-entry.md",
+      "key": "One count, one day.",
+      "verdict": "moment",
+      "by": "3 of 51 is today's tree, stated as a measurement at a date. Nothing keeps the docstring's number honest as entries are added, which is the staleness this repository's guards exist for -- recorded as a passing observation rather than a gap, because the finding is the ratio and not the integers.",
+      "reviewed": "2026-09-29"
     }
   ]
 }
