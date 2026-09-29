@@ -9235,9 +9235,9 @@
     {
       "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
       "key": "The demo UI has no control for it \u2014 the identity switcher sh",
-      "verdict": "open",
-      "by": "still no control. The conformance corpus is where the behaviour is demonstrated, not the browser.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx: the soft-delete panel takes `include_deleted` and the identity switcher makes the refusal visible \u2014 as `reader` the same request comes back permission-denied rather than empty, which is the distinction the flag exists for. An e2e check asserts both, and a mutation that never set the flag fails it.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
@@ -10885,9 +10885,9 @@
     {
       "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
       "key": "No `includeDeleted` control.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. /api/query takes the flag and no panel sets it. The interesting half is the refusal for a persona without read_deleted \u2014 distinguishing 'no retired rows' from 'you may not see them' \u2014 which is a panel's worth of design rather than a checkbox."
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx: the soft-delete panel takes `include_deleted` and the identity switcher makes the refusal visible \u2014 as `reader` the same request comes back permission-denied rather than empty, which is the distinction the flag exists for. An e2e check asserts both, and a mutation that never set the flag fails it.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
@@ -11018,9 +11018,9 @@
     {
       "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
       "key": "The demo's UI does not show it.",
-      "verdict": "open",
-      "by": "nothing yet. `GroupRow.total` is in the frontend's types and the chart still draws the count; a second series is a chart change that has to argue for itself.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx: the grouped panel takes a `measure` control that draws and sorts by SUM(books.price), rendered against the column's scale. An e2e check asserts the bars descend by money, and a mutation that drew money while sorting by the count fails it.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
@@ -11069,6 +11069,41 @@
       "key": "No guard holds the three tables to each other except the run",
       "verdict": "deliberate",
       "by": "this entry: three literals in three languages, and the conformance case catches a drift because `units` and `scale` are in the answer \u2014 demonstrated by two mutations. A parser over three syntaxes would fail without a running stack, which is the only thing it would add.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The `app` half of the retired-rows control changes nothing v",
+      "verdict": "deliberate",
+      "by": "this entry: the fixture keeps no retired row, and seeding one would move the README guard's count, the conformance cases that read shipments, and the restore panel's arithmetic \u2014 four things so that one number differs. The refusal is the half the caveat called interesting and it needs no retired row.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The money measure is one column at one scale.",
+      "verdict": "open",
+      "by": "still true: books.price is the demo's only decimal, the UI holds the scale as a literal the way the three adapters hold theirs, and nothing checks it against the catalog \u2014 the generated catalog.ts carries column names only.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The e2e's mutation-readability is fixed, not tested.",
+      "verdict": "open",
+      "by": "nothing yet. Re-indenting those lines puts the runner back to scoring UNREADABLE, which interrupts rather than passing quietly, but nothing fails. A guard holding every runner here to one output format is the version that scales; scripts/test_check_sh.py is the precedent for where it would live.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The order property does not pin the numbers.",
+      "verdict": "deliberate",
+      "by": "this entry: 'descending in money' is true of the right answer and of several wrong ones. The values are compared across the three SDKs by the conformance runner, which is where a number belongs; this checks that the control reaches the sort.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "Nothing shows both measures at once.",
+      "verdict": "deliberate",
+      "by": "this entry: a second series answers 'which author is expensive per book', which is a chart change that has to argue for itself rather than a control with an endpoint already behind it.",
       "reviewed": "2026-09-29"
     }
   ]

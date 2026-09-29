@@ -4,6 +4,7 @@ import { createQuery } from "@tanstack/solid-query";
 
 import {
   api,
+  money,
   render,
   TABLES,
   VIEWS,
@@ -284,10 +285,15 @@ export function Groups(props: Context): JSX.Element {
   const [by, setBy] = createSignal("author");
   const [direction, setDirection] = createSignal("desc");
   const [minimum, setMinimum] = createSignal(0);
+  const [measure, setMeasure] = createSignal("count");
 
   const spec = () => ({
     groupBy: by(),
-    sort: "count",
+    // The measure is also the sort key, which is the whole of why it is a
+    // control rather than a second column: every group carries both numbers
+    // either way, and the only thing that changes visibly is which one the
+    // order and the bars are about.
+    sort: measure(),
     direction: direction(),
     ...(minimum() > 0 ? { having: { minCount: minimum() } } : {}),
   });
@@ -305,10 +311,21 @@ export function Groups(props: Context): JSX.Element {
   const bars = createMemo(() => {
     const answer = groups.data;
     if (!answer?.ok) return [];
-    return answer.value.groups.map((group) => ({
-      label: render(group.key[0]),
-      value: Number(render(group.count) || "0"),
-    }));
+    // A decimal's tag carries *units* — cents here — so the bar is drawn in
+    // them and only the label is rendered against the scale. Dividing first
+    // would put a float on the chart's axis for a value the database keeps
+    // exact, which is the one thing a money column exists to avoid.
+    return answer.value.groups.map((group) =>
+      measure() === "total"
+        ? {
+            label: `${render(group.key[0])} — ${money(render(group.total))}`,
+            value: Number(render(group.total) || "0"),
+          }
+        : {
+            label: render(group.key[0]),
+            value: Number(render(group.count) || "0"),
+          },
+    );
   });
 
   return (
@@ -343,6 +360,17 @@ export function Groups(props: Context): JSX.Element {
           </select>
         </label>
         <label class="field">
+          <span>measure</span>
+          <select
+            value={measure()}
+            onChange={(event) => setMeasure(event.currentTarget.value)}
+            data-test="groups-measure"
+          >
+            <option value="count">how many books</option>
+            <option value="total">what they cost (decimal)</option>
+          </select>
+        </label>
+        <label class="field">
           <span>order</span>
           <select
             value={direction()}
@@ -367,7 +395,12 @@ export function Groups(props: Context): JSX.Element {
         {(value) => (
           <>
             <Bars rows={bars()} />
-            <div class="note">{value.groups.length} groups</div>
+            <div class="note" data-test="groups-note">
+              {value.groups.length} groups
+              {measure() === "total"
+                ? ` · SUM(books.price), in cents, rendered against the column's scale of 2`
+                : ""}
+            </div>
           </>
         )}
       </Result>
@@ -648,11 +681,28 @@ export function PredicateWrites(props: Context): JSX.Element {
  */
 export function SoftDelete(props: Context): JSX.Element {
   const [ran, setRan] = createSignal(0);
+  const [asking, setAsking] = createSignal(false);
 
   const outcome = createQuery(() => ({
     queryKey: ["restore", props.sdk(), props.persona(), ran()],
     queryFn: () => api.restore(props.sdk(), props.persona()),
     enabled: ran() > 0,
+  }));
+
+  // A plain read of `shipments`, with and without the flag.
+  //
+  // `ran()` is in the key on purpose: the retire-and-undo above writes to this
+  // table, so a read cached across it would show the state from before. That
+  // is the only coupling between the two halves of this panel, and it is one
+  // line rather than a second endpoint.
+  const shipments = createQuery(() => ({
+    queryKey: ["shipments", props.sdk(), props.persona(), asking(), ran()],
+    queryFn: () =>
+      api.query(props.sdk(), props.persona(), {
+        table: "shipments",
+        sort: [{ column: 0, direction: "asc" }],
+        ...(asking() ? { includeDeleted: true } : {}),
+      }),
   }));
 
   return (
@@ -711,7 +761,7 @@ export function SoftDelete(props: Context): JSX.Element {
                   still stamped <b>{value.retired_after.filter(Boolean).length}</b>
                 </span>
               </div>
-              <div class="note">
+              <div class="note" data-test="restore-carried">
                 The row came back with <code>status</code>{" "}
                 <b>{value.status_after.join(", ") || "—"}</b> and{" "}
                 <code>book_id</code> <b>{value.book_id_after.join(", ") || "—"}</b>,
@@ -723,6 +773,51 @@ export function SoftDelete(props: Context): JSX.Element {
           )}
         </Result>
       </Show>
+
+      <h3 style={{ "margin-top": "18px" }}>Asking for them anyway</h3>
+      <p class="why">
+        A retired row is still there, and <code>include_deleted</code> is how a
+        caller says so. It is <b>privileged</b> — a separate{" "}
+        <code>read_deleted</code> action rather than part of <code>read</code> —
+        which is the whole reason it is a control here and not a checkbox on
+        every panel: switch the identity above to <code>reader</code> and the
+        same request comes back <i>refused</i> rather than empty. That is the
+        distinction a soft delete has to make and an ordinary filter cannot:
+        &ldquo;there are none&rdquo; and &ldquo;you may not see them&rdquo; are
+        different answers, and a read that quietly returned nothing would
+        collapse them.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>retired rows</span>
+          <select
+            value={asking() ? "yes" : "no"}
+            onChange={(event) => setAsking(event.currentTarget.value === "yes")}
+            data-test="include-deleted"
+          >
+            <option value="no">an ordinary read</option>
+            <option value="yes">include_deleted</option>
+          </select>
+        </label>
+      </div>
+      {/* Wrapped so a check can read *this* read's answer rather than the
+          panel's text: the retire-and-undo above is refused for a reader too,
+          so an assertion scoped to the panel finds a refusal either way and
+          passes while checking nothing. A mutation that never set the flag
+          survived exactly that. */}
+      <div data-test="include-deleted-answer">
+      <Result answer={shipments.data} pending={shipments.isPending}>
+        {(value) => (
+          <>
+            <div class="note" data-test="include-deleted-count">
+              {value.rows.length} shipments
+              {asking() ? ", retired ones included" : ", retired ones hidden"}
+            </div>
+            <ValueTable columns={TABLES["shipments"] ?? []} rows={value.rows} />
+          </>
+        )}
+      </Result>
+      </div>
     </div>
   );
 }

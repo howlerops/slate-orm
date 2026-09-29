@@ -352,6 +352,42 @@ export const api = {
  * different values to this database, and a table that renders both as `1`
  * hides the single most confusing thing about the value model.
  */
+/**
+ * `books.price`'s declared scale.
+ *
+ * Here rather than in `catalog.ts` because the generated catalog carries
+ * column *names* and nothing else — a browser app labels columns, and the
+ * scale is a property of the type. It is a literal for the same reason the
+ * three adapters each hold their own `2`: a decimal on the wire is a count of
+ * the column's smallest unit and the scale never travels, so somewhere has to
+ * know it locally, and this is the demo's somewhere.
+ */
+const PRICE_SCALE = 2;
+
+/**
+ * A decimal's units rendered against a scale, as the three clients do it.
+ *
+ * A fourth implementation of `unitsToString`, deliberately: the browser is not
+ * a slate client and importing one to format a number would pull a gRPC stack
+ * into a page that speaks HTTP. It is nine lines, and the conformance runner's
+ * decimal-rendering endpoint holds the three that matter to each other.
+ *
+ * That endpoint's path is not spelled here on purpose:
+ * `scripts/check_demo_surface.py` greps every `/api/…` under this directory
+ * and reads one in a comment as the UI calling it, which is generous by
+ * design and wrong here.
+ */
+export function money(units: string | undefined, scale = PRICE_SCALE): string {
+  if (units === undefined) return "";
+  const value = BigInt(units);
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  const divisor = 10n ** BigInt(scale);
+  const whole = magnitude / divisor;
+  const part = (magnitude % divisor).toString().padStart(scale, "0");
+  return `${negative ? "-" : ""}${whole}.${part}`;
+}
+
 export function render(value: Tagged | undefined): string {
   if (!value) return "";
   if ("null" in value) return "∅";

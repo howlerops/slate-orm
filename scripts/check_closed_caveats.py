@@ -395,6 +395,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "decimal-renderers-shared-table": (
      "twelve decimals rendered",
      "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- the two demo controls, 2026-09-29 --------------------------------------
+ "demo-include-deleted": (
+     "the retired-rows flag is a privilege, not a filter",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+ "demo-money-measure": (
+     "the chart can be drawn in money instead of rows",
+     "examples/explorer/web/e2e/explorer.mjs",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -589,6 +599,16 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # The e2e check rather than the panel: a control that renders and sends
+    # nothing is still a control, and the check is what says it reaches the
+    # database. Both were mutation-tested through it.
+    ('2026-09-19-asking-for-the-rows-that-are-gone.md',
+     'The demo UI has no control for it \u2014 the identity switcher sh'):
+        'demo-include-deleted',
+    ('2026-09-29-the-panels-the-endpoints-were-already-serving.md',
+     'No `includeDeleted` control.'): 'demo-include-deleted',
+    ('2026-09-29-the-one-aggregate-that-returns-money.md',
+     "The demo's UI does not show it."): 'demo-money-measure',
     # One shared table rather than three written independently, which is the
     # distinction the caveat drew: three tables agreeing with three authors is
     # not three renderers agreeing with each other.
