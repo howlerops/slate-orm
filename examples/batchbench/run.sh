@@ -25,27 +25,7 @@ done
 # spells out at length: a port drawn from the ephemeral range can be taken by
 # an outgoing connection between this script releasing it and the head node
 # binding it, and the failure reads as a broken benchmark.
-port="$(python3 - <<'PORTS'
-import random, socket
-try:
-    with open("/proc/sys/net/ipv4/ip_local_port_range") as handle:
-        ephemeral_low = int(handle.read().split()[0])
-except (OSError, ValueError):
-    ephemeral_low = 32768
-while True:
-    candidate = random.randint(10000, min(max(ephemeral_low - 1, 10100), ephemeral_low - 1))
-    probe = socket.socket()
-    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        probe.bind(("127.0.0.1", candidate))
-    except OSError:
-        continue
-    finally:
-        probe.close()
-    print(candidate)
-    break
-PORTS
-)"
+port="$(python3 "$root/scripts/free_ports.py")"
 addr="127.0.0.1:$port"
 
 # The same rule the client harnesses use: a prebuilt binary if one is named,

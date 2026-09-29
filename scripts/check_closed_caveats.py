@@ -82,7 +82,10 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # into the withdrawal below, which is what actually happened.
  "explain-aggregate-in-a-transaction": ("explainAggregateIn", "clients/typescript/src/client.ts"),
  "quickstart-install-lines": ("check_install_lines", "site/check/quickstarts.py"),
- "free-ports-guard": ("ip_local_port_range", "scripts/test_free_ports.py"),
+ "free-ports-guard": (
+     "every port is below the floor",
+     "scripts/test_free_ports.py",
+ ),
  "ceilings": ("ExecutionLimits", "crates/slate-kernel/src/limits.rs"),
  "readme-swept": ("Status", "README.md"),
  "explain-grouped": ("grouped read narrows its", "crates/slate-kernel/src/explain.rs"),
@@ -124,6 +127,21 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # that any rewording would move: a named case that fails when the rule goes is
  # the thing that actually has to survive.
  "cited-files-scope": ("README.md", "scripts/check_cited_files.py"),
+ # --- one port allocator instead of two, 2026-09-29
+ #
+ # A fixture case name and a source line. The first is the case that fails if a
+ # runner grows its own heredoc back, which is the duplicate returning; the
+ # second is the clamp with the dead `max` gone, because the caveat it
+ # witnesses was a question about which floors that `max` made matter, and the
+ # answer was that it never did.
+ "one-allocator": (
+     "carries no allocator of its own",
+     "scripts/test_free_ports.py",
+ ),
+ "no-adversarial-floor": (
+     "candidate = draw(LOW, below - 1)",
+     "scripts/free_ports.py",
+ ),
  "cited-files-ambiguous-suffix": (
      "a relative citation matching two files that differ fails",
      "scripts/test_check_cited_files.py",
@@ -2223,6 +2241,10 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-21-a-window-crosses-the-wire-in-its-own-list.md',
      'The stubs are regenerated and committed here. `COPIES` is st'):
         'proto-copies-derived',
+    ('2026-09-28-the-port-allocator-runs-in-a-test-now.md',
+     'It does not remove the duplicate.'): 'one-allocator',
+    ('2026-09-28-the-port-allocator-runs-in-a-test-now.md',
+     'The 10050 floor is chosen, not found.'): 'no-adversarial-floor',
 }
 
 

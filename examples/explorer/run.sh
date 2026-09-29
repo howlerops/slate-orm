@@ -45,39 +45,10 @@ mode="${1:-}"
 # one from under us. Each is still checked before being offered, because
 # something else on the machine may be *listening* there already.
 free_ports() {
-  python3 - <<'PORTS'
-import random
-import socket
-
-# The floor of the ephemeral range, read rather than assumed: a container can
-# be configured with a different one, and picking "below 32768" on a machine
-# whose range starts at 15000 would reintroduce exactly the bug.
-try:
-    with open("/proc/sys/net/ipv4/ip_local_port_range") as handle:
-        ephemeral_low = int(handle.read().split()[0])
-except (OSError, ValueError):
-    ephemeral_low = 32768
-
-high = max(ephemeral_low - 1, 10100)
-low = 10000
-
-chosen = []
-while len(chosen) < 5:
-    candidate = random.randint(low, min(high, ephemeral_low - 1))
-    if candidate in chosen:
-        continue
-    probe = socket.socket()
-    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        probe.bind(("127.0.0.1", candidate))
-    except OSError:
-        continue  # somebody is listening there; try another
-    finally:
-        probe.close()
-    chosen.append(candidate)
-
-print(" ".join(str(port) for port in chosen))
-PORTS
+  # `scripts/free_ports.py`, not a heredoc: this was copied into
+  # `examples/batchbench/run.sh` and two copies of one behaviour are one edit
+  # away from two behaviours. The script's docstring has the whole argument.
+  python3 "$root/scripts/free_ports.py" --count 5
 }
 
 if [ "$mode" = --conformance ] || [ "$mode" = --e2e ]; then

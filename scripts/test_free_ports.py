@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The port allocators in `run.sh`, run rather than read.
+"""`scripts/free_ports.py`, run rather than read — and the runners that call it.
 
     python3 scripts/test_free_ports.py
 
@@ -21,93 +21,64 @@ to diagnose the first time.
 
 # Why it runs the allocator instead of reading it
 
-The allocator is eleven lines of Python inside a shell heredoc, and the
-property under test — *every port it offers is below the ephemeral floor* — is
-a property of the arithmetic, not of the text. A regex asserting that the
-source still says `ephemeral_low - 1` would pass on
+The property under test — *every port it offers is below the ephemeral floor* —
+is a property of the arithmetic, not of the text. A regex asserting that the
+source still says `below - 1` would pass on
 
-    candidate = random.randint(low, high)   # high was meant to be ephemeral_low - 1
+    candidate = random.randint(LOW, high)   # high was meant to be below - 1
 
-and that is precisely the edit the caveat is afraid of. So the heredoc is
-extracted and executed, with `open` patched to serve a chosen range, and the
-ports it prints are checked against the floor it was given.
+and that is precisely the edit the caveat is afraid of. So the allocator is
+called, with the floor as a parameter, and the ports it returns are checked
+against the floor it was given.
 
-Patching `open` rather than writing a fake `/proc` file is what lets the floor
-be *varied*. The comment inside the allocator says the range is read rather
-than assumed because "a container can be configured with a different one, and
-picking below 32768 on a machine whose range starts at 15000 would reintroduce
-exactly the bug" — a claim about a machine this container is not, and therefore
-one nothing could have checked until the floor became a parameter.
+The floor being a parameter is what lets it be *varied*. `free_ports.py` says
+the range is read rather than assumed because "a container can be configured
+with a different one, and picking below 32768 on a machine whose range starts
+at 15000 would reintroduce exactly the bug" — a claim about a machine this
+container is not, and therefore one nothing could have checked while the floor
+came only from `/proc`.
 
-# The two copies
+# The copies, and why there is a case about the shell
 
-`examples/explorer/run.sh` has the original, offering five ports; the
-`examples/batchbench/run.sh` copy offers one and was written from it. Both are
-checked, because the reason the caveat gives — a future edit — applies to
-whichever copy somebody edits, and a guard that covered one would make the
-other the dangerous one.
+There were two allocators: `examples/explorer/run.sh` offering five ports and
+`examples/batchbench/run.sh` offering one, written from it. Both are now one
+call to `scripts/free_ports.py`, which is what
+`ledger/2026-09-29-one-allocator-instead-of-two.md` did and why.
 
-That there are two copies at all is a finding of this file and not something it
-fixes: see the ledger entry.
+That turns a property of the Python into a property of the Python *plus the
+two call sites*, so `the runners call the allocator` is a case here: a runner
+that grew its own copy back, or stopped calling this one, would leave every
+arithmetic case below passing while the thing in production went unchecked.
+It is the same shape as a guard pointed at a file nobody imports.
 """
 
 from __future__ import annotations
 
-import io
-import re
 import sys
+import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import free_ports as allocator
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: `run.sh` -> how many ports its allocator offers.
+#: `run.sh` -> how many ports it asks for.
 #:
 #: The count is here rather than derived, because it is the thing a caller
 #: depends on: `examples/explorer/run.sh` reads five names out of one line, and
 #: an allocator that started offering four would leave the last empty.
-ALLOCATORS: dict[str, int] = {
+CALLERS: dict[str, int] = {
     "examples/explorer/run.sh": 5,
     "examples/batchbench/run.sh": 1,
 }
 
-HEREDOC = re.compile(r"python3 - <<'PORTS'\n(.*?)\nPORTS", re.DOTALL)
-
-
-def allocator(path: Path) -> str:
-    """The Python inside the `PORTS` heredoc, or a failure that says which file.
-
-    A `RuntimeError` rather than a returned `None`: a run.sh whose allocator
-    this cannot find is the never-fires case, and the whole point of the file
-    is that a silent zero here reads exactly like a passing check.
-    """
-    found = HEREDOC.findall(path.read_text(encoding="utf-8"))
-    if len(found) != 1:
-        raise RuntimeError(f"{path}: expected one PORTS heredoc, found {len(found)}")
-    return found[0]
-
-
-def run(source: str, floor: int | None) -> list[int]:
-    """Execute the allocator with `/proc` reporting `floor`, and return its ports.
-
-    `floor` of `None` makes the read raise, which is the branch the allocator's
-    `except (OSError, ValueError)` handles and its fallback of 32768 covers.
-    """
-    printed: list[str] = []
-
-    def fake_open(*_args: object, **_kwargs: object) -> io.StringIO:
-        if floor is None:
-            raise OSError("no /proc here")
-        # The real file is "<low> <high>\n" and the allocator splits and takes
-        # the first field, so the second number has to be there to be ignored.
-        return io.StringIO(f"{floor} 60999\n")
-
-    namespace: dict[str, object] = {
-        "__builtins__": __builtins__,
-        "open": fake_open,
-        "print": lambda *parts: printed.append(" ".join(str(part) for part in parts)),
-    }
-    exec(compile(source, "<allocator>", "exec"), namespace)
-    return [int(word) for line in printed for word in line.split()]
+#: What a caller has to contain, and what it must not contain any more. The
+#: second half is the one that matters: a runner that kept calling the script
+#: *and* grew a heredoc back would satisfy the first half alone.
+CALL = "scripts/free_ports.py"
+COPY = "<<'PORTS'"
 
 
 def case(name: str, ok: bool, detail: str = "") -> bool:
@@ -117,39 +88,35 @@ def case(name: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
-def below_the_floor(path: str, wanted: int) -> list[bool]:
-    source = allocator(ROOT / path)
+def below_the_floor(wanted: int) -> list[bool]:
     passed = []
 
-    # The floors: the Linux default, the one the allocator's own comment names
-    # as the reason it reads `/proc` at all, one just above the allocator's
-    # `low` so that its `max(..., 10100)` and its `min(..., ephemeral_low - 1)`
-    # have to disagree, and the unreadable case.
+    # The floors: the Linux default, the one `free_ports.py`'s own comment
+    # names as the reason it reads `/proc` at all, one just above `LOW` so the
+    # clamp has almost nothing to work with, and the unreadable case.
     for floor, described in [
         (32768, "the Linux default"),
         (15000, "a container configured low, which is why /proc is read"),
-        (10050, "a floor inside the allocator's own 10100 ceiling"),
-        (None, "/proc unreadable, so the 32768 fallback"),
+        (10050, "a floor fifty above the allocator's own bottom"),
+        (allocator.ASSUMED, "the value used when /proc cannot be read"),
     ]:
-        effective = 32768 if floor is None else floor
         try:
-            ports = run(source, floor)
-        # Blind, deliberately: the subject is arbitrary code extracted from a
-        # shell script, and a named failure line is worth more to whoever broke
-        # it than a traceback out of `exec`.
+            ports = allocator.free(wanted, floor)
+        # Blind, deliberately: a named failure line is worth more to whoever
+        # broke it than a traceback.
         except Exception as problem:  # noqa: BLE001
-            passed.append(case(f"{path}: {described}", False, f"raised {problem!r}"))
+            passed.append(case(f"{described}", False, f"raised {problem!r}"))
             continue
         passed.append(
             case(
-                f"{path}: every port is below the floor, {described}",
-                bool(ports) and all(10000 <= port < effective for port in ports),
-                f"floor {effective}, got {ports}",
+                f"every port is below the floor, {described}",
+                bool(ports) and all(allocator.LOW <= port < floor for port in ports),
+                f"floor {floor}, got {ports}",
             )
         )
         passed.append(
             case(
-                f"{path}: offers {wanted} distinct ports, {described}",
+                f"offers {wanted} distinct ports, {described}",
                 len(ports) == wanted and len(set(ports)) == wanted,
                 f"got {ports}",
             )
@@ -157,65 +124,171 @@ def below_the_floor(path: str, wanted: int) -> list[bool]:
     return passed
 
 
-def a_floor_at_or_below_the_bottom_is_loud() -> bool:
-    """A machine whose ephemeral range starts at or below 10000 gets an error.
+def reading(name: str, path: str, wanted: int) -> bool:
+    """`floor()` against a chosen `RANGE`, reported rather than raised.
 
-    Not a passing allocation. `random.randint(10000, 9999)` raises, and that is
+    The `except` is not defensive padding. A mutation narrowing `floor()`'s own
+    `except (OSError, ValueError)` to `OSError` makes the garbled case below
+    raise straight out of this file — which kills the run before it prints its
+    tally, and `scripts/mutate.py` then reads `NOTHING RAN` rather than a
+    catch. That is the second of the six lies its docstring lists, and it
+    arrived here through a test with no guard of its own. Met once, fixed here.
+    """
+    was = allocator.RANGE
+    try:
+        allocator.RANGE = path
+        got: object = allocator.floor()
+    except Exception as problem:  # noqa: BLE001 - any raise is a failing case
+        return case(name, False, f"raised {problem!r}")
+    finally:
+        allocator.RANGE = was
+    return case(name, got == wanted, f"got {got}, wanted {wanted}")
+
+
+def the_floor_is_read_rather_than_assumed() -> bool:
+    """A readable range gives *its* floor, not the fallback.
+
+    The case that was missing. Every arithmetic case above passes the floor in
+    as a parameter, and the two fallback cases want `ASSUMED` — so a `floor()`
+    rewritten to `return ASSUMED` and never open the file passed the whole
+    suite. Found by mutation, and it is the exact defect `free_ports.py`'s own
+    comment says reading the file prevents: on a machine whose range starts at
+    15000, assuming 32768 hands out ports inside it.
+    """
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as handle:
+        handle.write("15000\t60999\n")
+        written = handle.name
+    try:
+        return reading("a readable range gives its own floor, not the fallback", written, 15000)
+    finally:
+        Path(written).unlink()
+
+
+def the_floor_falls_back_when_proc_is_unreadable() -> bool:
+    """`floor()` answers `ASSUMED` when the file is not there.
+
+    Separate from the arithmetic cases, because making the floor a parameter
+    moved this branch out of them: they would all pass with the fallback
+    returning nonsense, and a container without `/proc/sys/net` is exactly
+    where the original bug came back.
+    """
+    return reading(
+        "an unreadable range falls back to the assumed floor",
+        "/proc/sys/net/ipv4/there-is-no-such-file",
+        allocator.ASSUMED,
+    )
+
+
+def a_garbled_range_falls_back_too() -> bool:
+    """And when the file is there and says something that is not a number.
+
+    The `ValueError` arm. Written because the `except` names two exceptions and
+    only one of them had a case, which is the half of a branch that rots.
+    """
+    return reading(
+        "a range that is not a number falls back to the assumed floor",
+        str(ROOT / "Cargo.toml"),
+        allocator.ASSUMED,
+    )
+
+
+def the_top_port_offered_is_below_the_floor() -> bool:
+    """The upper bound handed to the draw is `floor - 1`, exactly.
+
+    Pinned rather than sampled, through `free`'s `draw` parameter. The draw is
+    inclusive at both ends, so an upper bound of `floor` offers the first port
+    inside the ephemeral range — which is the whole defect — and a random draw
+    would show it about once in twenty thousand runs, which is to say never.
+    """
+    asked: list[tuple[int, int]] = []
+
+    def the_top(low: int, high: int) -> int:
+        asked.append((low, high))
+        return high
+
+    ports = allocator.free(1, 20000, draw=the_top)
+    return case(
+        "the highest port it can offer is one below the floor",
+        ports == [19999] and asked == [(allocator.LOW, 19999)],
+        f"offered {ports} after asking for {asked}",
+    )
+
+
+def a_repeated_draw_is_not_offered_twice() -> bool:
+    """Two callers of one port is an `EADDRINUSE` in whichever binds second.
+
+    Also pinned: with twenty thousand candidates, five draws collide rarely
+    enough that dropping the check survives a random run.
+    """
+    queued = iter([15001, 15001, 15002])
+
+    def in_turn(_low: int, _high: int) -> int:
+        return next(queued)
+
+    name = "a repeated draw is not offered twice"
+    try:
+        ports = allocator.free(2, 20000, draw=in_turn)
+    except Exception as problem:  # noqa: BLE001 - running out of draws is a failure
+        return case(name, False, f"raised {problem!r}")
+    return case(name, ports == [15001, 15002], f"got {ports}, wanted [15001, 15002]")
+
+
+def a_floor_at_or_below_the_bottom_is_loud() -> bool:
+    """A machine whose ephemeral range starts at or below `LOW` gets an error.
+
+    Not a passing allocation. `random.randint(10000, 8999)` raises, and that is
     the right answer for a machine where the allocator's assumption does not
-    hold: there is no port below the floor and above 10000 to offer, so the
+    hold: there is no port below the floor and above `LOW` to offer, so the
     honest outcome is a stopped script rather than a port inside the range,
     which is the bug this whole mechanism exists to avoid.
 
     Asserted rather than left to chance, because "it happens to raise" and "it
     is designed to raise" look the same until somebody adds a `try` around it.
     """
-    source = allocator(ROOT / "examples/explorer/run.sh")
+    name = "a floor below the allocator's bottom raises rather than allocating"
     try:
-        ports = run(source, 9000)
+        ports = allocator.free(1, 9000)
     except ValueError:
-        return case("a floor below the allocator's bottom raises rather than allocating", True)
+        return case(name, True)
     # Blind for the reason above, and narrowed by the `ValueError` arm before
     # it: anything else is a different failure and should say so by name.
     except Exception as problem:  # noqa: BLE001
-        return case(
-            "a floor below the allocator's bottom raises rather than allocating",
-            False,
-            f"raised {problem!r}, wanted ValueError",
-        )
-    return case(
-        "a floor below the allocator's bottom raises rather than allocating",
-        False,
-        f"returned {ports}, every one of them inside the ephemeral range",
-    )
+        return case(name, False, f"raised {problem!r}, wanted ValueError")
+    return case(name, False, f"returned {ports}, every one inside the ephemeral range")
 
 
-def the_heredoc_is_found() -> bool:
-    """The never-fires guard: a renamed heredoc marker finds nothing.
+def the_runners_call_the_allocator() -> list[bool]:
+    """Both `run.sh` call this script, and neither carries a copy of it.
 
-    Every case above starts with `allocator()`, so a `run.sh` whose marker
-    changed from `PORTS` would make them all raise rather than all pass — but
-    only if something asserts the extraction worked at all, and a reader
-    checking this file should see that assertion rather than infer it.
+    The never-fires guard, in the shape this file needs after the dedup: every
+    case above exercises `free_ports.py`, and all of them would pass while a
+    runner quietly used its own heredoc again.
     """
-    ok = True
-    for path in ALLOCATORS:
-        try:
-            body = allocator(ROOT / path)
-        except (OSError, RuntimeError) as problem:
-            ok = case(f"{path}: the allocator is where this expects it", False, str(problem)) and ok
-            continue
-        ok = case(
-            f"{path}: the allocator is where this expects it",
-            "ip_local_port_range" in body and "randint" in body,
-            "found a heredoc, but it does not read the range or draw a port",
-        ) and ok
-    return ok
+    passed = []
+    for path in CALLERS:
+        text = (ROOT / path).read_text(encoding="utf-8")
+        passed.append(
+            case(f"{path} calls {CALL}", CALL in text, "it does not mention the script")
+        )
+        passed.append(
+            case(
+                f"{path} carries no allocator of its own",
+                COPY not in text,
+                f"it still has a {COPY} heredoc, which is the duplicate this removed",
+            )
+        )
+    return passed
 
 
 def main() -> int:
-    passed = [the_heredoc_is_found()]
-    for path, wanted in ALLOCATORS.items():
-        passed.extend(below_the_floor(path, wanted))
+    passed = the_runners_call_the_allocator()
+    for _, wanted in CALLERS.items():
+        passed.extend(below_the_floor(wanted))
+    passed.append(the_floor_is_read_rather_than_assumed())
+    passed.append(the_floor_falls_back_when_proc_is_unreadable())
+    passed.append(a_garbled_range_falls_back_too())
+    passed.append(the_top_port_offered_is_below_the_floor())
+    passed.append(a_repeated_draw_is_not_offered_twice())
     passed.append(a_floor_at_or_below_the_bottom_is_loud())
     print(f"\n{sum(passed)} passed, {len(passed) - sum(passed)} failed")
     return 0 if all(passed) else 1

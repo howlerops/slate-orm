@@ -10556,16 +10556,16 @@
     {
       "entry": "2026-09-28-the-port-allocator-runs-in-a-test-now.md",
       "key": "It does not remove the duplicate.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. examples/batchbench/run.sh carries its own copy of the allocator. Extracting a shared Python module under scripts/ for both to shell out to is the fix and is rejected in the entry as larger than this change; the guard covers both copies meanwhile."
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-one-allocator-instead-of-two.md: the two PORTS heredocs are scripts/free_ports.py, called by both run.sh in one line each. scripts/test_free_ports.py asserts both call it and that neither carries a heredoc any more, so a copy growing back is a failing case rather than a second green allocator. The prediction was borne out on the way: the two copies had already drifted in spelling, and putting them side by side showed a max() term that had never changed the answer at any floor.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-port-allocator-runs-in-a-test-now.md",
       "key": "The 10050 floor is chosen, not found.",
-      "verdict": "deliberate",
-      "reviewed": "2026-09-28",
-      "by": "this entry: it is the floor that makes max(..., 10100) bind, which is what the mutation run showed the two realistic floors cannot catch. Enumerating the 10001-10100 window would add cases that differ only in a literal."
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-one-allocator-instead-of-two.md: enumerated rather than reasoned about. min(max(f - 1, 10100), f - 1) equals f - 1 for every floor from 2 to 69999 -- 0 of 69,998 differ -- so the max term the 10050 floor was chosen to make load-bearing had never changed the answer anywhere. It is gone, the clamp is draw(LOW, below - 1), and no floor is adversarial any more because there is only one term. The question 'which floors matter' is answered: none of them do.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
@@ -12179,6 +12179,33 @@
     {
       "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
       "key": "A strike that paraphrases still pairs with nothing.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-one-allocator-instead-of-two.md",
+      "key": "It does not measure the thing the allocator is for.",
+      "verdict": "deliberate",
+      "by": "this entry: that a port below ip_local_port_range is safe from automatic reuse is a property of Linux, not of this code, and nothing in this repository can demonstrate it -- the evidence for it is the documented behaviour of the sysctl and the CI failure that prompted the whole mechanism. What is checkable here is the arithmetic against a floor, and that is what is checked.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-one-allocator-instead-of-two.md",
+      "key": "The probe is still a race.",
+      "verdict": "deliberate",
+      "by": "this entry: binding, closing and handing the number to a caller that binds later cannot be made atomic from outside the kernel. Excluding the kernel's *automatic* allocation is the whole point and is what the below-the-range rule buys; a deliberate listener taking the port is a different failure and a loud one. True of both heredocs before this and unchanged by it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-one-allocator-instead-of-two.md",
+      "key": "`--count` has no upper bound.",
+      "verdict": "deliberate",
+      "by": "this entry: the largest count any caller asks for is five and the smallest range in play holds about twenty thousand candidates, so the hang cannot happen today. A bound would be a number chosen without a case behind it, which is the shape this repository keeps having to withdraw. Recorded rather than guarded so the next caller asking for thousands finds the reason instead of the symptom.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-one-allocator-instead-of-two.md",
+      "key": "Nothing stops a third copy appearing.",
       "verdict": "open",
       "checked": "2026-09-29"
     }
