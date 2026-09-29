@@ -113,6 +113,16 @@ ELSEWHERE = {
     "sh scripts/run_examples.sh slate-orm --smoke": (
         "the same, for the ORM's one end-to-end tour"
     ),
+    # `check.sh` runs `check_versions.py` with no argument, which is the whole
+    # of what it can check here: the tree agreeing with itself. The tag is the
+    # other half and only a tag run has one, so this spelling — with the ref
+    # interpolated — is a different command and belongs here rather than in
+    # the script.
+    "python3 scripts/check_versions.py ${{ startsWith(github.ref, "
+    "'refs/tags/v') && github.ref_name || '' }}": (
+        "the same guard `check.sh` runs, plus the tag, which exists only on a "
+        "tag run"
+    ),
 }
 
 #: Multi-line `run: |` blocks, by the `name:` above them.
@@ -141,6 +151,16 @@ ELSEWHERE_BLOCKS = {
     "Build": "a release build for a shipping target",
     "It starts, and validates a configuration": "runs the binary the step above built",
     "Name it after its target": "renames an artefact",
+    # The container image and the registries, covered from 2026-09-29. Each
+    # needs a docker daemon, a git remote or a package registry — three things
+    # `check.sh` promises never to need, which is what makes it runnable on a
+    # branch with no network.
+    "It starts inside the image, and validates a configuration": (
+        "runs the image the step above built, in a docker daemon"
+    ),
+    "The base is still distroless": "runs the image, in a docker daemon",
+    "Tag the module path": "pushes a git tag to the remote",
+    "Warm the proxy, and fail if it will not resolve": "asks proxy.golang.org",
 }
 
 

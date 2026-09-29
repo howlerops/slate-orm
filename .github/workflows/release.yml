@@ -1,14 +1,31 @@
-# Publish the head node on a tag.
+# Publish everything this repository ships, on a tag.
 #
-# `slate-serverd` is the only thing here that is shippable: one binary, one
-# TOML file, no runtime. The three client packages are deliberately *not*
-# published — see the note at the bottom.
+# Five artefacts, and they do not all cost the same to publish:
+#
+#   slate-serverd binaries   GitHub release      no credential
+#   ghcr.io/<owner>/slate-serverd   GHCR         GITHUB_TOKEN, already here
+#   clients/go               the Go proxy        a git tag, nothing else
+#   @slate-orm/client        npm                 a token this repo must be given
+#   slate-client             PyPI                a token this repo must be given
+#
+# The first three need nothing from anybody. The last two need a credential and
+# a claimed name, and the previous version of this file refused to wire them up
+# for that reason:
+#
+#   > Each needs a credential this repository does not hold, a name nobody has
+#   > claimed, and a decision about stability that has not been made.
+#
+# That reasoning still holds and is not overridden here — it is *made visible*.
+# See `vars.PUBLISH_NPM` below: the workflow no longer decides, the repository's
+# settings do, and a repository that has not decided gets a job that says so
+# out loud rather than one that quietly does nothing.
 #
 # The build itself lives in `release-build.yml`, which `ci.yml` also calls on
 # every push. A release workflow is otherwise exercised for the first time on
 # the day somebody cuts a release, which is the worst day to discover the
 # aarch64 linker is missing — and that is exactly the state `ci.yml` was in
-# until it was made to fire: active, plausible, and never once run.
+# until it was made to fire: active, plausible, and never once run. The image
+# build is in `ci.yml` for the same reason and with the same argument.
 name: Release
 
 on:
@@ -22,12 +39,41 @@ jobs:
   # commit that happened not to touch these files would build and publish
   # nothing. A release workflow that silently does not run is worse than one
   # that has never run.
+
+  # First, and everything else needs it. A tag saying v0.2.0 on a tree whose
+  # `package.json` says 0.0.1 publishes 0.0.1 — successfully, to a registry
+  # that will not let the number be reused. `scripts/check_versions.py`'s
+  # docstring has the whole argument.
+  versions:
+    name: the tag and the tree agree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - id: read
+        run: |
+          version="$(python3 -c "
+          import tomllib
+          print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])
+          ")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "the tree declares $version"
+      # With the tag on a tag run, and without one on a dispatch: a dispatch
+      # has no version to agree with, and checking the tree against itself is
+      # still worth doing before anything is built.
+      - run: python3 scripts/check_versions.py ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+
   build:
+    needs: versions
     uses: ./.github/workflows/release-build.yml
 
   publish:
     name: attach the binaries
-    needs: build
+    needs: [versions, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -49,17 +95,217 @@ jobs:
           # that does not say so is read as a promise.
           prerelease: true
 
-# Unverified, and deliberately so: the `publish` job. Everything it depends on
-# runs on every push through `ci.yml`, but `softprops/action-gh-release` needs a
-# real `v*` tag, and pushing one publishes a release that cannot be quietly
-# withdrawn. It is the one thing here that has to be exercised by a person who
-# means it.
-#
-# Deliberately absent: publishing `slate-client` to PyPI, `@slate-orm/client`
-# to npm, or tagging the Go module for a proxy.
-#
-# Not an oversight and not laziness. Each needs a credential this repository
-# does not hold, a name nobody has claimed, and a decision about stability that
-# has not been made. The landing page's install lines used to name packages
-# that do not exist anywhere; the fix for that was to reword the page, not to
-# wire up a token and find out.
+  image:
+    name: the head node, as an image
+    needs: versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Lower-cased, because a GHCR repository name may not carry a capital and
+      # an owner may. `${{ github.repository_owner }}` is passed through as-is
+      # by every example in the docs, which works until somebody with a capital
+      # in their handle cuts a release.
+      - id: owner
+        run: echo "name=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      # Both architectures the binaries ship for, so the image is usable
+      # wherever the binary is. This is the slow job in the release and it is
+      # the one that can be: nothing waits on it.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.name }}/slate-serverd:${{ needs.versions.outputs.version }}
+            ghcr.io/${{ steps.owner.outputs.name }}/slate-serverd:latest
+          # `latest` on a prerelease is a judgement call. It points at the
+          # newest tag rather than at the newest *stable* one, because there
+          # are no stable ones and a `latest` that resolves to nothing is worse
+          # than one that resolves to a prerelease the README describes as such.
+          provenance: true
+          sbom: true
+
+  go:
+    name: the Go module, for the proxy
+    needs: versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # A Go module in a subdirectory is published by a tag that *names the
+      # subdirectory*: `github.com/howlerops/slate-orm/clients/go@v0.2.0`
+      # resolves from a tag `clients/go/v0.2.0` and from nothing else. The `v*`
+      # tag that triggered this workflow does not resolve it, which is why a
+      # reader who tags a release and then runs `go get` sees the previous
+      # version and no error.
+      - name: Tag the module path
+        run: |
+          tag="clients/go/${{ github.ref_name }}"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "$tag exists already; nothing to do"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$tag" "${{ github.sha }}"
+          git push origin "$tag"
+      # Asking the proxy for it is what makes it fetchable promptly rather than
+      # whenever somebody first asks. It is also the only check available that
+      # the tag is the shape the proxy wants: a wrong one answers 404 here
+      # rather than in a user's terminal a week later.
+      - name: Warm the proxy, and fail if it will not resolve
+        run: |
+          module=github.com/howlerops/slate-orm/clients/go
+          version="${{ github.ref_name }}"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsS "https://proxy.golang.org/${module}/@v/${version}.info"; then
+              echo
+              echo "the proxy has ${module}@${version}"
+              exit 0
+            fi
+            echo "attempt ${attempt}: not yet; the proxy is eventually consistent"
+            sleep $((attempt * 15))
+          done
+          echo "::error::the Go proxy would not resolve ${module}@${version}" >&2
+          exit 1
+
+  npm:
+    name: "@slate-orm/client"
+    needs: versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      # The decision, made once in the repository's settings rather than in
+      # this file. Three states, and the middle one is the point:
+      #
+      #   vars.PUBLISH_NPM unset   -> say so, do nothing, succeed
+      #   set, no NPM_TOKEN        -> fail
+      #   set, with a token        -> publish
+      #
+      # The second state is why this is not `if: secrets.NPM_TOKEN != ''`. A
+      # workflow that skips when a credential is missing cannot tell "we have
+      # not decided to publish this" from "we decided to and the token
+      # expired" — and the second reads as a green release that shipped four
+      # artefacts instead of five. "A skip is green" is a defect this
+      # repository has already met once, in the Python harness that skipped its
+      # whole suite when `cargo` was absent.
+      - id: decided
+        run: |
+          echo "publish=${{ vars.PUBLISH_NPM }}" >> "$GITHUB_OUTPUT"
+          echo "token=${{ secrets.NPM_TOKEN != '' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.decided.outputs.publish != 'true'
+        run: |
+          echo "### npm: not published" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`vars.PUBLISH_NPM\` is not \`true\`, so this release does not publish \`@slate-orm/client\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Set it in the repository's variables when the name is claimed and the API is stable enough to mean it." >> "$GITHUB_STEP_SUMMARY"
+      - if: steps.decided.outputs.publish == 'true' && steps.decided.outputs.token != 'true'
+        run: |
+          echo "::error::vars.PUBLISH_NPM is true and secrets.NPM_TOKEN is empty, so this release would ship four artefacts and report five." >&2
+          exit 1
+      - if: steps.decided.outputs.publish == 'true'
+        run: npm ci
+        working-directory: clients/typescript
+      - if: steps.decided.outputs.publish == 'true'
+        run: npm test
+        working-directory: clients/typescript
+      # `--provenance` ties the published tarball to this workflow run, which
+      # is the only thing a consumer can check without trusting the token.
+      # `--access public` because a scoped package defaults to restricted and
+      # the first publish of one silently fails otherwise.
+      - if: steps.decided.outputs.publish == 'true'
+        run: npm publish --provenance --access public
+        working-directory: clients/typescript
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  pypi:
+    name: slate-client
+    needs: versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # The same three states as npm, and the same reason. PyPI's Trusted
+      # Publishing takes no token at all — the `id-token: write` above is the
+      # whole credential — so the second state here is "configured on PyPI or
+      # not", which this cannot see from here and which shows up as a failing
+      # upload rather than a silent one.
+      - id: decided
+        run: echo "publish=${{ vars.PUBLISH_PYPI }}" >> "$GITHUB_OUTPUT"
+      - if: steps.decided.outputs.publish != 'true'
+        run: |
+          echo "### PyPI: not published" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`vars.PUBLISH_PYPI\` is not \`true\`, so this release does not publish \`slate-client\`." >> "$GITHUB_STEP_SUMMARY"
+          echo "Set it once the name is claimed and a Trusted Publisher for this repository is configured on PyPI." >> "$GITHUB_STEP_SUMMARY"
+      - if: steps.decided.outputs.publish == 'true'
+        run: python3 -m pip install --upgrade build
+      - if: steps.decided.outputs.publish == 'true'
+        run: python3 -m build
+        working-directory: clients/python
+      - if: steps.decided.outputs.publish == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: clients/python/dist
+
+  # Last, and it fails the run rather than reporting it: a release that shipped
+  # some of what it claims is the failure this whole file is arranged around,
+  # and the summary above is only read by somebody who goes looking.
+  shipped:
+    name: what this release actually shipped
+    needs: [versions, publish, image, go, npm, pypi]
+    if: always() && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          {
+            echo "## ${{ github.ref_name }}"
+            echo
+            echo "| artefact | result |"
+            echo "| --- | --- |"
+            echo "| binaries | ${{ needs.publish.result }} |"
+            echo "| container image | ${{ needs.image.result }} |"
+            echo "| Go module | ${{ needs.go.result }} |"
+            echo "| npm | ${{ needs.npm.result }} |"
+            echo "| PyPI | ${{ needs.pypi.result }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::a release job did not succeed; the table above says which" >&2
+          exit 1
+
+# Unverified, and deliberately so: everything that needs a real `v*` tag.
+# `release-build.yml` and the image build run on every push through `ci.yml`,
+# and `scripts/check_versions.py` runs in `scripts/check.sh` — but
+# `softprops/action-gh-release`, the GHCR push, the module tag and the two
+# registry uploads all need a tag that publishes something which cannot be
+# quietly withdrawn. That is the one part that has to be exercised by a person
+# who means it.

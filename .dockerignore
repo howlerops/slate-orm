@@ -1,0 +1,22 @@
+# What the build context must not carry.
+#
+# The `Dockerfile` COPYs explicitly, so nothing here changes what lands in the
+# image — this is about what is *sent to the daemon* before any of that runs.
+# `target/` alone is tens of gigabytes on a working checkout, and without this
+# file `docker build .` spends minutes uploading a build cache it then ignores.
+#
+# Everything is excluded and the few things the build needs are allowed back,
+# rather than the other way round: a deny-list forgets the next large
+# directory somebody adds, and the symptom is a slow build rather than a
+# failure, so nobody notices.
+*
+
+!Cargo.toml
+!Cargo.lock
+!crates/
+!clients/python/testserver/
+
+# And, inside those, the build outputs a working checkout leaves behind.
+**/target/
+**/node_modules/
+**/__pycache__/

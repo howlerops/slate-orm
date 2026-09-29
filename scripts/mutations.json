@@ -324,6 +324,18 @@
           "new": "- `ledger/mutations/20260929T084515-clients-python-tests-test-fixtures-py.json`"
         }
       ]
+    },
+    {
+      "guard": "check_versions",
+      "file": "clients/typescript/package.json",
+      "why": "A published package whose version disagrees with the tag is the one release failure that cannot be undone: npm and PyPI refuse a number that has been used, so a tag named v0.2.0 that ships 0.0.1 has to be explained rather than corrected. The fixture suite proves the comparison refuses; only the real manifest proves the guard is reading the file a release would publish.",
+      "cases": [
+        {
+          "name": "the npm package's version drifts from the workspace",
+          "old": "\"version\": \"0.0.1\",",
+          "new": "\"version\": \"0.0.2\","
+        }
+      ]
     }
   ],
   "unmutated": {

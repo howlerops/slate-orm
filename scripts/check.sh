@@ -88,6 +88,8 @@ python-rest-ruff|.|ruff check .
 codegen-tests|.|python3 scripts/test_codegen.py
 python-decoders|.|python3 -m pytest examples/explorer/backends/python/adapter -q
 check-sh-guard|.|python3 scripts/test_check_sh.py
+versions|.|python3 scripts/check_versions.py
+versions-guard|.|python3 scripts/test_check_versions.py
 mutate-harness|.|python3 scripts/test_mutate.py
 cited-tests|.|python3 scripts/check_cited_tests.py
 cited-tests-guard|.|python3 scripts/test_check_cited_tests.py

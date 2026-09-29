@@ -1,0 +1,84 @@
+{
+  "at": "2026-09-29T17:21:20+00:00",
+  "file": "scripts/check_versions.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_versions.py"
+  ],
+  "commit": "98d4b2d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a manifest with no version is accepted",
+      "old": "        if has is None:",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a published package with no version at all fails: no 'declares no version' in",
+        "clients/typescript/package.json says None; Cargo.toml's workspace version is 0.1.0."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the tag is no longer compared with the tree",
+      "old": "        elif named.group(1) != want:",
+      "new": "        elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tag ahead of the tree fails: exit 0, wanted 1",
+        "a prerelease tag must match the tree exactly: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "anything is accepted as a v-tag",
+      "old": "TAG = re.compile(r\"^v(.+)$\")",
+      "new": "TAG = re.compile(r\"^v?(.+)$\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a tag that is not a v-tag fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty tree of manifests reads as nothing wrong",
+      "old": "    if not found:",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree with no publishable manifest fails: exit 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the npm manifest stops being read",
+      "old": "        found[str(npm.relative_to(root))] = json.loads(npm.read_text()).get(\"version\")",
+      "new": "        pass",
+      "verdict": "caught",
+      "caught_by": [
+        "an npm version behind the workspace fails: exit 0, wanted 1",
+        "a published package with no version at all fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the python manifest stops being read",
+      "old": "        found[str(python.relative_to(root))] = (\n            tomllib.loads(python.read_text()).get(\"project\", {}).get(\"version\")\n        )",
+      "new": "        pass",
+      "verdict": "caught",
+      "caught_by": [
+        "a pyproject version ahead of the workspace fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

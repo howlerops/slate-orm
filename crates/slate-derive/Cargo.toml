@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+# Not published. The crates.io question is decided in `docs/releasing.md`:
+# these are libraries this repository consumes by path, and publishing them
+# commits to an API that changes weekly. Declared rather than left to the
+# absence of a token, because a token added for one crate publishes every
+# crate that did not say no.
+publish = false
 
 [lib]
 proc-macro = true
