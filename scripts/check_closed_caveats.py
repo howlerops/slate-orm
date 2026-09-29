@@ -808,6 +808,9 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-29-two-rows-for-one-gap.md',
+     'It does not sweep the other 124 open rows for duplicates.'):
+        'closed by running the sweep in the direction the caveat named missing -- all 137 open rows pairwise against each other -- and reading its output. The result is a null one for the mechanical route and a single real pair for the reading, and neither leaves an artifact: a fuzzy matcher over 60-character key prefixes was measured here and rejected, so there is no guard to point at',
     ('2026-09-28-a-random-twelve-found-nothing.md',
      'It says nothing about the `deliberate` verdicts.'):
         'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
@@ -950,6 +953,10 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-two-rows-for-one-gap.md',
+     'It does not sweep the other 124 open rows for duplicates.'): '=read',
+    ('2026-09-20-the-attribute-the-builder-already-had.md',
+     'Nothing measures the cost.'): 'soft-delete-read-cost',
     ('2026-09-29-a-guard-whose-roster-was-itself.md',
      'The self-skip is by filename.'): 'skip-list-rot',
     ('2026-09-19-a-row-that-is-gone-but-still-there.md',

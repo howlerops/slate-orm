@@ -9664,9 +9664,9 @@
     {
       "entry": "2026-09-20-the-attribute-the-builder-already-had.md",
       "key": "Nothing measures the cost.",
-      "verdict": "open",
-      "by": "every read of a soft-deleting table still carries an extra IsNull conjunct and nothing has timed it.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "crates/slate-kernel/benches/queries.rs, the `soft_delete` group: the extra IsNull conjunct is 141 ns a row scanned, +35% on a whole-tenant scan over three runs against an 11% noise floor. The second row for the gap ledger/2026-09-19-a-row-that-is-gone-but-still-there.md also recorded; both close on the same measurement. ledger/2026-09-29-what-a-retired-row-costs-a-read.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-attribute-the-builder-already-had.md",
@@ -10866,9 +10866,9 @@
     {
       "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
       "key": "840 remain unread.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. Sixty of 900 is a sample; the interval rules out a high rate and not a moderate one, and at 8.9% there would be eighty-three false verdicts among them."
+      "verdict": "moment",
+      "by": "a progress marker, true at 60 read and superseded four times since. The live count is in ledger/2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md at 747, and carrying five rows for one number is what ledger/2026-09-29-two-rows-for-one-gap.md is about.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
@@ -12419,9 +12419,9 @@
     {
       "entry": "2026-09-29-two-rows-for-one-gap.md",
       "key": "It does not sweep the other 124 open rows for duplicates.",
-      "verdict": "open",
-      "by": "the sweep was run open-against-settled and its output read. Open-against-open, where two rows duplicate each other with neither settled, was not run at all -- ordinary undone work, and one command.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "swept open-against-open, the direction this caveat named as missing: all 137 open rows pairwise, normalised and compared with difflib. One real pair, neither settled -- `A conditional update is one round trip per row.` in ledger/2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md and ledger/2026-09-18-decimals-and-conditional-updates-in-three-clients.md. ledger/2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-two-rows-for-one-gap.md",
@@ -12569,9 +12569,9 @@
     {
       "entry": "2026-09-29-the-deliberate-sample-carried-to-216.md",
       "key": "792 remain unread",
-      "verdict": "open",
-      "by": "the sample is 264 of 1011 and 747 remain; carried in task #329, which stays in_progress. ledger/2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md is the batch after this entry's.",
-      "checked": "2026-09-29"
+      "verdict": "moment",
+      "by": "the same progress marker one batch later, superseded by 747 in ledger/2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md. One count stays live; the rest are dated records of where a sample had got to.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-deliberate-sample-carried-to-216.md",
@@ -12685,6 +12685,34 @@
       "verdict": "deliberate",
       "by": "this entry: `GO_INSTALL.search` says an example is present, and deciding whether it is the pattern the comment means needs a reader. The alternative is matching the example against the guard's own regex plus its position, which is a parser -- the thing this file's never-fires note already argues against.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
+      "key": "It does not make the open list reachable.",
+      "verdict": "deliberate",
+      "by": "this entry measures it: 1.6 open rows per entry today, so the list falls only on batched closures or on work whose own caveats all settle. That is a fact about the convention ledger/README.md sets, not a gap in it -- an entry that hid what it did not do would shrink the list by lying. Recorded so the number is somewhere.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
+      "key": "The sweep is a reading and leaves nothing behind.",
+      "verdict": "deliberate",
+      "by": "this entry: 24 duplicated keys of which 0 are real findings, measured above, is a guard nobody reads -- the argument ledger/2026-09-26-the-half-that-asks-which-files.md makes about `self.table(`. The 60-character key prefix is what makes generic sentences collide, and a better matcher does not fix a key.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
+      "key": "It says nothing about the 110 `narrowed` rows or the 1018 `d",
+      "verdict": "open",
+      "by": "the sweep covered the 137 open rows only, because that is the set the caveat named. A duplicate spanning open and narrowed, or sitting inside the 1018 deliberate, would not have been found.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
+      "key": "The 1.6 figure is one day.",
+      "verdict": "open",
+      "by": "46 entries dated 2026-09-29, which are unusually dense in guards and measurements -- both shapes that name their own limits freely. No day of feature work has been counted, so the rate is one sample.",
+      "checked": "2026-09-29"
     }
   ]
 }
