@@ -11771,7 +11771,9 @@
     {
       "entry": "2026-09-29-the-mutations-run-again-now.md",
       "key": "Nothing runs `run_mutations.py` on a schedule.",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": ".github/workflows/mutations.yml: workflow_dispatch, which works on any branch from the moment this lands, and a weekly cron",
+      "residual": "it has never fired, and the cron half cannot until the file is on main -- GitHub runs scheduled workflows from the default branch alone; the button is what works today and nobody has pressed it",
       "checked": "2026-09-29"
     },
     {
@@ -11818,7 +11820,9 @@
     {
       "entry": "2026-09-29-every-guard-now-has-one.md",
       "key": "Nothing runs `run_mutations.py` on a schedule.",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": ".github/workflows/mutations.yml: workflow_dispatch, which works on any branch from the moment this lands, and a weekly cron",
+      "residual": "it has never fired, and the cron half cannot until the file is on main -- GitHub runs scheduled workflows from the default branch alone; the button is what works today and nobody has pressed it",
       "checked": "2026-09-29"
     },
     {
@@ -11839,6 +11843,32 @@
       "key": "Four of the five findings are the same failure.",
       "verdict": "deliberate",
       "by": "this entry declines to generalise: four instances is the evidence base that produced the wrong rule in ledger/2026-09-29-a-caveat-closed-by-a-line-through-it.md, where a convention inferred from one entry would have failed 48. Counted before generalising is the habit; the count here is four and the rule is not built.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "It has never fired, and the scheduled half cannot until this",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "Nothing checks this workflow's steps the way `test_check_sh.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "A weekly cadence means a broken guard can be broken for a we",
+      "verdict": "deliberate",
+      "by": "this entry: the five guards found broken today had been broken for days to weeks, so a week is an improvement of the same order. Per-push costs a minute on every push beside twenty-one other jobs, and the defect class moves with the guards rather than with the tree they read.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "`git diff --exit-code` is a belt, not a brace.",
+      "verdict": "deliberate",
+      "by": "this entry: it catches a mutation left behind within the job. A run killed by the runner leaves nothing to check, and mutate.py's in-flight marker is read only by the next run on the same checkout -- never the case in CI, where every run starts clean.",
       "reviewed": "2026-09-29"
     }
   ]
