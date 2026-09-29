@@ -419,6 +419,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- the same framing cost in three clients, 2026-09-29 ---------------------
+ "go-weighs-a-read": (
+     "type sendingStream struct",
+     "clients/go/slate/related_test.go",
+ ),
+
  # --- two caveats that were already answered, 2026-09-29 ---------------------
  "bar-geometry-in-a-browser": (
      "a bar has no width",
@@ -731,6 +737,8 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-the-kernel-on-wasm.md',
      'Nothing else in the workspace is checked for the same proble'):
         'wasm-runtime-guard',
+    ('2026-09-29-bytes-do-not-need-a-network.md',
+     'Only the Python client weighs.'): 'go-weighs-a-read',
     ('2026-09-14-frontend-tests-and-configurable-ports.md',
      'The bar chart is asserted on count and threshold, not on geo'):
         'bar-geometry-in-a-browser',

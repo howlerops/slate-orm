@@ -10739,9 +10739,10 @@
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "It still says nothing about latency or bytes.",
-      "verdict": "open",
+      "verdict": "narrowed",
       "checked": "2026-09-29",
-      "by": "the bytes half is no longer blocked and is done in Python only: ByteSize() at the interceptor needs no network, and ledger/2026-09-29-bytes-do-not-need-a-network.md measures batching and paging with it. Go's related_test.go and round_trip_test.go and TypeScript's roundTrip.test.ts count and do not weigh, so the three-client comparison is still counts alone. Latency still needs a network and examples/deployed still needs MinIO."
+      "by": "the bytes half is measured in all three clients now. Go needed a sendingStream wrapper before it could weigh a read at all -- the stream interceptor saw a nil, which is the half-blindness this entry is named for, one level down. The three agree on the framing cost: Python's twenty rows batch to 1382 bytes against 1300, Go's to 502 against 420, the same +82 from totals three times the size. See ledger/2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "residual": "latency, in every client. A loopback duration against an in-memory store is mostly scheduling; examples/deployed is where it would be timed and it needs MinIO."
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
@@ -10930,9 +10931,10 @@
     {
       "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
       "key": "It says nothing about latency or bytes.",
-      "verdict": "open",
+      "verdict": "narrowed",
       "checked": "2026-09-29",
-      "by": "the bytes half is no longer blocked and is done in Python only -- see ledger/2026-09-29-bytes-do-not-need-a-network.md, which found batching costs 4n+2 bytes and a cursor page costs more than an offset page. The other two clients do not weigh, which is what keeps this one open rather than narrowed: the caveat is about the three-client comparison. Latency still needs a network."
+      "by": "the bytes half is measured in all three clients -- see ledger/2026-09-29-the-same-framing-cost-in-three-clients.md. A batch costs 4n+2 bytes more than the singles it replaces, in Python and in Go independently, and a cursor page costs more than an offset page in both. Both findings go against the phrase they were meant to confirm.",
+      "residual": "latency, and a runner that compares the three clients' byte counts against each other. The agreement reported is a person reading two tests; nothing asserts it, because the three adapters write different rows and a comparison would be asserting on the fixtures."
     },
     {
       "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
@@ -11507,9 +11509,9 @@
     {
       "entry": "2026-09-29-bytes-do-not-need-a-network.md",
       "key": "Only the Python client weighs.",
-      "verdict": "open",
-      "by": "true. Go and TypeScript count and do not weigh, so the three-client comparison is still counts alone. The change is one line per interceptor and was not made because the finding was worth publishing first.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "Go and TypeScript weigh now, each with the same two tests. Go needed a sendingStream wrapper in related_test.go first: grpc-go hands a stream interceptor the call and not the payload, so every Query was a nil. See ledger/2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-bytes-do-not-need-a-network.md",
@@ -11523,6 +11525,41 @@
       "key": "Nothing weighs a relation load, a join or an aggregate.",
       "verdict": "open",
       "by": "true. The two workloads weighed are the two the caveats named; the others have counts and no weights.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "It measures no latency, in any client.",
+      "verdict": "open",
+      "by": "true and unchanged: a loopback duration against an in-memory store is mostly scheduling, and examples/deployed needs MinIO.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "It compares the three by hand.",
+      "verdict": "open",
+      "by": "true. The deltas agreeing at +82 is a fact two tests report and a person noticed; nothing asserts the relation. A runner that did would need one shared workload with identical rows across the three adapters, which is a real change to /api/round-trips.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "The request only, again.",
+      "verdict": "deliberate",
+      "by": "inherited from the Python entry and settled there: each instrument sees what its own channel is about to send. Weighing a response would make the batch comparison meaningless, since the same rows come back either way.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "The Go paging test is the only thing that drains an offset r",
+      "verdict": "deliberate",
+      "by": "the drain is there so the request is sent; a caller who abandoned the stream half way would have sent the same request and would weigh the same, which is right. Testing that would be testing grpc rather than this client.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "Nothing weighs a relation load, a join or an aggregate",
+      "verdict": "open",
+      "by": "true in all three clients, and unchanged from the Python entry: the workloads weighed are the two the caveats named.",
       "checked": "2026-09-29"
     }
   ]

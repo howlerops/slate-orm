@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-29T07:03:54+00:00",
+  "file": "clients/go/slate/related_test.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -count=1"
+  ],
+  "commit": "99e0a77",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the stream wrapper is not installed, so a read weighs nothing",
+      "old": "\t\t\treturn &sendingStream{ClientStream: stream, method: method, seen: seen}, nil",
+      "new": "\t\t\treturn stream, nil",
+      "verdict": "caught",
+      "caught_by": [
+        "TestPagingByCursorIsOneRequestPerPage",
+        "TestACursorPageCostsMoreBytesThanAnOffsetPage"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "SendMsg reports nothing",
+      "old": "\tif message, ok := m.(proto.Message); ok {\n\t\ts.seen(s.method, message)\n\t}\n\treturn s.ClientStream.SendMsg(m)",
+      "new": "\treturn s.ClientStream.SendMsg(m)",
+      "verdict": "caught",
+      "caught_by": [
+        "TestPagingByCursorIsOneRequestPerPage",
+        "TestACursorPageCostsMoreBytesThanAnOffsetPage"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the open reports again, double-counting every read",
+      "old": "\t\t\tstream, err := streamer(ctx, desc, cc, method, opts...)\n\t\t\tif err != nil {",
+      "new": "\t\t\tseen(method, nil)\n\t\t\tstream, err := streamer(ctx, desc, cc, method, opts...)\n\t\t\tif err != nil {",
+      "verdict": "caught",
+      "caught_by": [
+        "TestPagingByCursorIsOneRequestPerPage"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -382,11 +382,24 @@ func dialRecording(
 			streamer grpc.Streamer,
 			opts ...grpc.CallOption,
 		) (grpc.ClientStream, error) {
-			// No request message: a stream is opened before anything is sent,
-			// so a caller wanting the body has to wrap SendMsg. Nothing needs
-			// it yet, and a nil is honest about what this saw.
-			seen(method, nil)
-			return streamer(ctx, desc, cc, method, opts...)
+			// Nothing is reported here, and that is a change. This used to
+			// call `seen(method, nil)` on the open, because grpc hands a
+			// stream interceptor the call and not the payload — an honest nil
+			// for a body it could not see. Reporting on the open *and* on the
+			// send would count every read twice, so the report moved to the
+			// send: a server-streaming RPC sends its one request immediately
+			// after opening, so the count is the same and the message is no
+			// longer nil. Go could count a read and not weigh one until this.
+			stream, err := streamer(ctx, desc, cc, method, opts...)
+			if err != nil {
+				return stream, err
+			}
+			// And the body arrives later, through SendMsg, which is why the
+			// wrapper exists. Without it Go could count a read and never weigh
+			// one: the comment that used to stand here said "nothing needs it
+			// yet", and `ledger/2026-09-29-bytes-do-not-need-a-network.md`
+			// needed it the moment bytes were asked for in all three clients.
+			return &sendingStream{ClientStream: stream, method: method, seen: seen}, nil
 		}),
 	)
 	if err != nil {
@@ -394,6 +407,26 @@ func dialRecording(
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client
+}
+
+// sendingStream reports each message a client stream sends.
+//
+// grpc-go hands a stream interceptor the call and not the payload, so a
+// `Query` — the shape every read takes — is invisible to the interceptor
+// itself. Embedding `grpc.ClientStream` and overriding the one method keeps
+// every other part of the stream exactly what grpc built, which matters:
+// a hand-written forwarder would have to track the interface as it grows.
+type sendingStream struct {
+	grpc.ClientStream
+	method string
+	seen   func(method string, request proto.Message)
+}
+
+func (s *sendingStream) SendMsg(m any) error {
+	if message, ok := m.(proto.Message); ok {
+		s.seen(s.method, message)
+	}
+	return s.ClientStream.SendMsg(m)
 }
 
 // Whether a request message has a field set, by name.
