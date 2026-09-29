@@ -241,6 +241,16 @@ if [ "$mode" = --conformance ]; then
 fi
 
 if [ "$mode" = --headless ]; then
+  # The run directory, on stdout, before the readiness line.
+  #
+  # The plain mode's banner prints it and this mode did not, so
+  # `scripts/test_run_teardown.py` derived `$TMPDIR/slate-explorer-<port>`
+  # itself — a second copy of the expression on line 109, which would go wrong
+  # silently: the test reads these logs only to explain a failure, so a wrong
+  # path means no explanation rather than an error.
+  # `ledger/2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md` recorded
+  # that and named this as the better fix.
+  echo "logs $run"
   echo "adapters are up; ctrl-c to stop"
   wait
 fi

@@ -606,19 +606,36 @@ def case_help_lists_every_adapter() -> bool:
     sends the reader to a file that does not exist, which is the same failure
     walking the other way.
     """
-    name = "--help lists exactly the adapters beside it"
+    name = "--help lists exactly the adapters beside it, each with a real dialect"
     spelled = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "mutate.py"), "--help"],
         capture_output=True,
         text=True,
         check=False,
     ).stdout
-    listed = set(re.findall(r"^    (mutate_\w+\.py)\b", spelled, re.M))
+    rows = dict(re.findall(r"^    (mutate_\w+\.py)\s+(\S+)", spelled, re.M))
     beside = {path.name for path in (ROOT / "scripts").glob("mutate_*.py")}
-    ok = bool(beside) and listed == beside
+    said = []
+    if not beside:
+        said.append("scripts/ holds no adapters at all; the glob is not matching")
+    if set(rows) != beside:
+        said.append(f"help lists {sorted(rows)}, scripts/ holds {sorted(beside)}")
+    # And the dialect each reports is one the table holds. A declared name is
+    # only worth printing if it resolves: `--help` naming a dialect that does
+    # not exist sends the next reader somewhere worse than silence did.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import mutate
+
+    for adapter, dialect in sorted(rows.items()):
+        if dialect not in mutate.DIALECTS:
+            said.append(
+                f"{adapter} reports dialect {dialect!r}, which is not one of "
+                f"{sorted(mutate.DIALECTS)}"
+            )
+    ok = not said
     print(f"{'ok  ' if ok else 'FAIL'}  {name}")
-    if not ok:
-        print(f"        help lists {sorted(listed)}, scripts/ holds {sorted(beside)}")
+    for one in said:
+        print(f"        {one}")
     return ok
 
 

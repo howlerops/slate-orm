@@ -153,30 +153,49 @@ ENV_ELSEWHERE: dict[str, str] = {}
 
 
 def workflow_env() -> dict[str, str]:
-    """The workflow-level `env:` block of `ci.yml`, as name to value.
+    """Every workflow's top-level `env:` block, as name to value.
 
     Only the top-level block, which is the one that applies to every step and
     is therefore the one nothing in a `run:` line reveals. A `env:` nested
     under a job or a step sits beside the command it modifies, where a reader
     comparing the two files can see it.
+
+    **Every workflow, not `ci.yml` alone.** It read one file while the step
+    roster above read five, which
+    `ledger/2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md`
+    recorded as the same hole one level down: `mutations.yml` growing a
+    workflow-level `env:` would have changed what its steps mean and nothing
+    would have noticed. Only `ci.yml` has one today, so this returns the same
+    dictionary it did — which is the point at which a widening is cheap.
+
+    A name set to two different values by two workflows is reported rather
+    than silently taking the last, because `check.sh` exports one value and
+    cannot satisfy both.
     """
-    lines = (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
     found: dict[str, str] = {}
-    inside = False
-    for line in lines:
-        if line.rstrip() == "env:":
-            inside = True
-            continue
-        if not inside:
-            continue
-        entry = re.match(r"^  ([A-Za-z_][A-Za-z0-9_]*): (.+)$", line)
-        if entry:
-            found[entry.group(1)] = entry.group(2).strip()
-            continue
-        # The block ends at the first line that is not one of its entries,
-        # which in this file is the blank line before `jobs:`.
-        if line.strip():
-            break
+    for path in workflows():
+        inside = False
+        for line in path.read_text().splitlines():
+            if line.rstrip() == "env:":
+                inside = True
+                continue
+            if not inside:
+                continue
+            entry = re.match(r"^  ([A-Za-z_][A-Za-z0-9_]*): (.+)$", line)
+            if entry:
+                name, value = entry.group(1), entry.group(2).strip()
+                if name in found and found[name] != value:
+                    # Reported through the value itself, so the complaint the
+                    # caller builds names both. A separate channel would mean
+                    # threading a second list through a function whose one job
+                    # is to read a block.
+                    value = f"{found[name]!r} in one workflow and {value!r} in another"
+                found[name] = value
+                continue
+            # The block ends at the first line that is not one of its entries,
+            # which in these files is the blank line before `jobs:`.
+            if line.strip():
+                break
     return found
 
 
@@ -196,9 +215,14 @@ def script_env() -> dict[str, str]:
 
 
 def environment_matches() -> list[str]:
-    """Complaints about `check.sh`'s exports against `ci.yml`'s `env:`."""
+    """Complaints about `check.sh`'s exports against every workflow's `env:`."""
     wanted = workflow_env()
-    assert wanted, "ci.yml has no workflow-level env: block; this guard is blind"
+    if not wanted:
+        # Reported, not asserted — the same reason the three never-fires
+        # checks below are reported: an `AssertionError` kills the run before
+        # the summary line `scripts/mutate.py` reads, so a guard correctly
+        # refusing scores as a suite that never started.
+        return ["no workflow sets a top-level env: block; this check is blind"]
     exported = script_env()
     complaints = []
     for name, value in sorted(wanted.items()):
@@ -206,16 +230,16 @@ def environment_matches() -> list[str]:
             continue
         if name not in exported:
             complaints.append(
-                f"ci.yml sets {name}={value} for every step and check.sh does not "
+                f"a workflow sets {name}={value} for every step and check.sh does not "
                 f"export it, so the same command is a different check in the two "
                 f"places; export it or give it a reason in ENV_ELSEWHERE"
             )
         elif exported[name] != value:
             complaints.append(
-                f"ci.yml sets {name}={value} and check.sh exports {name}={exported[name]}"
+                f"a workflow sets {name}={value} and check.sh exports {name}={exported[name]}"
             )
     for name in sorted(set(ENV_ELSEWHERE) - set(wanted)):
-        complaints.append(f"ENV_ELSEWHERE names {name}, which ci.yml no longer sets")
+        complaints.append(f"ENV_ELSEWHERE names {name}, which no workflow sets")
     return complaints
 
 
@@ -340,6 +364,77 @@ def joining() -> list[str]:
     return said
 
 
+#: How `CLAUDE.md` spells a job count, and the numbers it could mean.
+#:
+#: Words rather than digits because that file writes prose, and only the range
+#: a repository plausibly occupies: a list long enough to cover every number is
+#: a list nobody maintains, and one too short fails loudly the day a
+#: twenty-sixth job lands, which is the right failure.
+COUNTED = {
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "twenty-one": 21,
+    "twenty-two": 22,
+    "twenty-three": 23,
+    "twenty-four": 24,
+    "twenty-five": 25,
+}
+
+#: `  job-name:` at the top level of a workflow's `jobs:` block.
+#:
+#: The expression `CLAUDE.md` prints for itself, kept here so the count and the
+#: sentence cannot disagree about what is being counted.
+A_JOB = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.M)
+
+
+def job_count_matches() -> list[str]:
+    """Complaints about `CLAUDE.md`'s job count against `ci.yml`.
+
+    `CLAUDE.md` says how many jobs CI runs, twice, and says of itself:
+
+    > That count is a count of `jobs:` keys in `ci.yml` and nothing checks it,
+    > which is why it said *seventeen* for as long as it did: jobs were added
+    > and the sentence was not.
+
+    It then drifted a second time, to *twenty-one* against twenty-two, and was
+    corrected by hand in
+    `ledger/2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md`.
+    Twice is the count this repository uses to decide a habit needs a check.
+
+    Both occurrences, not the first: they are sentences apart and a correction
+    that reached one and not the other is the failure mode
+    `check_retired_claims.py` exists for.
+    """
+    jobs = len(A_JOB.findall((ROOT / ".github/workflows/ci.yml").read_text()))
+    if not jobs:
+        return ["no jobs found in ci.yml; the pattern that counts them is blind"]
+
+    prose = (ROOT / "CLAUDE.md").read_text()
+    said = []
+    spelled = re.findall(r"\b([a-z]+(?:-[a-z]+)?) jobs\b", prose)
+    if not spelled:
+        said.append(
+            "CLAUDE.md no longer says how many jobs CI runs, so this check has "
+            "nothing to hold to the workflow. Either the sentence moved — put "
+            "this back on it — or it is gone and so is the reason for this."
+        )
+    for word in spelled:
+        if word not in COUNTED:
+            said.append(
+                f"CLAUDE.md says {word!r} jobs, which is not a number COUNTED "
+                f"knows; add it if CI really has that many"
+            )
+        elif COUNTED[word] != jobs:
+            said.append(
+                f"CLAUDE.md says {word!r} jobs and ci.yml has {jobs}. The count "
+                f"has drifted twice before; correct every occurrence, not the "
+                f"first."
+            )
+    return said
+
+
 def main() -> int:
     steps, blocks = workflow_steps()
 
@@ -394,7 +489,7 @@ def main() -> int:
             [f"a named run-block nothing accounts for: {name}" for name in unknown_blocks],
         ),
         (
-            "check.sh exports ci.yml's workflow-level env",
+            "check.sh exports every workflow's top-level env",
             env_complaints,
         ),
         (
@@ -404,6 +499,10 @@ def main() -> int:
         (
             "several workflows are stitched together without bleeding into each other",
             joining(),
+        ),
+        (
+            "CLAUDE.md's job count is ci.yml's",
+            job_count_matches(),
         ),
         (
             "no ELSEWHERE entry names a step the workflows have dropped",

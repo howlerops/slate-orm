@@ -11934,9 +11934,9 @@
     {
       "entry": "2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md",
       "key": "`environment_matches` is still `ci.yml` only.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. It compares check.sh's exports against one workflow's `env:` block and no other workflow has one today, so a workflow-level `env:` added to mutations.yml would go unnoticed \u2014 the same hole this entry closed, one level down."
+      "verdict": "closed",
+      "by": "workflow_env() in scripts/test_check_sh.py reads every workflow's top-level env: block, and reports a name two workflows set differently. Only ci.yml has one today, so the answer is unchanged \u2014 which is the point at which a widening is cheap. ledger/2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md",
@@ -11969,9 +11969,9 @@
     {
       "entry": "2026-09-29-the-tool-now-prints-its-own-adapters.md",
       "key": "`--help` still does not say which dialect an adapter targets",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. mutate_guard.py reports in the `python` dialect and a reader has to open it to learn that; printing the pairing needs a declared attribute per adapter."
+      "verdict": "closed",
+      "by": "scripts/mutate_guard.py declares DIALECT and `mutate.py --help` prints it in a column beside the adapter's name, read out of the file as text rather than by importing it. scripts/test_mutate.py's case_help_lists_every_adapter checks the declared name is one mutate.py's own table holds. ledger/2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md",
@@ -11983,9 +11983,9 @@
     {
       "entry": "2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md",
       "key": "Nothing checks the job count, and this is the second time it",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. CLAUDE.md prints the one-line re.findall that answers it, so a guard is cheap; deciding which of CLAUDE.md's numbers should be checked is the part that is not, and this entry fixed one sentence rather than building the rule."
+      "verdict": "closed",
+      "by": "scripts/test_check_sh.py's job_count_matches() counts `jobs:` keys in ci.yml with the expression CLAUDE.md prescribes for itself and holds every 'N jobs' in that file to it \u2014 both occurrences, since a correction reaching one and not the other is the failure this is about. ledger/2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
@@ -12011,9 +12011,9 @@
     {
       "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
       "key": "`RUN_DIR` duplicates an expression from `run.sh`.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. The test derives $TMPDIR/slate-explorer-<head port> itself, so a change to that convention makes the log tails vanish silently. The fix is run.sh printing its run directory in --headless, which it does in the plain mode's banner and not there."
+      "verdict": "closed",
+      "by": "run.sh prints `logs $run` in --headless as it already did in the plain mode's banner, and scripts/test_run_teardown.py reads the path off that line instead of deriving it. A run with no such line says so rather than printing nothing. ledger/2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
@@ -12056,6 +12056,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-29",
       "by": "this entry: RESOURCE_EXHAUSTED is the code the execution ceilings already use and all three clients already turn it into their refused-request exception, which is the correct handling. A caller-visible distinction would be a new error detail on the wire and a change in three clients, for a refusal a caller retries either way."
+    },
+    {
+      "entry": "2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "key": "The log-tail path was not re-exercised end to end after the ",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. It runs only for a start that gets past the port pre-flight and then fails to reach readiness, which is now hard to produce on purpose. Both halves were verified separately \u2014 run.sh prints the line, the line parses to the real directory with its four logs \u2014 and the join between them is read, not run."
+    },
+    {
+      "entry": "2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "key": "The job-count check knows nine number words.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: a word-to-number library for one sentence is not worth a dependency, and a twenty-sixth job fails with a true message pointing at the right file. The range covers what a repository of this size plausibly reaches."
+    },
+    {
+      "entry": "2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "key": "Two workflows setting one name differently is reported as a ",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: the check's subject is whether check.sh exports what CI sets, and the complaint carries both values so a reader sees the disagreement. A separate conflict rule would have nothing to test against \u2014 no second workflow has a top-level env: block."
+    },
+    {
+      "entry": "2026-09-29-four-loose-ends-this-session-tied-off.md",
+      "key": "`--help` prints a declared string, not a verified behaviour.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. scripts/test_mutate.py checks that mutate_guard.py's DIALECT names a dialect that exists, not that its output is readable by that dialect. The two come apart if the adapter's summary line changes, and what would catch it is a mutation run against a guard."
     }
   ]
 }

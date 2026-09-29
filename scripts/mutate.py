@@ -753,8 +753,8 @@ def scored(
     return 1 if problems else 0
 
 
-def adapters() -> list[tuple[str, str]]:
-    """`scripts/mutate_*.py` beside this one, each with its docstring's first line.
+def adapters() -> list[tuple[str, str, str]]:
+    """`scripts/mutate_*.py` beside this one: name, declared dialect, first line.
 
     Derived rather than written down, for the reason the dialect list above is
     derived: `ledger/2026-09-29-the-dialect-mutate-py-was-missing.md` recorded
@@ -766,14 +766,19 @@ def adapters() -> list[tuple[str, str]]:
     adapter; a glob cannot.
     """
     here = Path(__file__).resolve()
-    found: list[tuple[str, str]] = []
+    found: list[tuple[str, str, str]] = []
     for path in sorted(here.parent.glob("mutate_*.py")):
+        text = path.read_text(encoding="utf-8")
         first = ""
-        for line in path.read_text(encoding="utf-8").splitlines():
+        for line in text.splitlines():
             if line.startswith('"""'):
                 first = line.removeprefix('"""').strip()
                 break
-        found.append((path.name, first))
+        # `DIALECT = "python"` at the top level, read as text rather than by
+        # importing: importing an adapter to describe it runs its module-level
+        # code, and `--help` should not be able to start a subprocess.
+        declared = re.search(r'^DIALECT\s*=\s*"([^"]+)"', text, re.M)
+        found.append((path.name, declared.group(1) if declared else "?", first))
     return found
 
 
@@ -788,10 +793,11 @@ def main(argv: list[str]) -> int:
         if found:
             print(
                 "Adapters — programs beside this one that make something "
-                "readable by a dialect\nabove. Pass one as the `command`:\n"
+                "readable by a dialect\nabove. Pass one as the `command`, with "
+                "the dialect it reports in:\n"
             )
-            for name, says in found:
-                print(f"    {name:<24} {says}")
+            for name, dialect, says in found:
+                print(f"    {name:<22} {dialect:<8} {says}")
             print()
         return 0
     text = sys.stdin.read()

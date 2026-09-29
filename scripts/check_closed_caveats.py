@@ -616,7 +616,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "open-stream-cap": (
      "Held { inner: body, held }",
      "crates/slate-serverd/src/streams.rs",
- ),}
+ ),
+
+ # Four loose ends, 2026-09-29. Each needle is the thing that would go away
+ # in a revert rather than the name of the check around it: a declaration, a
+ # helper, a call, a line of shell.
+ "adapter-dialect": ("DIALECT", "scripts/mutate_guard.py"),
+ "env-every-workflow": ("for path in workflows():", "scripts/test_check_sh.py"),
+ "job-count-checked": ("def job_count_matches", "scripts/test_check_sh.py"),
+ "runner-prints-its-logs": ('echo "logs $run"', "examples/explorer/run.sh"),
+}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
 #:
@@ -2170,7 +2179,18 @@ WITNESSED: dict[tuple[str, str], str] = {
      'It is not in `check.sh` and not in `ci.yml`.'):
         'teardown-in-ci',    ('2026-09-29-ten-streams-under-a-limit-of-one.md',
      'Nothing bounds concurrent streams instead.'):
-        'open-stream-cap',
+        'open-stream-cap',    ('2026-09-29-the-tool-now-prints-its-own-adapters.md',
+     '`--help` still does not say which dialect an adapter targets'):
+        'adapter-dialect',
+    ('2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md',
+     '`environment_matches` is still `ci.yml` only.'):
+        'env-every-workflow',
+    ('2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md',
+     'Nothing checks the job count, and this is the second time it'):
+        'job-count-checked',
+    ('2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md',
+     '`RUN_DIR` duplicates an expression from `run.sh`.'):
+        'runner-prints-its-logs',
 }
 
 

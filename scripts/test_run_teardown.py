@@ -111,16 +111,15 @@ def port_of(variable: str, fallback: int) -> int:
     return int(address.rsplit(":", 1)[-1]) if address else fallback
 
 
-#: Where `run.sh` writes each service's own output.
+#: What `run.sh --headless` prints before it says it is ready.
 #:
-#: Derived the same way `run.sh` derives it — `$TMPDIR/slate-explorer-$port`,
-#: from the head node's port — rather than guessed, so a run with
-#: `SLATE_HEAD_ADDR` set still finds its logs. Duplicating the expression is
-#: the cost of the runner not printing the path; asking it to print one would
-#: be the better fix and is a change to `run.sh` rather than to its test.
-RUN_DIR = Path(os.environ.get("TMPDIR", "/tmp")) / (
-    "slate-explorer-" + str(port_of("SLATE_HEAD_ADDR", 7421))
-)
+#: The path is read from the runner rather than derived here, and that is the
+#: whole point: this file used to compute `$TMPDIR/slate-explorer-<port>`
+#: itself, a second copy of an expression in `run.sh`, and a change to that
+#: convention would have broken the log tails *silently* — they are printed
+#: only to explain a failure, so a wrong path means no explanation rather than
+#: an error. `run.sh` now prints its own.
+LOGS = "logs "
 
 
 def held() -> list[str]:
@@ -267,6 +266,7 @@ def main() -> int:
         # from a slow machine. Three runs were spent re-running `run.sh` by
         # hand to read a message this loop had already consumed.
         said: collections.deque[str] = collections.deque(maxlen=TAIL)
+        run_dir: Path | None = None
         # `select` rather than a bare `readline()`, and that is not a
         # refinement. `readline()` blocks, so the deadline above was only
         # consulted *between lines* — a runner that goes quiet was waited on
@@ -300,6 +300,8 @@ def main() -> int:
                     one, rest = rest.split(b"\n", 1)
                     text = one.decode("utf-8", "replace").rstrip()
                     said.append(text)
+                    if text.startswith(LOGS):
+                        run_dir = Path(text.removeprefix(LOGS).strip())
                     if READY in text:
                         ready = True
                         break
@@ -319,7 +321,13 @@ def main() -> int:
             # output to a file and only its own progress to stdout. Both times
             # this failed, the cause was one line in `go.log` — a port held by
             # an earlier run — and nothing on stdout said so.
-            for log in sorted(RUN_DIR.glob("*.log")) if RUN_DIR.is_dir() else ():
+            if run_dir is None:
+                print(
+                    f"      the runner never printed a {LOGS!r} line, so the "
+                    "per-service logs cannot be found",
+                    file=sys.stderr,
+                )
+            for log in sorted(run_dir.glob("*.log")) if run_dir and run_dir.is_dir() else ():
                 body = log.read_text(encoding="utf-8", errors="replace").strip()
                 if body:
                     print(f"      --- {log.name}", file=sys.stderr)

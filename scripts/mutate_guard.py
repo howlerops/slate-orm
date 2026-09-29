@@ -60,6 +60,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+#: Which of `scripts/mutate.py`'s dialects reads this adapter's output.
+#:
+#: Declared rather than left for a reader to infer, because `--help` prints it
+#: beside the adapter's name and inferring it means opening this file — which
+#: is the gap `ledger/2026-09-29-the-tool-now-prints-its-own-adapters.md`
+#: recorded when it made the adapters visible at all. The name is checked
+#: against `mutate.py`'s own table by `scripts/test_mutate.py`, so a typo here
+#: is a failure rather than a line of help that sends the next reader to a
+#: dialect that does not exist.
+DIALECT = "python"
+
 #: What a Python traceback always starts with. Looked for in the output rather
 #: than inferred from the exit code, because an uncaught exception and a
 #: refusal both exit 1 — and a guard that catches its own exception, prints the
