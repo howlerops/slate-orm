@@ -91,6 +91,13 @@ clap = { version = "4", features = ["derive"] }
 subtle = "2"
 
 [dev-dependencies]
+# For `Message::encoded_len()` in `tests/observing.rs`, which weighs a request
+# in the same unit the server weighs its response — the comparison the two
+# halves of the byte measurement exist for. Already in the graph through
+# `slate-server`, so this compiles nothing new; `slate-server` does not
+# re-export it and widening that crate's public API for one test would be the
+# larger change.
+prost = "0.14"
 tempfile = "3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 tonic = "0.14"

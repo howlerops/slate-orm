@@ -281,6 +281,106 @@ async fn a_scrape_weighs_what_the_node_answered() {
 }
 
 #[tokio::test]
+async fn a_read_answers_far_more_than_it_asks() {
+    // The comparison both halves of the byte measurement exist for, and the
+    // one thing neither of them did.
+    // `ledger/2026-09-29-the-same-framing-cost-in-three-clients.md` weighs what
+    // each client *sends*; `slate_response_bytes_total` weighs what the node
+    // *answers*. Two numbers in the same unit, in two processes, and until now
+    // nothing put them side by side — which was that change's own first
+    // caveat.
+    //
+    // The request is weighed with `encoded_len()` rather than by an
+    // interceptor, because that is the protobuf payload tonic will serialize,
+    // which is the same thing `slate_response_bytes_total` counts on the way
+    // back. Anything else would compare two different units and call the
+    // difference a finding.
+    //
+    // **Both sides exclude the headers, and on the request that is most of
+    // it.** `Identity::on` puts the principal and the tenant in gRPC
+    // *metadata*, so a `QueryRequest` for a whole table encodes to 8 bytes
+    // while the call that carries it is not remotely that small. The ratio
+    // below is payload against payload, which is the honest comparison of the
+    // two counters and an overstatement of the asymmetry a link would see.
+    use prost::Message as _;
+
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+
+    let mut client = connect(&serving).await;
+
+    // Enough rows that the asymmetry is structural rather than a coincidence
+    // of the two-row fixture. Written before the query so the read has
+    // something to amplify; the writes land under `Insert` and the assertion
+    // reads `Query`, so they cannot flatter the comparison.
+    const ROWS: u64 = 60;
+    for n in 0..ROWS {
+        client
+            .insert(APP.on(proto::InsertRequest {
+                table: "docs".to_owned(),
+                rows: vec![row(vec![u64_value(1000 + n), str_value("weighed")])],
+                ..Default::default()
+            }))
+            .await
+            .expect("a seeded row");
+    }
+
+    // The same message `rows()` builds, weighed before it is sent. Built twice
+    // rather than cloned so the weighing cannot drift from what goes out: if
+    // the helper's shape changes, this stops compiling rather than silently
+    // measuring a different request.
+    let asked = APP
+        .on(proto::QueryRequest {
+            transaction: String::new(),
+            query: Some(query("docs")),
+            freshness: None,
+        })
+        .into_inner()
+        .encoded_len();
+
+    let answered_rows = rows(&mut client, &APP, query("docs"))
+        .await
+        .expect("a query the node will answer");
+    assert!(
+        answered_rows.len() as u64 >= ROWS,
+        "the read should see the {ROWS} rows written, saw {}",
+        answered_rows.len()
+    );
+    drop(client);
+
+    let scraped = scrape(&address, "/metrics").await;
+    let wanted = "slate_response_bytes_total{method=\"/slate.v1.Records/Query\"} ";
+    let answered: u64 = scraped
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(wanted)?.parse().ok())
+        .unwrap_or_else(|| panic!("no Query response weight:\n{scraped}"));
+
+    // Printed, not only asserted: the ratio is the interesting part and a
+    // reader running this with `--nocapture` should not have to compute it.
+    println!(
+        "asked {asked} bytes, answered {answered} ({}x)",
+        answered / asked as u64
+    );
+
+    // A ratio, not a literal. The bytes move with the fixture's column widths
+    // and with how many rows a message carries; what does not move is that a
+    // whole-table read asks in tens of bytes and answers in thousands. Ten is
+    // well below the ratio observed and well above anything a request-shaped
+    // response could reach.
+    assert!(
+        answered > asked as u64 * 10,
+        "a {ROWS}-row read asked {asked} bytes and answered {answered}; \
+         the response should dwarf the request"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
 async fn a_scrape_reports_the_rows_a_write_touched() {
     // The other counter, and the other wiring line. `a_scrape_reports_what the
     // node served` above covers `slate_requests_total`, whose layer wraps the

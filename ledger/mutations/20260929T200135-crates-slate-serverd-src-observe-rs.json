@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-29T20:01:35+00:00",
+  "file": "crates/slate-serverd/src/observe.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "observing",
+    "--no-fail-fast"
+  ],
+  "commit": "af58969",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the response weight counts frames, so the ratio collapses",
+      "old": ".fetch_add(data.len() as u64, Ordering::Relaxed);",
+      "new": ".fetch_add(1, Ordering::Relaxed);",
+      "verdict": "caught",
+      "caught_by": [
+        "a_read_answers_far_more_than_it_asks",
+        "a_scrape_weighs_what_the_node_answered"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the exported response weight is always zero",
+      "old": "&|method| method.body_bytes.load(Ordering::Relaxed),",
+      "new": "&|_method| 0,",
+      "verdict": "caught",
+      "caught_by": [
+        "a_read_answers_far_more_than_it_asks",
+        "a_scrape_weighs_what_the_node_answered"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

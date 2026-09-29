@@ -695,6 +695,14 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "python3 scripts/test_run_teardown.py",
      ".github/workflows/ci.yml",
  ),
+
+ # The test that finally put a request weight and a response weight side
+ # by side. The needle is the test name, because the closure is that the
+ # comparison exists and a renamed test is a comparison somebody moved.
+ "request-against-response": (
+     "a_read_answers_far_more_than_it_asks",
+     "crates/slate-serverd/tests/observing.rs",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -889,6 +897,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md',
+     'Nothing compares a request with its response.'): 'request-against-response',
     ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
      'Nothing checks that `check.sh` and `ci.yml` cover the same g'):
         'check-sh-both-directions',

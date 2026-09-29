@@ -3878,6 +3878,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "object_store",
+ "prost",
  "serde",
  "serde_json",
  "slate-kernel",

@@ -12338,9 +12338,8 @@
     {
       "entry": "2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md",
       "key": "Nothing compares a request with its response.",
-      "verdict": "open",
-      "by": "ordinary undone work, and the reason this change was worth making. Both directions are measured, in the same unit, in different processes, and no test or harness puts the two numbers side by side.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "a_read_answers_far_more_than_it_asks in crates/slate-serverd/tests/observing.rs weighs a QueryRequest with encoded_len() and reads slate_response_bytes_total off a real node's scrape: 8 bytes asked, 1134 answered over 60 rows, 141x, deterministic across three runs. ledger/2026-09-29-a-read-answers-a-hundred-and-forty-one-times-what-it-asks.md"
     },
     {
       "entry": "2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md",
@@ -12537,6 +12536,34 @@
       "by": "one green CI run each, on run 502 -- the run whose only failure was the fifth -- against zero before today. That is the evidence that they run at all, which is what the previous entry could not claim.",
       "residual": "one run on one runner image says nothing about stability across images, and CLAUDE.md records four separate cases of a check green in one toolchain and red in another.",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-read-answers-a-hundred-and-forty-one-times-what-it-asks.md",
+      "key": "The ratio is one shape at one size.",
+      "verdict": "open",
+      "by": "one whole-table read of 60 narrow rows. A point read answers less than it asks, an aggregate answers a handful of bytes whatever it scans, and a write inverts the direction. None is measured, and the same harness would measure them.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-read-answers-a-hundred-and-forty-one-times-what-it-asks.md",
+      "key": "It compares payloads, not calls.",
+      "verdict": "deliberate",
+      "by": "this entry's Alternatives: including the request's identity metadata would compare a request with headers against a response without them, because slate_response_bytes_total excludes trailers by construction. Two units, and the difference would read as a finding. Payload against payload is the honest comparison of the two counters, and the test says where it overstates.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-read-answers-a-hundred-and-forty-one-times-what-it-asks.md",
+      "key": "It is one direction of one client.",
+      "verdict": "open",
+      "by": "the comparison lives in the daemon's suite because that is the only place both numbers are reachable -- the three SDKs weigh their own requests and none can see the server counter. So a client author looking for it does not find it, which is ordinary undone work rather than a decision.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-read-answers-a-hundred-and-forty-one-times-what-it-asks.md",
+      "key": "The threshold is ten against an observed 141.",
+      "verdict": "deliberate",
+      "by": "this entry: the bytes move with the fixture's column widths and with rows_per_message, so a tight bound pins `docs` rather than the asymmetry and goes red on a column added to it. Ten answers 'does the response dwarf the request', which is the claim; 'by how much' is the printed number, which a reader gets with --nocapture and no assertion can keep true.",
+      "reviewed": "2026-09-29"
     }
   ]
 }
