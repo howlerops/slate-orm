@@ -8496,9 +8496,9 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-part-two.md",
       "key": "The four unmeasured round-trip claims are grouped here and n",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Batching from a client, a many-to-many's two reads, a nested load's two reads and keyset paging on the wire are all structural claims; examples/deployed is the harness that could measure all four and exercises none of them."
+      "verdict": "closed",
+      "by": "all four are measured. A many-to-many's two reads and a nested load's two reads by crates/slate-orm/tests/read_counts.rs; batching from a client and keyset paging by clients/python/tests/test_round_trips.py, clients/go/slate/round_trip_test.go and clients/typescript/test/roundTrip.test.ts. The fourth's phrasing \u2014 paging is 'cheaper on the wire' \u2014 did not survive the counting: four offset pages cost four Query calls, exactly as four keyset pages do.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
@@ -10456,9 +10456,9 @@
     {
       "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
       "key": "It does not re-read the other 113 open caveats against the t",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "five of them were false and that was found by accident, twice removed. The population they came from has not been re-examined, and nothing counts how many more were overtaken by work on their own day."
+      "verdict": "closed",
+      "by": "re-read, and the count this asked for exists: 4 of 99 were overtaken by work, and all four by a commit from the same session within eighty minutes of the entry that recorded them.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
@@ -10477,9 +10477,9 @@
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
       "key": "It does not re-read the rest of the open caveats.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The open population has not been re-examined against the tree; five were found false by accident and four more survived a grep, which is evidence about those four only. Deliberately phrased without a count \u2014 the four caveats closed in this same commit were progress markers, false the moment the next batch landed."
+      "verdict": "closed",
+      "by": "re-read. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
@@ -10490,9 +10490,9 @@
     {
       "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
       "key": "It reads eleven of 116, and changes four.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The remaining open caveats are unexamined, and the eleven read here were picked for being cheap to check, which is a biased sample of the population."
+      "verdict": "closed",
+      "by": "the remaining open caveats are no longer unexamined, and the bias this names was measured rather than argued: the cheap sample moved 4 of 25, the random draw 1 of 51. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
@@ -10531,9 +10531,9 @@
     {
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
       "key": "It leaves the other two unmeasured claims where they were.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Batching from a client and keyset paging on the wire are claims about a client, so an instrument inside slate-orm cannot reach them; a per-connection request count the test could read is the cheaper design and is not built."
+      "verdict": "closed",
+      "by": "both were measured within the hour. Batching from a client and keyset paging on the wire are counted at each client's own channel in clients/python/tests/test_round_trips.py, clients/go/slate/round_trip_test.go and clients/typescript/test/roundTrip.test.ts \u2014 the instrument-in-the-clients design this entry named as the more expensive of the two, built rather than the per-connection counter.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
@@ -10587,9 +10587,9 @@
     {
       "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
       "key": "It does not examine the other ninety-one.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Twenty-five of 116 have been read adversarially; the rest carry a verdict and a date and nobody has tried to falsify them."
+      "verdict": "closed",
+      "by": "every open caveat has now been read adversarially. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
@@ -10609,9 +10609,9 @@
     {
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
       "key": "It reads twelve, so the interval is wide.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. 0/12 bounds the rate below about 22% and no lower; forty would bring it to about 7%, and the seed is recorded so that is a continuation rather than a fresh sample."
+      "verdict": "closed",
+      "by": "the draw was extended to all 99 rather than to forty. The interval is now 4/99 = 4.0% [1.1%, 10.0%] exact binomial, against the 0/12 bound of 22%.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
@@ -10630,9 +10630,9 @@
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
       "key": "It leaves forty-eight of the ninety-nine unread",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The shuffle order says which they are, and fifteen of the 39 read here were settled by a grep returning nothing rather than by reading a function, so the coverage is less even than the count suggests."
+      "verdict": "closed",
+      "by": "the forty-eight were read. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
@@ -10794,6 +10794,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "a git grep returning nothing over every place a thing could live is the right instrument for 'nothing does X', and the alternative \u2014 reading every candidate file for each of twenty-two caveats \u2014 costs more than the census is worth. The weakness is named rather than removed, as the previous census entry named it."
+    },
+    {
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "It does not measure what a page costs in bytes or seconds.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. The finding is about request counts; an offset page's request carries an integer where a cursor's carries a key, and nothing weighs them. examples/deployed is where it would be answered and it needs MinIO."
+    },
+    {
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "It does not check the store-read side of the claim.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "the 495-against-5 figure is a kernel measurement recorded in the README and re-running it is a separate piece of work with its own harness. This entry separates two halves of a conflated sentence and re-measures the half that was never measured; inheriting the half that was is the right scope."
+    },
+    {
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "The open count went down by eight and will go back up.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "the pre-commit hook requires a 'What this does not do' section and every item in it becomes a caveat, so zero is unreachable by construction. The reachable invariant is 0 untriaged, which caveats.py checks and check.sh runs."
+    },
+    {
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "Two of the 33 that hold are about this entry's own subject a",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. Latency and bytes on the wire needs MinIO; a conformance case comparing the three clients' request counts is tracked and not started."
     }
   ]
 }

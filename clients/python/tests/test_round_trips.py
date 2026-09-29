@@ -220,11 +220,11 @@ def test_paging_by_cursor_is_one_round_trip_per_page(
     client.batch(seeding)
     counter.calls.clear()
 
-    cursor, seen = None, 0
+    cursor, seen = None, []
     for _ in range(PAGES):
         q = Query(DOCS).limit(PAGE_SIZE)
         page = client.page(q.where(q.c.kind.eq("counted")).after(cursor))
-        seen += len(page.rows)
+        seen += [row[0] for row in page.rows]
         cursor = page.cursor
         assert cursor is not None, (
             "the fixture ran out of rows before the pages did, so this measured "
@@ -243,6 +243,62 @@ def test_paging_by_cursor_is_one_round_trip_per_page(
     assert counter.calls["Query"] == PAGES, (
         f"{PAGES} pages should cost {PAGES} calls; got {counter.calls}"
     )
-    assert seen == PAGES * PAGE_SIZE, (
-        f"{PAGES} full pages of {PAGE_SIZE}; got {seen} rows"
+    # The *keys*, not a count of them. A count cannot tell four pages from four
+    # copies of the first page, and that is not hypothetical: a mutation pinning
+    # every offset page to 0 survived the count assertion this replaces. The
+    # cursor twin has the same hole — `after(cursor)` mutated to `after(None)`
+    # returns twenty rows in four calls — so both tests walk the keys.
+    assert seen == list(range(FIRST_KEY, FIRST_KEY + PAGES * PAGE_SIZE)), (
+        f"{PAGES} pages of {PAGE_SIZE} should walk the keys once, in order; "
+        f"got {seen}"
+    )
+
+
+def test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor(
+    counted: tuple[Client, Counting],
+) -> None:
+    """The saving keyset paging offers is not in round trips, and this shows it.
+
+    Three entries describe keyset paging as "cheaper on the wire", grouped with
+    the batching claim as one unmeasured piece of work. Counting it makes the
+    phrase falsifiable and it does not survive: **four offset pages cost four
+    `Query` calls, exactly as four keyset pages do.** A page is one request
+    either way, because the client asks for one page either way.
+
+    What keyset paging saves is *store* reads, which is the README's
+    495-key-value-pairs-by-offset against 5-by-cursor — a kernel measurement of
+    what the server does to answer, not of what the caller sends. The two are
+    easy to conflate and the phrase "cheaper on the wire" conflates them, which
+    is why this test exists beside the one above rather than instead of it.
+
+    This is the control that makes the previous test mean something, in the same
+    way the one-at-a-time write is the control for the batch: without it, "four
+    pages, four calls" reads as a saving, and it is a saving over nothing.
+    """
+    client, counter = counted
+
+    seeding = Batch(Atomicity.INDEPENDENT)
+    for n in range(PAGES * PAGE_SIZE):
+        seeding.insert(DOCS, [_row(n)])
+    client.batch(seeding)
+    counter.calls.clear()
+
+    seen: list[PyValue] = []
+    for page in range(PAGES):
+        q = Query(DOCS).limit(PAGE_SIZE).offset(page * PAGE_SIZE)
+        rows = list(client.query(q.where(q.c.kind.eq("counted"))))
+        seen += [row[0] for row in rows]
+
+    assert counter.calls["Query"] == PAGES, (
+        f"{PAGES} offset pages cost {PAGES} calls, the same as by cursor; "
+        f"got {counter.calls}"
+    )
+    # The *keys*, not a count of them. A count cannot tell four pages from four
+    # copies of the first page, and that is not hypothetical: a mutation pinning
+    # every offset page to 0 survived the count assertion this replaces. The
+    # cursor twin has the same hole — `after(cursor)` mutated to `after(None)`
+    # returns twenty rows in four calls — so both tests walk the keys.
+    assert seen == list(range(FIRST_KEY, FIRST_KEY + PAGES * PAGE_SIZE)), (
+        f"{PAGES} pages of {PAGE_SIZE} should walk the keys once, in order; "
+        f"got {seen}"
     )

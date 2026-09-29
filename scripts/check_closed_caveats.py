@@ -337,6 +337,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "retired-row-only-predicate": (
      "a_predicate_that_selects_only_the_retired_row_touches_nothing",
      "crates/slate-kernel/tests/soft_delete.rs",
+ ),
+
+ # --- the census closures, 2026-09-29 ----------------------------------------
+ "offset-costs-the-same": (
+     "test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor",
+     "clients/python/tests/test_round_trips.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -389,6 +395,24 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
     ('2026-09-14-the-testserver-joins-the-workspace.md',
      '`scripts/build_testserver.sh` is now unnecessary — it existe'):
         'closed by deleting `scripts/build_testserver.sh`. `git grep build_testserver` now finds only this entry\'s own sentence, and the entry records the deletion inline',
@@ -1641,6 +1665,30 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-four-say-absent-one-says-present.md',
      'The predicate paths were probed at one shape.'):
         'retired-row-only-predicate',
+    ('2026-09-28-the-invisible-backlog-part-two.md',
+     'The four unmeasured round-trip claims are grouped here and n'):
+        'offset-costs-the-same',
+    ('2026-09-28-two-reads-counted-rather-than-argued.md',
+     'It leaves the other two unmeasured claims where they were.'):
+        'ts-round-trips',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        '=read',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        '=read',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        '=read',
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        '=read',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        '=read',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
+        '=read',
 }
 
 
