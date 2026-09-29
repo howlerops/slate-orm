@@ -1,0 +1,77 @@
+{
+  "at": "2026-09-29T05:57:07+00:00",
+  "file": "crates/slate-serverd/src/lang/pred.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bin",
+    "slate-serverd",
+    "lang::pred",
+    "--no-fail-fast"
+  ],
+  "commit": "28e1a4b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the regex roster is empty, so every word gets the generic hint",
+      "old": "const REACHED_FOR: &[&str] = &[\"matches\", \"match\", \"regex\", \"regexp\", \"rlike\", \"similar\"];",
+      "new": "const REACHED_FOR: &[&str] = &[];",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::a_word_where_a_comparison_belongs_names_the_spelling_that_exists"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the roster is matched case-sensitively",
+      "old": "    let lower = word.to_ascii_lowercase();",
+      "new": "    let lower = word.to_owned();",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::a_word_where_a_comparison_belongs_names_the_spelling_that_exists"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "punctuation gets a hint too",
+      "old": "    let Kind::Word(word) = kind else {\n        return String::new();\n    };",
+      "new": "    let word = match kind {\n        Kind::Word(w) => w.clone(),\n        other => other.describe(),\n    };\n    let word = &word;",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::punctuation_where_a_comparison_belongs_gets_no_hint"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the generic arm suggests the regex operator as well",
+      "old": "    \" The word-spelled tests are `LIKE`, `ILIKE`, `IN` and `IS NULL`; every \\\n      other operator is punctuation.\"\n        .to_owned()",
+      "new": "    \" A regular expression is spelt `~` here.\".to_owned()",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::a_word_that_is_not_a_regex_guess_names_the_word_operators"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "no hint is appended at all",
+      "old": "                    \"expected a comparison after the column, found {}.{}\",\n                    token.kind.describe(),\n                    hint(&token.kind)",
+      "new": "                    \"expected a comparison after the column, found {}{}\",\n                    token.kind.describe(),\n                    \"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::a_word_that_is_not_a_regex_guess_names_the_word_operators",
+        "lang::pred::tests::a_word_where_a_comparison_belongs_names_the_spelling_that_exists"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

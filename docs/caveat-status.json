@@ -9353,16 +9353,16 @@
     {
       "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
       "key": "It does not improve the error message that caused the mistak",
-      "verdict": "open",
-      "by": "`expected a comparison after the column, found `matches`` is accurate and unhelpful, and a suggestion would have saved the detour. The keyword-alias reasoning argues against the alias, not against the hint.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the message now names the spelling that exists: `matches` and five other dialects' words get \"A regular expression is spelt `~` here\", any other word gets the word-spelled tests, and punctuation gets nothing. Three tests in lang/pred.rs, five mutations all caught. The `matches` alias stays rejected, which is what this entry asked for; see ledger/2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
       "key": "It does not audit the rest of the note for the same class of",
-      "verdict": "open",
-      "by": "the three remaining findings were each checked against the code when written \u2014 and so was the regex one, and it was wrong, so 'checked when written' is a weaker guarantee here than it sounded.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "audited, and it found one -- in the same file as the correction. docs/validation.md's \"What this note does not settle\" still called the regex question moot on the withdrawn grounds, four sections below the withdrawal. Fixed, and the wording is in scripts/retired_claims.json so a third copy fails a check. The three findings themselves hold and have all been built; the two mechanically checkable architectural refusals were re-verified against schema.rs and Expr. See ledger/2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-rules-a-client-can-see.md",
@@ -11409,6 +11409,34 @@
       "key": "Nothing checks the other four caveats in that entry.",
       "verdict": "open",
       "by": "true: `One catalog is generated from` and `Nothing generates the catalog itself` are untouched and still open in this file.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "The roster is a list of guesses, not a measurement.",
+      "verdict": "deliberate",
+      "by": "one of the six is attested and five are read off other dialects. Measuring which words people type would need users typing them, and the cost of a wrong guess is one generic hint rather than a defect. A seventh spelling gets the generic arm, which is the right failure.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "No other error message in the parser was reviewed for the sa",
+      "verdict": "open",
+      "by": "true. This one was fixed because an entry recorded what it cost; `expected a column name, found ...` and the operand-type refusals may have the same shape and were not read.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "The audit covered `docs/validation.md` and nothing else.",
+      "verdict": "deliberate",
+      "by": "the caveat being closed named \"the rest of the note\", and that is what was read. Tracing the note's claims about other documents to their own copies is the retired-claims guard's job once a phrase is on its list, which is the caveat below rather than this one.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "It does not add a guard that a correction reaches the rest o",
+      "verdict": "open",
+      "by": "true and the sharper half. check_retired_claims.py catches a restatement anywhere once the phrase is listed, but nothing makes listing it part of withdrawing a claim -- which is precisely how this instance survived ten days. A guard would have to read a ledger entry's withdrawal and demand a list entry, which is a real rule and is not written.",
       "checked": "2026-09-29"
     }
   ]

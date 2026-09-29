@@ -419,6 +419,21 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- the message that caused the regex detour, 2026-09-29 -------------------
+ "regex-spelling-hint": (
+     "a_word_where_a_comparison_belongs_names_the_spelling_that_exists",
+     "crates/slate-serverd/src/lang/pred.rs",
+ ),
+ # The needle is the *replacement* wording, not the retired phrase. It cannot
+ # be the phrase: `check_retired_claims.py` reads every file outside `ledger/`
+ # and would refuse this one for stating it. Two guards, one of which forbids
+ # what the other needs to grep for — found by writing the obvious needle and
+ # watching the retired-claims step go red on this file.
+ "check-can-hold-a-regex-once": (
+     "A check can hold a regular expression; what is not built",
+     "scripts/retired_claims.json",
+ ),
+
  # --- the generated declaration nobody imports, 2026-09-29 --------------------
  "generated-is-used": (
      "imported but {where} no longer matches",
@@ -697,6 +712,16 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-the-kernel-on-wasm.md',
      'Nothing else in the workspace is checked for the same proble'):
         'wasm-runtime-guard',
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not improve the error message that caused the mistak'):
+        'regex-spelling-hint',
+    # The witness is the retirement entry rather than the corrected prose: the
+    # fix is a paragraph, and prose can be rewritten into a new wrong shape
+    # without touching the words a needle could hold. What must not come back
+    # is the claim, and that is what the list holds.
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not audit the rest of the note for the same class of'):
+        'check-can-hold-a-regex-once',
     ('2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md',
      '`--check` proves the file matches the catalog, not that anyb'):
         'generated-is-used',
