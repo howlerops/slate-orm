@@ -147,6 +147,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "It starts inside the image, and validates a configuration",
      ".github/workflows/ci.yml",
  ),
+ # --- the negation helper, walked through, 2026-09-29
+ #
+ # The Go file rather than one of the other two, because the mutation that
+ # proves the whole thing live -- the server dropping Expr::Not -- was scored
+ # against its two cases. Losing this file is losing the demonstration.
+ "not-in-through-a-client": (
+     "func TestAClientSendsNotInAsNotOfIn",
+     "clients/go/slate/not_in_test.go",
+ ),
  "no-adversarial-floor": (
      "candidate = draw(LOW, below - 1)",
      "scripts/free_ports.py",
@@ -2256,6 +2265,8 @@ WITNESSED: dict[tuple[str, str], str] = {
      'The 10050 floor is chosen, not found.'): 'no-adversarial-floor',
     ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
      'The image has never been built.'): 'image-built-in-ci',
+    ('2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md',
+     'No client can express it.'): 'not-in-through-a-client',
 }
 
 

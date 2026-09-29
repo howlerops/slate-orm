@@ -499,6 +499,30 @@ is the thing to attack if you disagree.
   `Expr::conjuncts` stops at a `Not`, so no access path is derived from the
   `In` inside one, which is the only correct answer since the complement of a
   set of points is not a range.
+
+  **And a client sends it as the composition, in every language.** The entry
+  that built it said *"No client can express it"* and then, in the next
+  sentence, that a client builds the `Not` itself — the second is the true
+  one, and the first stood uncorrected for eleven days because nothing ran:
+
+  ```python
+  q.where(not_(q.c.kind.in_(["memo", "sheet"])))   # Python, or ~q.c.kind.in_(…)
+  ```
+  ```go
+  slate.Not(slate.In(1, slate.String("memo"), slate.String("sheet")))   // Go
+  ```
+  ```ts
+  not(isIn(1, [str("memo"), str("sheet")]))                       // TypeScript
+  ```
+
+  There is deliberately no `notIn` helper: it would be a second name for a
+  composition that already works in three languages, with its own tests and
+  its own place in the generated surface, for six characters. What was missing
+  was a test — no case in any client used the negation helper at all — and
+  `ledger/2026-09-29-three-doors-and-nobody-walking-through-them.md` is the
+  seven that now do. The oracle is that `IN` and `NOT IN` are disjoint and
+  together cover every row, which holds because those fixtures have no nulls;
+  the three-valued case above is checked in the kernel and not from a client.
 - **SQL on the wire.** The wire carries a spec. That is what makes the planner,
   `EXPLAIN` and the security compilation possible at all.
 

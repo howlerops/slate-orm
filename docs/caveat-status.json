@@ -8843,10 +8843,9 @@
     {
       "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
       "key": "No client can express it.",
-      "verdict": "narrowed",
-      "by": "ledger/2026-09-29-three-could-be-anothers-counted.md: wrong as written, and the bullet's own second sentence said so. All three clients have a negation helper -- slate.not_ in clients/python/src/slate/expr.py, slate.Not in clients/go/slate/query.go, not in clients/typescript/src/query.ts -- so not_(col.in_([...])) is the expression in every one of them.",
-      "residual": "no notIn convenience, nothing documents the composition, and -- found while checking -- no test in any of the three clients uses the negation helper at all, so three doors have nobody walking through them",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-three-doors-and-nobody-walking-through-them.md: seven cases, two or three per client, sending Not(In(...)) to a real head node -- clients/go/slate/not_in_test.go, clients/python/tests/test_not_in.py, clients/typescript/test/notIn.test.ts. The oracle is that IN and NOT IN are disjoint and together cover every seeded row. Proven live by a mutation of the server: dropping Expr::Not from convert.rs's Node::Negation arm, so the wire discards every negation, is caught by both Go cases -- and would have passed every test in every client before today (ledger/mutations/20260929T175858-crates-slate-server-src-convert-rs.json). The composition is written down in docs/orm-comparison.md in all three languages, which is the 'undocumented' half.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md",
@@ -12287,6 +12286,32 @@
       "key": "Nothing checks that `check.sh` and `ci.yml` cover the same g",
       "verdict": "open",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
+      "key": "No nullable column, so nothing here is SQL's `NOT IN`.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
+      "key": "It is `Not` over `In`, not `Not` over everything.",
+      "verdict": "deliberate",
+      "by": "this entry: every negation goes through one arm, convert.rs's Node::Negation, and the mutation that removes it is caught -- so the arm is proven live rather than proven general. A case per negatable operator would be a case per operator for one shared line, which is the ceremony this repository declines elsewhere.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
+      "key": "The conformance runner does not compare the three.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
+      "key": "No `notIn` helper, by choice, and nothing checks the choice ",
+      "verdict": "deliberate",
+      "by": "this entry: a notIn would be a second name for a composition that already works in three languages, needing its own tests, its own place in the generated surface and its own conformance case, to save a caller six characters. The gap was never expressibility. That nothing guards the choice is true of most API-shape decisions here and is not worth a guard until a second spelling exists to diverge from.",
+      "reviewed": "2026-09-29"
     }
   ]
 }
