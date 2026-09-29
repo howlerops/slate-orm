@@ -244,16 +244,75 @@ fn in_filter_strategy() -> BoxedStrategy<FilterSpec> {
         .boxed()
 }
 
+/// Operators this strategy cannot generate a value for, each with the reason.
+///
+/// A roster, because the alternative is a `filter` over spellings that quietly
+/// drops an operator a future `value_for` could handle. Held to
+/// `slate_sql::sql::COMPARISONS` by `every_excluded_operator_is_one_the_parser_has`
+/// below, so a name that stops being an operator is reported rather than
+/// silently excusing nothing — the roster rot
+/// `ledger/2026-09-29-the-skip-list-that-excused-nothing.md` is about.
+const NOT_GENERATED: &[(&str, &str)] = &[(
+    "matches",
+    "the value would have to be a valid regex and `value_for` makes plain      strings, so a generated case would test the regex parser's refusal rather      than this round trip",
+)];
+
+/// Operators only a string column accepts.
+///
+/// Column 2 is the string one in this fixture. Same roster rule as above.
+const STRING_ONLY: &[&str] = &["like", "ilike", "contains"];
+
+/// Every operator the parser has, minus the two rosters above.
+///
+/// Derived rather than written out, which is the point:
+/// `ledger/2026-09-21-contains-in-the-sql-front-end.md` recorded a hand-written
+/// list here that nothing held to `comparison_tail`, so an operator added to
+/// the parser and to neither was invisible. `COMPARISONS` is now the parser's
+/// own vocabulary, so this cannot fall behind it — an operator added there
+/// arrives here and must be excused or handled.
+fn generated_ops(column: u32) -> Vec<&'static str> {
+    let mut ops: Vec<&'static str> = Vec::new();
+    for one in slate_sql::sql::COMPARISONS {
+        if NOT_GENERATED.iter().any(|(name, _)| *name == one.op) {
+            continue;
+        }
+        if column != 2 && STRING_ONLY.contains(&one.op) {
+            continue;
+        }
+        // `ne` has two spellings and one operator; the strategy wants one of
+        // each operator, not one of each spelling.
+        if !ops.contains(&one.op) {
+            ops.push(one.op);
+        }
+    }
+    ops
+}
+
+#[test]
+fn every_excluded_operator_is_one_the_parser_has() {
+    let known: Vec<&str> = slate_sql::sql::COMPARISONS.iter().map(|c| c.op).collect();
+    for (name, _) in NOT_GENERATED {
+        assert!(
+            known.contains(name),
+            "NOT_GENERATED names `{name}`, which is not an operator              `COMPARISONS` has. Drop it, or the exclusion excuses nothing."
+        );
+    }
+    for name in STRING_ONLY {
+        assert!(
+            known.contains(name),
+            "STRING_ONLY names `{name}`, which is not an operator              `COMPARISONS` has. Drop it."
+        );
+    }
+    assert!(
+        !generated_ops(2).is_empty() && !generated_ops(0).is_empty(),
+        "every operator is excluded, so the strategy generates nothing"
+    );
+}
+
 fn filter_strategy() -> BoxedStrategy<FilterSpec> {
     (0u32..4)
         .prop_flat_map(|column| {
-            let ops: Vec<&'static str> = if column == 2 {
-                vec![
-                    "eq", "ne", "lt", "le", "gt", "ge", "like", "ilike", "contains",
-                ]
-            } else {
-                vec!["eq", "ne", "lt", "le", "gt", "ge"]
-            };
+            let ops = generated_ops(column);
             (
                 Just(column),
                 proptest::sample::select(ops),

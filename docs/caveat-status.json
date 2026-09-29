@@ -10183,9 +10183,9 @@
     {
       "entry": "2026-09-21-contains-in-the-sql-front-end.md",
       "key": "The SQL operator list has the weakness the wire's had.",
-      "verdict": "open",
-      "by": "filter_strategy names its operators by hand and nothing holds that list to the parser. Unlike Expr there is no enum to pin it to, so an operator added to the parser and to neither is invisible.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "crates/slate-sql/src/sql.rs's COMPARISONS is the parser's vocabulary and comparison_tail is a loop over it, so there is no second list to drift. crates/slate-wasm/tests/sql.rs derives filter_strategy's operators from it, with two rosters held to it by every_excluded_operator_is_one_the_parser_has. ledger/2026-09-29-the-parsers-vocabulary-is-the-parser.md.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-contains-on-the-wire.md",
@@ -12740,6 +12740,34 @@
       "key": "Nothing publishes the format anywhere a human reads it.",
       "verdict": "open",
       "by": "docs/validation.md and docs/views.md describe what --print-schema contains and neither mentions the version, so a reader meets it through the refusal or the source.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
+      "key": "`IN` is not in the table.",
+      "verdict": "deliberate",
+      "by": "this entry: IN takes a list and comparison_tail returns one literal, so the two have different shapes rather than a missing row. in_filter_strategy in crates/slate-wasm/tests/sql.rs is its separate generator for the same reason.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
+      "key": "The renderer's spellings are still its own.",
+      "verdict": "open",
+      "by": "crates/slate-wasm/tests/sql.rs's renderer matches on the operator and panics on one it has no spelling for, which pins renderer to strategy at run time rather than at compile time. Deriving the renderer from COMPARISONS' spellings is the same move again and was not made here.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
+      "key": "Nothing checks that `lex` pairs exactly the symbols `COMPARI",
+      "verdict": "open",
+      "by": "the expect_survivor on the ordering mutation asserts the pairing for `<=` by way of the order being irrelevant, and nothing covers a new two-character symbol added to COMPARISONS and not to lex.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
+      "key": "The two rosters are held to the parser, not to `value_for`.",
+      "verdict": "open",
+      "by": "STRING_ONLY says which operators need column 2 and nothing checks column 2 is still the string column, so renaming the fixture's columns would leave it silently wrong.",
       "checked": "2026-09-29"
     }
   ]

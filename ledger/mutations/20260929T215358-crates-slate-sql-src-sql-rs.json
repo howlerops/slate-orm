@@ -1,0 +1,59 @@
+{
+  "at": "2026-09-29T21:53:58+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "-p",
+    "slate-wasm",
+    "--no-fail-fast"
+  ],
+  "commit": "12f6d5e",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the parser loses an operator the vocabulary still names",
+      "old": "        spelling: \"ilike\",\n        keyword: true,\n        op: \"ilike\",",
+      "new": "        spelling: \"ilike\",\n        keyword: true,\n        op: \"unlike\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a_spec_rendered_as_sql_parses_back_to_itself",
+        "every_excluded_operator_is_one_the_parser_has"
+      ],
+      "suites_reported": 19,
+      "expect_survivor": null
+    },
+    {
+      "name": "the longer symbol is tried after the shorter one",
+      "old": "    Comparison {\n        spelling: \"<=\",\n        keyword: false,\n        op: \"le\",\n    },\n    Comparison {\n        spelling: \">=\",\n        keyword: false,\n        op: \"ge\",\n    },\n    Comparison {\n        spelling: \"<\",\n        keyword: false,\n        op: \"lt\",\n    },",
+      "new": "    Comparison {\n        spelling: \"<\",\n        keyword: false,\n        op: \"lt\",\n    },\n    Comparison {\n        spelling: \"<=\",\n        keyword: false,\n        op: \"le\",\n    },\n    Comparison {\n        spelling: \">=\",\n        keyword: false,\n        op: \"ge\",\n    },",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 19,
+      "expect_survivor": "`lex` emits `<=`, `>=`, `!=` and `<>` as single two-character tokens, so `eat_symbol(\"<\")` cannot match the front of a `<=` and the order of this table is independent. Survival is the evidence for that sentence in the comment, which said the opposite until this mutation was run."
+    },
+    {
+      "name": "a keyword is matched as punctuation, so `likelihood` starts a LIKE",
+      "old": "            let matched = if one.keyword {\n                self.eat(one.spelling)",
+      "new": "            let matched = if false {\n                self.eat(one.spelling)",
+      "verdict": "caught",
+      "caught_by": [
+        "every_operator_the_grammar_lists_parses",
+        "with_is_only_special_as_the_first_word",
+        "the_kitchen_sink_uses_everything_it_claims_to",
+        "every_example_the_page_offers_runs",
+        "a_search_matching_nothing_is_an_answer_and_not_an_error",
+        "a_contains_is_not_a_like",
+        "a_contains_combines_with_another_filter",
+        "one_term_finds_every_title_holding_it"
+      ],
+      "suites_reported": 19,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

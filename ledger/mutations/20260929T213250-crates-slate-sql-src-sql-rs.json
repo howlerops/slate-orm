@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-29T21:32:50+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "-p",
+    "slate-wasm",
+    "--no-fail-fast"
+  ],
+  "commit": "12f6d5e",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": []
+}

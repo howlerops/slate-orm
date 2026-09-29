@@ -767,6 +767,18 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "const PUBLISHED_KEYS:",
      "crates/slate-serverd/src/main.rs",
  ),
+
+ # --- the parser's vocabulary is the parser, 2026-09-29 ----------------------
+ #
+ # The comparison list was an `else if` chain with a hand-written copy in the
+ # wasm crate's property strategy and nothing holding one to the other. The
+ # needle is the constant, which occurs once and is what `comparison_tail`
+ # loops over — a test name would go stale on a rename while the drift it
+ # guards against stayed fixed.
+ "sql-comparison-vocabulary": (
+     "pub const COMPARISONS:",
+     "crates/slate-sql/src/sql.rs",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -964,6 +976,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-21-contains-in-the-sql-front-end.md',
+     'The SQL operator list has the weakness the wire\'s had.'):
+        'sql-comparison-vocabulary',
     ('2026-09-20-the-column-the-catalog-knew-about.md',
      '`--print-schema`\'s output is not versioned.'): 'print-schema-format',
     ('2026-09-29-two-rows-for-one-gap.md',

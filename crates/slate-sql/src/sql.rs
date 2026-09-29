@@ -767,6 +767,115 @@ pub fn split(text: &str) -> Vec<(usize, String)> {
 
 // --- the parser -----------------------------------------------------------
 
+/// One spelling this parser accepts for a comparison, and the operator it means.
+#[derive(Clone, Copy)]
+pub struct Comparison {
+    /// What a query writes: a symbol, or a word when `keyword`.
+    pub spelling: &'static str,
+    /// Matched as a whole word rather than as punctuation, because `like` must
+    /// not match the start of `likelihood`. That is what `eat` does and
+    /// `eat_symbol` does not.
+    pub keyword: bool,
+    /// The operator name the spec carries, which is what `FilterSpec.op` holds
+    /// and what the wire sends.
+    pub op: &'static str,
+}
+
+/// Every comparison `comparison_tail` accepts, **in the order it tries them**.
+///
+/// **The order does not matter today, and the first version of this comment
+/// said it did.** It claimed `<=` must be tried before `<` or `a <= 1` would
+/// match `<` and fail on `= 1`. Mutating the order to prove it left every
+/// suite green: `lex` emits `<=`, `>=`, `!=` and `<>` as single two-character
+/// tokens, so `eat_symbol("<")` cannot match the front of a `<=`. Prefix
+/// ambiguity is the lexer's problem and it has already solved it.
+///
+/// Kept a slice in the parser's own order anyway, for two reasons. A reader
+/// meeting `=`, `!=`, `<>`, `<=` … recognises the grammar, where a map would
+/// print in hash order. And the independence is the *lexer's* property rather
+/// than this table's — a symbol added here that `lex` does not pair up would
+/// make the order load-bearing again, silently — so the habit is to keep the
+/// longer spelling first and to teach `lex` the pair in the same change.
+///
+/// This is the parser's vocabulary rather than a copy of it — `comparison_tail`
+/// is a loop over this and holds no second list.
+/// `ledger/2026-09-21-contains-in-the-sql-front-end.md` recorded the previous
+/// shape as a hazard: an `else if` chain here and a hand-written roster in
+/// `tests/sql.rs`, with nothing holding one to the other, so an operator added
+/// to the parser and to neither was invisible. That entry called a constant "a
+/// change to production code for a test's benefit"; driving the parser from it
+/// makes it neither, because there is now one list where there were two.
+pub const COMPARISONS: &[Comparison] = &[
+    Comparison {
+        spelling: "=",
+        keyword: false,
+        op: "eq",
+    },
+    Comparison {
+        spelling: "!=",
+        keyword: false,
+        op: "ne",
+    },
+    Comparison {
+        spelling: "<>",
+        keyword: false,
+        op: "ne",
+    },
+    Comparison {
+        spelling: "<=",
+        keyword: false,
+        op: "le",
+    },
+    Comparison {
+        spelling: ">=",
+        keyword: false,
+        op: "ge",
+    },
+    Comparison {
+        spelling: "<",
+        keyword: false,
+        op: "lt",
+    },
+    Comparison {
+        spelling: ">",
+        keyword: false,
+        op: "gt",
+    },
+    Comparison {
+        spelling: "~",
+        keyword: false,
+        op: "matches",
+    },
+    Comparison {
+        spelling: "like",
+        keyword: true,
+        op: "like",
+    },
+    Comparison {
+        spelling: "ilike",
+        keyword: true,
+        op: "ilike",
+    },
+    // Infix — `title CONTAINS 'earthsea'` — where SQL Server spells it
+    // `CONTAINS(title, 'earthsea')` and Postgres
+    // `to_tsvector(title) @@ to_tsquery('earthsea')`. Neither is standard, so
+    // there is no spelling to be faithful to, and infix is the one this parser
+    // already has a place for: a column, an operator and a literal, exactly
+    // like `LIKE`. A function call would need its own parse path and would put
+    // the column inside an argument list, where nothing else in this grammar
+    // puts one.
+    //
+    // It is *not* `LIKE` with different punctuation. `LIKE '%game%'` finds
+    // `Games`; this does not, because a term is a whole word. That is the
+    // difference worth having a keyword for, and why it is here even though
+    // the planner takes a table scan for it at the fixture's size.
+    Comparison {
+        spelling: "contains",
+        keyword: true,
+        op: "contains",
+    },
+];
+
 struct Parser<'a> {
     toks: Vec<Spanned>,
     i: usize,
@@ -3308,41 +3417,14 @@ impl Parser<'_> {
     /// rejected in a HAVING has found a bug in the parser, not in their query.
     fn comparison_tail(&mut self) -> Result<(String, String), SqlError> {
         let at = self.at();
-        let op = if self.eat_symbol("=") {
-            "eq"
-        } else if self.eat_symbol("!=") || self.eat_symbol("<>") {
-            "ne"
-        } else if self.eat_symbol("<=") {
-            "le"
-        } else if self.eat_symbol(">=") {
-            "ge"
-        } else if self.eat_symbol("<") {
-            "lt"
-        } else if self.eat_symbol(">") {
-            "gt"
-        } else if self.eat_symbol("~") {
-            "matches"
-        } else if self.eat("like") {
-            "like"
-        } else if self.eat("ilike") {
-            "ilike"
-        } else if self.eat("contains") {
-            // Infix — `title CONTAINS 'earthsea'` — where SQL Server spells it
-            // `CONTAINS(title, 'earthsea')` and Postgres
-            // `to_tsvector(title) @@ to_tsquery('earthsea')`. Neither is
-            // standard, so there is no spelling to be faithful to, and infix
-            // is the one this parser already has a place for: it is a column,
-            // an operator and a literal, exactly like `LIKE`. A function call
-            // would need its own parse path and would put the column inside
-            // an argument list, where nothing else in this grammar puts one.
-            //
-            // It is *not* `LIKE` with different punctuation. `LIKE '%game%'`
-            // finds `Games`; this does not, because a term is a whole word.
-            // That is the difference worth having a keyword for, and it is
-            // why this is here even though the planner takes a table scan for
-            // it at the fixture's size.
-            "contains"
-        } else {
+        let Some(op) = COMPARISONS.iter().find_map(|one| {
+            let matched = if one.keyword {
+                self.eat(one.spelling)
+            } else {
+                self.eat_symbol(one.spelling)
+            };
+            matched.then_some(one.op)
+        }) else {
             return Err(SqlError {
                 message: format!("expected a comparison, found {}", self.describe(self.i)),
                 at,
