@@ -1358,6 +1358,64 @@ class Adapter:
             Units(1000),
         ]
 
+    #: The decimal renderings all three clients must agree on.
+    #:
+    #: `(units, scale)`, and the scale is the argument rather than a property of
+    #: the value: a decimal on the wire is a count of the column's smallest
+    #: unit and the scale never travels. Each client therefore has a renderer
+    #: of its own — `Units.to_string_with_scale`, `Units.StringWithScale`,
+    #: `unitsToString` — and each had an edge-case table in its *own* suite,
+    #: written independently. Three tables that agree with three authors is not
+    #: three renderers that agree with each other, which is what this is.
+    #:
+    #: `/api/conditional-update` compares them too and compares one value at
+    #: one scale, because that is what `books.price` declares. Everything that
+    #: can only go wrong somewhere else is here:
+    #:
+    #: - scale 0, where there is no point at all and the two branches diverge;
+    #: - a value smaller than one whole unit, where the zero padding is the
+    #:   whole answer and dropping it turns 0.05 into 0.5;
+    #: - a negative smaller than one whole unit, where the sign has to survive
+    #:   a `whole` that rounds to zero — `-0.75` is the case the caveat named,
+    #:   and a renderer that took the sign off `whole` prints `0.75`;
+    #: - scales 1, 3 and 4, so "pad to two" is not enough to pass;
+    #: - and both i64 extremes, where negating the magnitude overflows in two
+    #:   of the three languages. Go's renderer carries a comment about exactly
+    #:   this; nothing compared it against the other two.
+    RENDERED = (
+        (0, 0),
+        (0, 2),
+        (7, 1),
+        (5, 4),
+        (-1, 2),
+        (-75, 2),
+        (1250, 0),
+        (1250, 1),
+        (1250, 2),
+        (-1250, 3),
+        (9223372036854775807, 2),
+        (-9223372036854775808, 2),
+    )
+
+    def render_decimals(self, _session, _body):
+        """Every client's decimal renderer, on one shared table.
+
+        No server anywhere: this is three pure functions compared to each
+        other, which is the one thing in this contract that needs no database
+        — and the reason it is here rather than in three suites is that three
+        suites cannot disagree with each other.
+        """
+        return {
+            "rendered": [
+                # `units` as a string, by the contract's 64-bit rule: two of
+                # these do not survive a JSON number, and they are the two the
+                # table exists for.
+                {"units": str(units), "scale": scale,
+                 "text": Units(units).to_string_with_scale(scale)}
+                for units, scale in self.RENDERED
+            ]
+        }
+
     #: The id range the round-trip handler owns, clear of every other one.
     ROUND_TRIP_FIRST = 9400
 
@@ -1521,6 +1579,7 @@ ROUTES = {
     "/api/bad-batch": "bad_batch",
     "/api/transaction": "transaction",
     "/api/round-trips": "round_trips",
+    "/api/render-decimals": "render_decimals",
 }
 
 

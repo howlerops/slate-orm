@@ -139,6 +139,7 @@ func main() {
 	mux.HandleFunc("/api/bad-batch", s.handle(s.badBatch))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
 	mux.HandleFunc("/api/round-trips", s.handle(s.roundTrips))
+	mux.HandleFunc("/api/render-decimals", s.handle(s.renderDecimals))
 
 	fmt.Printf("LISTENING %s\n", *listen)
 	if err := http.ListenAndServe(*listen, cors(mux)); err != nil {

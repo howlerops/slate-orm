@@ -746,6 +746,21 @@ CASES: list[tuple[str, str, Any, str]] = [
     # leaves the database as it found it.
     ("a batch where two rows are refused differently", "/api/bad-batch", {}, "app"),
 
+    # Twelve decimal renderings, compared across the three clients.
+    #
+    # `/api/conditional-update` compares the renderers too and compares one
+    # value at one scale, because that is what `books.price` declares. A
+    # disagreement that shows only at scale 0, on a negative smaller than one
+    # whole unit, or at an i64 extreme was invisible — and each client had an
+    # edge-case table in its *own* suite, written independently, which is three
+    # tables agreeing with three authors rather than three renderers agreeing
+    # with each other.
+    #
+    # No server in it: three pure functions, and the one case in this file that
+    # would answer with the database switched off. Here anyway, because it is
+    # the only place the three can be held to each other.
+    ("twelve decimals rendered", "/api/render-decimals", {}, "app"),
+
     # How many gRPC calls a fixed workload costs, compared across the three.
     #
     # The one class of disagreement no comparison of *answers* can reach. Four

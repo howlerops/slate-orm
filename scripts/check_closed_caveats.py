@@ -391,6 +391,10 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "decimal-aggregate-sum": (
      "slate.SumOf(slate.At(books, 7))",
      "examples/explorer/backends/go/handlers.go",
+ ),
+ "decimal-renderers-shared-table": (
+     "twelve decimals rendered",
+     "examples/explorer/conformance/conformance.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -585,6 +589,16 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # One shared table rather than three written independently, which is the
+    # distinction the caveat drew: three tables agreeing with three authors is
+    # not three renderers agreeing with each other.
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     'The corpus compares renderers at one scale.'):
+        'decimal-renderers-shared-table',
+    # The same sentence, written again forty minutes before the endpoint that
+    # answers it existed, and closed by the same witness.
+    ('2026-09-29-the-one-aggregate-that-returns-money.md', 'One scale, still.'):
+        'decimal-renderers-shared-table',
     # Two entries, four days apart, saying the same thing: the one aggregate
     # that returns money is compared by no client case. One names the case
     # that sorts by it, one the adapter that asks for it — because a case

@@ -379,6 +379,35 @@ a projection that drops a primary-key column (the cursor is that key, so there
 would be nothing to build one from), and a sort into an order the key does not
 give (the page boundary would not be where the cursor says).
 
+### `POST /api/render-decimals`
+
+No body. Renders a **fixed table** of `(units, scale)` pairs through the
+client's own decimal renderer.
+
+```json
+{ "rendered": [ { "units": "-75", "scale": 2, "text": "-0.75" }, … ] }
+```
+
+The three renderers — `Units.to_string_with_scale`, `Units.StringWithScale`,
+`unitsToString` — are the only part of the decimal story that is *not* the
+server's. A decimal on the wire is a count of the column's smallest unit and
+the scale never travels, so each client formats against a scale it holds
+locally, and `/api/conditional-update` compares that at exactly one value and
+one scale because that is what `books.price` declares.
+
+Twelve rows, each for something that can only go wrong somewhere else: scale 0
+(no point at all, and the branch where the two halves diverge), a value smaller
+than one whole unit (where the zero padding is the answer and dropping it turns
+`0.05` into `0.5`), a *negative* smaller than one whole unit (`-0.75`, where the
+sign has to survive a whole part that rounds to zero), scales 1, 3 and 4 so
+"pad to two" does not pass, and both i64 extremes, where negating the magnitude
+overflows in two of the three languages.
+
+Fixed rather than taken from the body, for the reason `/api/nearest` gives: a
+table from the caller would let one adapter be asked a question the other two
+were not. `units` is a string by the 64-bit rule above — two of the twelve do
+not survive a JSON number, and they are the two the table exists for.
+
 ### `POST /api/round-trips`
 
 ```json

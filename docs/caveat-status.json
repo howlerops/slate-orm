@@ -10022,9 +10022,9 @@
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
       "key": "The corpus compares renderers at one scale.",
-      "verdict": "open",
-      "by": "every adapter renders against 2, because that is what books.price declares. A disagreement showing only at scale 0 or a negative value would not appear; each client's own suite has its edge-case table, written independently rather than shared.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: `/api/render-decimals` runs one shared table of twelve (units, scale) pairs through all three renderers \u2014 scales 0, 1, 2, 3 and 4, two negatives below one whole unit including the -0.75 this caveat named, and both i64 extremes. They agree on every row.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
@@ -10999,6 +10999,76 @@
       "key": "The harness change is about reporting, not about correctness",
       "verdict": "deliberate",
       "by": "this entry: a raised group becomes one failing check naming the exception, and the traceback is gone. Running the group directly is the way back to it, and keeping the traceback would mean not catching \u2014 which is the thing that made two mutations unscoreable.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "One scale, still.",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: /api/render-decimals, added in the same session, compares all three renderers over scales 0, 1, 2, 3 and 4 including two negatives below one whole unit. Written before that endpoint existed and answered forty minutes later.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "It compares the sum, not the rounding.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing in the corpus divides a decimal, so what AVG over money should return is not asked here. SUM is exact by construction and that is the whole of the claim.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "The demo's UI does not show it.",
+      "verdict": "open",
+      "by": "nothing yet. `GroupRow.total` is in the frontend's types and the chart still draws the count; a second series is a chart change that has to argue for itself.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "`having` still reads the count.",
+      "verdict": "deliberate",
+      "by": "this entry: a group condition over money exercises a different server path \u2014 a decimal against a bound rather than a u64 \u2014 and is a different case rather than the same one with a field added. The three HAVING cases are about the group condition, not about which aggregate it reads.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "Two of the twelve groupings are refusals or near it.",
+      "verdict": "open",
+      "by": "still true and worth knowing when reading 'every grouping': `badPrice` is refused at plan time and carries no groups, so the sum is compared on eleven.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "It compares rendering, not parsing.",
+      "verdict": "deliberate",
+      "by": "this entry: no client offers reading a decimal string back into units \u2014 a decimal arrives as a count and leaves as a string \u2014 so the round trip does not exist to be compared.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "Twelve rows is not a property test.",
+      "verdict": "deliberate",
+      "by": "this entry: a hand-written differential tests what somebody thought of, which CLAUDE.md says to know rather than pretend otherwise. What it adds over each client's own table is that all three are held to one list; an oracle over random (units, scale) pairs is the version that scales and is unbuilt.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "Scale above 4 is untested.",
+      "verdict": "open",
+      "by": "nothing yet, and named as the next row to add: Go computes its divisor in an int64 loop and would overflow silently around scale 19 where Python and TypeScript would not. Not added here because the three would then genuinely disagree and the case would be a bug report rather than a comparison.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "The negative-scale divergence is recorded, not resolved.",
+      "verdict": "open",
+      "by": "nothing yet. Measured: Python's to_string_with_scale raises ValueError, Go's StringWithScale and TypeScript's unitsToString both return '1250'. Two clients clamp on purpose and say so; one raises on purpose and says so. No column declares a negative scale, so nothing on the wire produces one.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "No guard holds the three tables to each other except the run",
+      "verdict": "deliberate",
+      "by": "this entry: three literals in three languages, and the conformance case catches a drift because `units` and `scale` are in the answer \u2014 demonstrated by two mutations. A parser over three syntaxes would fail without a running stack, which is the only thing it would add.",
       "reviewed": "2026-09-29"
     }
   ]

@@ -277,6 +277,35 @@ class Counting {
   }
 }
 
+/**
+ * The decimal renderings all three clients must agree on.
+ *
+ * `[units, scale]`, and the scale is the argument rather than a property of the
+ * value: a decimal on the wire is a count of the column's smallest unit and the
+ * scale never travels. Each client therefore has a renderer of its own —
+ * `Units.to_string_with_scale`, `Units.StringWithScale`, `unitsToString` — and
+ * each had an edge-case table in its *own* suite, written independently. Three
+ * tables that agree with three authors is not three renderers that agree with
+ * each other, which is what this is.
+ *
+ * See the Python adapter's `RENDERED` for why each line is here; the three are
+ * the same list and the conformance runner is what holds them to it.
+ */
+const RENDERED: [bigint, number][] = [
+  [0n, 0],
+  [0n, 2],
+  [7n, 1],
+  [5n, 4],
+  [-1n, 2],
+  [-75n, 2],
+  [1250n, 0],
+  [1250n, 1],
+  [1250n, 2],
+  [-1250n, 3],
+  [9223372036854775807n, 2],
+  [-9223372036854775808n, 2],
+];
+
 /** The id range `/api/round-trips` owns, clear of every other one. */
 const ROUND_TRIP_FIRST = 9400n;
 
@@ -1101,6 +1130,27 @@ class Adapter {
   }
 
   /**
+   * Every client's decimal renderer, on one shared table.
+   *
+   * No server anywhere: three pure functions compared to each other, which is
+   * the one thing in this contract that needs no database — and the reason it
+   * is here rather than in three suites is that three suites cannot disagree
+   * with each other.
+   */
+  async renderDecimals(): Promise<unknown> {
+    return {
+      rendered: RENDERED.map(([units, scale]) => ({
+        // `units` as a string, by the contract's 64-bit rule: two of these do
+        // not survive a JSON number, and they are the two the table exists
+        // for.
+        units: units.toString(),
+        scale,
+        text: unitsToString(units, scale),
+      })),
+    };
+  }
+
+  /**
    * Run a fixed workload and report how many requests the client sent.
    *
    * The one thing three SDKs can differ about that no comparison of *answers*
@@ -1747,6 +1797,7 @@ async function main(): Promise<void> {
     "/api/bad-batch": (s) => adapter.badBatch(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
     "/api/round-trips": (s, b) => adapter.roundTrips(s, b),
+    "/api/render-decimals": () => adapter.renderDecimals(),
   };
 
   const server = createServer((request, response) => {

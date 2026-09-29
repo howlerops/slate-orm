@@ -101,6 +101,11 @@ NOT_IN_THE_UI = {
     "/api/bad-status": "a deliberate check violation, for the conformance corpus's error shapes",
     "/api/typed": "reads two rows through the *generated* decoders; the UI decodes its own",
     "/api/bad-batch": "two rows a batch refuses for different reasons, as data rather than a trailer",
+    "/api/render-decimals": (
+        "twelve decimal strings a client formats without asking the server; "
+        "the UI shows a rendered price in the conditional-write panel, which "
+        "is the same renderer on a value somebody chose"
+    ),
     "/api/round-trips": (
         "how many gRPC calls a fixed workload cost, which is a number about "
         "the client and not about the data; a panel would show four integers "
