@@ -1639,7 +1639,7 @@
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
       "key": "Three of five decoders per language are still only run again",
       "verdict": "closed",
-      "by": "a live-row case for the remaining generated decoders"
+      "by": "ledger/2026-09-20-the-other-three-decoders.md: a live-row case for each of the remaining generated decoders, in all three languages. The strike beside this bullet credits that entry and this field now names it."
     },
     {
       "entry": "2026-09-19-every-generated-decoder-runs.md",
@@ -1664,7 +1664,7 @@
       "entry": "2026-09-19-forgetting-a-retired-row.md",
       "key": "Nothing calls it.",
       "verdict": "closed",
-      "by": "something calls purge_deleted, and a schedule for it"
+      "by": "ledger/2026-09-19-a-purge-something-can-call.md gave purge_deleted a caller, and ledger/2026-09-20-the-sweep-nobody-scheduled.md gave it a schedule. Both are what the strike beside this bullet credits."
     },
     {
       "entry": "2026-09-19-one-command-for-the-checks.md",
@@ -11456,8 +11456,9 @@
     {
       "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
       "key": "It does not check that the `by` names the entry the strike n",
-      "verdict": "open",
-      "by": "true. The rule demands a settled verdict and a non-empty `by`; a `closed` row citing the wrong entry passes. Checking it means parsing the strike's own prose for a ledger filename, which is a real rule and is not written.",
+      "verdict": "narrowed",
+      "by": "ledger/2026-09-29-describing-the-work-is-not-citing-it.md: struck() returns the entries each strike credits, and report() refuses a closed or narrowed verdict whose by names none of them. It fired on two of the three pairs immediately -- both said in prose what had closed them and named no entry -- and both are fixed. Six mutations over five runs, three of which survived first and became fixture cases (ledger/mutations/20260929T164345-scripts-caveats-py.json is the last of them).",
+      "residual": "a by naming an entry the strike also credits passes whether or not that entry is the right one, so the original wording's 'a closed row citing the wrong entry' is only refused when the strike disagrees; a strike crediting the wrong entry is not checkable from here",
       "checked": "2026-09-29"
     },
     {
@@ -12154,6 +12155,32 @@
       "verdict": "deliberate",
       "by": "this entry: scripts/mutations.json allows one suite per guard -- scripts/test_check_mutations_roster.py has a case for two suites on one guard failing -- so the choice was which single real-tree file the mutation lands on. status.proto, because a mutation that only proves the guard still sees the file the old list already named would prove nothing about the widening. records.proto keeps the fixture suite and the byte comparison it shares with the other two.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
+      "key": "It does not check that the credited entry is the *right* one",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
+      "key": "Thirty strikes credit nobody and are unchecked.",
+      "verdict": "deliberate",
+      "by": "this entry: counted at 21 of 51 strikes naming an entry. A strike that credits nobody is usually a withdrawal -- nobody closed it, it was wrong -- and forcing a citation there would produce ceremonial ones. Whether the other 30 should name an entry is a convention question for the pre-commit hook, not a check on the tracker.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
+      "key": "It reaches three caveats.",
+      "verdict": "deliberate",
+      "by": "this entry: the rule can only fire on a struck caveat whose standing twin reaches the tracker, and there are three, which is the same population the rule above it was built for. Widening the population would mean keeping struck copies as caveats, which ledger/2026-09-29-a-caveat-closed-by-a-line-through-it.md rejected under its own alternatives: a withdrawal is not a caveat.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
+      "key": "A strike that paraphrases still pairs with nothing.",
+      "verdict": "open",
+      "checked": "2026-09-29"
     }
   ]
 }

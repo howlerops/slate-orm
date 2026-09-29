@@ -52,8 +52,89 @@ STRUCK = """# An entry
 
 ## What this does not do
 
-- ~~**It does not do the first thing.**~~ **Closed** by `b.md`, which cost one
-  fixture table rather than the rewrite estimated below.
+- ~~**It does not do the first thing.**~~ **Closed** by
+  `2026-09-20-the-entry-that-closed-it.md`, which cost one fixture table
+  rather than the rewrite estimated below.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: The same shape, with a strike that credits nobody.
+#:
+#: 30 of the 51 strikes in this ledger are prose like this — "Closed, the same
+#: afternoon" — and the `by` rule has nothing to check them against. A rule
+#: that demanded a citation from every strike would be a rule about how to
+#: write an entry, which is the `pre-commit` hook's business and not this file's.
+STRUCK_ANONYMOUS = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed**, later the same afternoon,
+  and it cost one fixture table rather than the rewrite estimated below.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: A strike that names its own entry, and no other.
+#:
+#: An entry naming its own filename in a strike is narrating itself, not
+#: pointing anywhere — a `by` citing it would send the reader back to the file
+#: they are already in. So it credits nobody and the `by` goes unchecked, the
+#: same as prose. No strike in this ledger does it today; the rule is here
+#: because "the entry that closed it" and "the entry it is in" are the same
+#: string when a session closes its own caveat in a later section.
+STRUCK_SELF = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed** further up
+  `2026-09-19-an-entry.md` itself, which cost one fixture table rather than
+  the rewrite estimated below.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: A strike crediting two entries, because a closure can take two steps.
+STRUCK_TWICE = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed** by
+  `2026-09-20-the-entry-that-closed-it.md`, after
+  `2026-09-19-the-entry-that-started-it.md` made it possible.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: A strike that mentions a Markdown file which is not a ledger entry.
+#:
+#: `docs/correctness.md` is where a finding gets written up, not somebody who
+#: closed a caveat, and a `by` should not have to name it. The date prefix is
+#: what separates an entry from every other `.md` in the tree, which is why
+#: `CREDITED` requires one.
+STRUCK_README = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Withdrawn** — the property it
+  asks for is already written up in `docs/correctness.md`, so there was
+  nothing to do.
 
 - **It does not do the first thing.** With the original estimate, standing
   unedited, because being wrong about it is the useful part.
@@ -940,7 +1021,145 @@ def main() -> int:
                         "entry": "a.md",
                         "key": "It does not do the first thing.",
                         "verdict": "closed",
-                        "by": "b.md, the entry the strike names",
+                        "by": "ledger/2026-09-20-the-entry-that-closed-it.md, "
+                              "which the strike names",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # The gap the rule above left, which its own entry recorded: a `closed`
+    # row whose `by` describes the work instead of naming where it is written
+    # down. Two of the three real pairs were doing exactly this.
+    case(
+        "a closed claim whose `by` does not name the entry the strike credits",
+        {
+            "ledger/a.md": STRUCK,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "one fixture table, added later",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        1,
+    )
+
+    # And the limit of it: a strike naming no entry leaves nothing to check,
+    # so the same prose `by` passes. Written because a rule that fired on every
+    # `by` without a `.md` in it would pass the case above and reject most of
+    # this ledger.
+    case(
+        "a strike crediting nobody leaves the `by` unchecked",
+        {
+            "ledger/a.md": STRUCK_ANONYMOUS,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "one fixture table, added later",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # The self-credit case. Without the exclusion this reads as a strike
+    # crediting `a.md`, and the prose `by` below is then refused for not
+    # naming the file the caveat is already in.
+    case(
+        "a strike naming only its own entry credits nobody",
+        {
+            "ledger/2026-09-19-an-entry.md": STRUCK_SELF,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "2026-09-19-an-entry.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "one fixture table, added later",
+                    },
+                    {
+                        "entry": "2026-09-19-an-entry.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # Two credits, one named. `any`, not `all`: the second real pair took two
+    # entries to close — one gave `purge_deleted` a caller and the other gave
+    # it a schedule — and naming either gets a reader to the work, which is
+    # what `by` is for. Demanding both would make a `by` a bibliography.
+    case(
+        "a `by` naming one of two credited entries is enough",
+        {
+            "ledger/a.md": STRUCK_TWICE,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "ledger/2026-09-20-the-entry-that-closed-it.md",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # A `.md` that is not an entry is not a credit. Without the date in
+    # `CREDITED` this strike reads as crediting `correctness.md`, and the prose
+    # `by` below is refused for not naming a file that never closed anything.
+    case(
+        "a strike naming a non-entry Markdown file credits nobody",
+        {
+            "ledger/a.md": STRUCK_README,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "the convention was already written down",
                     },
                     {
                         "entry": "a.md",

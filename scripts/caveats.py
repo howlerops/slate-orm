@@ -221,8 +221,18 @@ def units(body: str) -> list[str]:
     return found
 
 
-def struck(root: Path = ROOT) -> set[str]:
-    """`entry::key` for every caveat crossed out in a "does not do" section.
+#: A ledger entry named inside a strike, with or without its `ledger/` prefix.
+#:
+#: A strike usually says who answered the caveat — *"Closed by
+#: `2026-09-20-the-child-that-made-the-arm-reachable.md`"* — and that name is
+#: the one thing about a strike that is machine-readable. 21 of the 51 strikes
+#: carry one; the rest are prose, and prose is not checked.
+CREDITED = re.compile(r"(?:ledger/)?(\d{4}-\d{2}-\d{2}-[a-z0-9-]+\.md)")
+
+
+def struck(root: Path = ROOT) -> dict[str, set[str]]:
+    """`entry::key` for every caveat crossed out in a "does not do" section,
+    and which entries that strike credits.
 
     A strike is how this ledger records that a caveat was answered *later*, by
     another entry. **Three** entries also keep the original bullet standing
@@ -247,8 +257,30 @@ def struck(root: Path = ROOT) -> set[str]:
     live verdict on one. This does not read the strike as a verdict — a struck
     caveat closed by a later entry still needs a `by` naming it, which is the
     whole point of the field.
+
+    **And the `by` has to name the entry the strike names.** The first version
+    of this rule demanded a settled verdict and a `by` and read neither, which
+    its own entry recorded as a gap:
+
+    > It does not check that the `by` names the entry the strike names. The
+    > rule demands a settled verdict and a `by`; it does not read the strike's
+    > own text to see which entry it credits. A `closed` row citing the wrong
+    > entry passes.
+
+    Two of the three pairs were doing exactly that. Both said in prose what had
+    closed them — *"a live-row case for the remaining generated decoders"* —
+    which is a description of the work and not a pointer to where it is written
+    down, so a reader of the tracker had no way back to the entry that did it.
+    That is the failure the `by` field exists to prevent, one layer in from the
+    one this rule was built for.
+
+    So each key carries the set of entries its strike credits, and `report`
+    checks the `by` against it. A strike crediting nobody is prose and yields
+    an empty set, which the rule reads as nothing to check — the alternative is
+    demanding a citation from every strike, which is a rule about how to write
+    an entry rather than a check on the tracker.
     """
-    found: set[str] = set()
+    found: dict[str, set[str]] = {}
     ledger = root / "ledger"
     if not ledger.is_dir():
         return found
@@ -265,7 +297,12 @@ def struck(root: Path = ROOT) -> set[str]:
             # standing copy produces. A struck bullet is `~~**Lead.** rest~~`.
             inner = unit.lstrip("~").strip()
             lead = LEAD.match(inner)
-            found.add(f"{path.name}::{key(lead.group(1) if lead else inner)}")
+            at = f"{path.name}::{key(lead.group(1) if lead else inner)}"
+            # An entry that credits itself is the strike naming its own file in
+            # passing, not a pointer elsewhere, so it cannot be what a `by`
+            # should cite.
+            credited = set(CREDITED.findall(unit)) - {path.name}
+            found.setdefault(at, set()).update(credited)
     return found
 
 
@@ -382,6 +419,22 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
                 f"original text kept for the record. Read the strike, then "
                 f"record `closed` or `narrowed` with a `by` naming the entry."
             )
+        # And the `by` must name the entry the strike credits. "A live-row case
+        # for the remaining decoders" describes the work; it does not say where
+        # it is written down, so a reader of the tracker cannot get back to it —
+        # which is what `by` is for. Only checked when the strike names an
+        # entry at all: a strike that credits nobody is prose.
+        wanted = crossed.get(k, set())
+        if wanted and verdict in ("closed", "narrowed"):
+            says = row.get("by") or ""
+            if not any(entry in says for entry in wanted):
+                problems.append(
+                    f"{c['entry']}: `{key(c['claim'])}` is {verdict}, and the "
+                    f"strike beside it credits "
+                    f"{', '.join(sorted(wanted))} — which its `by` does not "
+                    f"name. Describing the work is not citing it: a reader of "
+                    f"the tracker has no way back to the entry that did it."
+                )
         counts[verdict] += 1
     orphans = sorted(set(status) - seen)
     return counts, problems, orphans

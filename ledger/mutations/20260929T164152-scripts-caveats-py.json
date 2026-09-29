@@ -1,0 +1,53 @@
+{
+  "at": "2026-09-29T16:41:52+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "5b7964b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the by is no longer checked against the strike's credit",
+      "old": "        if wanted and verdict in (\"closed\", \"narrowed\"):",
+      "new": "        if False and verdict in (\"closed\", \"narrowed\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "a closed claim whose `by` does not name the entry the strike credits: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a strike crediting nobody is treated as crediting everybody",
+      "old": "        if wanted and verdict in (\"closed\", \"narrowed\"):",
+      "new": "        if verdict in (\"closed\", \"narrowed\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "closed without naming what closed it is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is closed and names nothing that closed or decided it', 'a.md: `It does not do the first thing.` is closed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']",
+        "narrowed without naming what closed and what is left is refused: problems: wanted 2, got 3 ['a.md: `It does not do the first thing.` is narrowed and names nothing that closed or decided it', 'a.md: `It does not do the first thing.` is narrowed and has no `residual`. `by` says what closed; a narrowed caveat must also say what is left, in a field, so it can be counted.', 'a.md: `It does not do the first thing.` is narrowed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']",
+        "narrowed with a `by` and no `residual` is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is narrowed and has no `residual`. `by` says what closed; a narrowed caveat must also say what is left, in a field, so it can be counted.', 'a.md: `It does not do the first thing.` is narrowed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']",
+        "narrowed with a `by` and a `residual` is accepted and counted as its own thing: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is narrowed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']",
+        "a narrowed caveat carrying `reviewed` rather than `checked` is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is narrowed and carries `reviewed`, which is the settled-verdict stamp. A narrowed caveat still has a residual to re-read, so its date is `checked` \u2014 `--unread` reads that one and nothing else.', 'a.md: `It does not do the first thing.` is narrowed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']",
+        "a narrowed caveat carrying `checked` is accepted: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is narrowed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']",
+        "a narrowed caveat carrying `checked` is accepted: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is narrowed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']",
+        "a moment needs no `by`, where closed and deliberate do: problems: wanted 1, got 2 ['a.md: `It does not do the second thing.` is closed and names nothing that closed or decided it', 'a.md: `It does not do the second thing.` is closed, and the strike beside it credits  \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an entry crediting itself counts as a pointer elsewhere",
+      "old": "            credited = set(CREDITED.findall(unit)) - {path.name}",
+      "new": "            credited = set(CREDITED.findall(unit))",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
