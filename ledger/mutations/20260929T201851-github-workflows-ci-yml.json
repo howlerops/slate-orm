@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T20:18:51+00:00",
+  "file": ".github/workflows/ci.yml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "cff2b7b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the scripts job stops running the generator's own suite",
+      "old": "python3 scripts/test_codegen.py",
+      "new": "python3 scripts/test_the_code_generator.py",
+      "verdict": "caught",
+      "caught_by": [
+        "check_closed_caveats: ok    some verdict is recorded closed at all  (463 closed verdicts)"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

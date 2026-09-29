@@ -703,6 +703,30 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "a_read_answers_far_more_than_it_asks",
      "crates/slate-serverd/tests/observing.rs",
  ),
+
+ # --- the deliberate audit's second half, 2026-09-29 -------------------------
+ #
+ # Two `deliberate` claims that reading 48 more verdicts found false. Both were
+ # true when written and were overtaken by later work, which is the only shape
+ # this audit has met in 216 reads. Written up in
+ # `ledger/2026-09-29-the-deliberate-sample-carried-to-216.md`.
+ #
+ # `undo()` in the retention example calls the generated accessor the caveat
+ # said only the demo called. The needle is the call rather than the function
+ # name, because a renamed `undo` that still calls it keeps the closure true.
+ "retired-outside-the-demo": (
+     "if not row.retired:",
+     "examples/retention/seed.py",
+ ),
+ # And the `scripts` job, which the caveat described as lint-and-typecheck
+ # only, now runs about sixty executable steps. `test_codegen.py` is the first
+ # in file order and the least likely to be renamed away, being the code
+ # generator's own suite — and if it ever is, the other fifty-odd `run:` lines
+ # mean this closure wants re-reading rather than silently re-witnessing.
+ "scripts-job-runs-things": (
+     "python3 scripts/test_codegen.py",
+     ".github/workflows/ci.yml",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -897,6 +921,10 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-20-the-accessor-three-adapters-now-call.md',
+     'Nothing outside the demo calls it.'): 'retired-outside-the-demo',
+    ('2026-09-18-the-python-that-runs-ci-had-no-checker.md',
+     'Nothing here is *run* by the new job.'): 'scripts-job-runs-things',
     ('2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md',
      'Nothing compares a request with its response.'): 'request-against-response',
     ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',

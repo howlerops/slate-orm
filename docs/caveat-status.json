@@ -9638,9 +9638,9 @@
     {
       "entry": "2026-09-20-the-accessor-three-adapters-now-call.md",
       "key": "Nothing outside the demo calls it.",
-      "verdict": "deliberate",
-      "by": "the accessor is on a generated type and the three clients' own suites test the hand-written client, which is the right division. Its only live caller being the demo is what the demo is for.",
-      "reviewed": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/retention/seed.py: `undo()` reads `row.retired` from the generated accessor, and `row.restored()` beside it. Added in 83cf0ca, 1h41m after this entry, so the claim was true when written and was overtaken. Found by reading, in the deliberate audit's second half.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-accessor-three-adapters-now-call.md",
@@ -9972,9 +9972,9 @@
     {
       "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
       "key": "Nothing here is *run* by the new job.",
-      "verdict": "deliberate",
-      "by": "it lints and type-checks; the harnesses are executed by the twelve jobs that already run them. A script that passes both tools and does the wrong thing is caught by the job that runs it, which is the division of labour rather than a gap in it.",
-      "reviewed": "2026-09-28"
+      "verdict": "closed",
+      "by": ".github/workflows/ci.yml: the `scripts` job now runs about sixty executable steps beside `ty check` and `ruff check .` \u2014 scripts/test_codegen.py, examples/explorer/conformance/test_conformance.py, the guards and their own suites. The claim was true the day it was written and the job grew past it. Found by reading, in the deliberate audit's second half.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
@@ -12563,6 +12563,34 @@
       "key": "The threshold is ten against an observed 141.",
       "verdict": "deliberate",
       "by": "this entry: the bytes move with the fixture's column widths and with rows_per_message, so a tight bound pins `docs` rather than the asymmetry and goes red on a column added to it. Ten answers 'does the response dwarf the request', which is the claim; 'by how much' is the printed number, which a reader gets with --nocapture and no assertion can keep true.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-216.md",
+      "key": "792 remain unread",
+      "verdict": "open",
+      "by": "the sample is 216 of 1008 and the remaining 792 are the task. Carried in task #329, which stays in_progress; the method is scripts/caveats.py's seeded order and /tmp/claude-0/sample.py's skip offset, derived from this entry's count.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-216.md",
+      "key": "It does not test the \"Nothing\u2026\" hypothesis",
+      "verdict": "deliberate",
+      "by": "this entry: the hypothesis is stated with its own falsification plan, and testing it now means a stratified draw that would destroy the unbiased rate the three audit entries exist to produce. The next unstratified 100 reads answer it for free; drawing negatives on purpose would confirm it by construction.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-216.md",
+      "key": "A verdict read for \"the reasoning still applies\" is graded b",
+      "verdict": "deliberate",
+      "by": "this entry: 28 of the 48 had no mechanical subject, and for those the only stronger method is a second independent reader, which this repository does not have. Named as the ceiling on the method rather than as a gap something could close, because it does not move with sample size.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-sample-carried-to-216.md",
+      "key": "It says nothing about the 1008 that remain `deliberate` bein",
+      "verdict": "deliberate",
+      "by": "this entry: 'is this claim false' and 'is this argument good' are different questions, and only the first has an answer a reader can check against the tree. ledger/2026-09-29-the-deliberate-sample-carried-to-168.md's one stale reason is the second question's shape, and grading arguments at scale is the work the deliberate verdict exists to record having already been done.",
       "reviewed": "2026-09-29"
     }
   ]

@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T20:18:37+00:00",
+  "file": "examples/retention/seed.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "cff2b7b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the retention example stops calling the generated accessor",
+      "old": "if not row.retired:",
+      "new": "if row.deleted_at is not None and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "check_closed_caveats: ok    some verdict is recorded closed at all  (463 closed verdicts)"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
