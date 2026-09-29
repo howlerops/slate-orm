@@ -379,6 +379,12 @@ jobs:
       # read off `clients/` so a fourth arriving without a door is seen.
       - run: python3 scripts/check_transport_door.py
       - run: python3 scripts/test_check_transport_door.py
+      # A library crate that names an async runtime makes a decision
+      # belonging to whoever embeds it. slate-kernel did, used none of it, and
+      # only a wasm build noticed. The closure this checks is computed from
+      # the manifests; the exemptions outside it are a person's call.
+      - run: python3 scripts/check_wasm_runtime.py
+      - run: python3 scripts/test_check_wasm_runtime.py
 
   quickstarts:
     name: the landing page's code

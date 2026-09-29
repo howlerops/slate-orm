@@ -8035,9 +8035,9 @@
     {
       "entry": "2026-09-14-the-kernel-on-wasm.md",
       "key": "Nothing else in the workspace is checked for the same proble",
-      "verdict": "open",
-      "by": "still a reading rather than a check. slate-tuple and slate-schema do not depend on tokio and nothing asserts they keep not depending on it; the wasm build in CI covers slate-kernel only, because that is the one crate compiled for the target.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/check_wasm_runtime.py, run by CI: slate-wasm's dependency closure is computed and checked against tokio's wasm features, and every library crate outside it that takes a non-dev tokio must be listed with a reason. ledger/2026-09-29-a-library-that-named-a-thread-pool.md; the closure half is also built for wasm32 by the playground job",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-14-the-kernel-on-wasm.md",
@@ -11203,6 +11203,34 @@
       "key": "The `-1` and `-2` rows the two clients used to carry are gon",
       "verdict": "deliberate",
       "by": "this entry: reintroducing clamping fails the refusal tests, which is the property worth holding; what a clamped output would have been is not",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "It reads manifests, not features as resolved.",
+      "verdict": "deliberate",
+      "by": "this entry: cargo unifies features across the graph and no manifest says so; the wasm build in CI is what catches that, which is the division of labour the file is built around",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "`RUNTIME_ON_PURPOSE`'s reasons are unchecked prose.",
+      "verdict": "deliberate",
+      "by": "this entry: the rule enforces that a reason exists and that its crate is real and still outside the closure; each reason is one sentence so a reader can check it",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "It only knows about tokio.",
+      "verdict": "deliberate",
+      "by": "this entry: tokio is the runtime this workspace uses and the one the incident was about; a second would need the rule widened",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "Nothing checks the wasm build's own feature list stays right",
+      "verdict": "deliberate",
+      "by": "this entry: ON_WASM can go stale in one direction only \u2014 a feature tokio adds makes this refuse loudly, one it removes is caught by the CI wasm build",
       "reviewed": "2026-09-29"
     }
   ]

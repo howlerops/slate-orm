@@ -427,6 +427,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "negative-scale-refused": (
      "a scale that is not a non-negative integer is refused",
      "clients/typescript/test/decimal.test.ts",
+ ),
+
+ # --- a library that named a thread pool, 2026-09-29 --------------------------
+ "wasm-runtime-guard": (
+     "RUNTIME_ON_PURPOSE",
+     "scripts/check_wasm_runtime.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -621,6 +627,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-14-the-kernel-on-wasm.md',
+     'Nothing else in the workspace is checked for the same proble'):
+        'wasm-runtime-guard',
     ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
      'Scale above 4 is untested.'): 'decimal-at-max-scale',
     # The TypeScript test rather than Go's type: a refusal Go makes

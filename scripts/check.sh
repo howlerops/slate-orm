@@ -141,6 +141,8 @@ client-identity|.|python3 scripts/check_client_identity.py
 client-identity-guard|.|python3 scripts/test_check_client_identity.py
 transport-door|.|python3 scripts/check_transport_door.py
 transport-door-guard|.|python3 scripts/test_check_transport_door.py
+wasm-runtime|.|python3 scripts/check_wasm_runtime.py
+wasm-runtime-guard|.|python3 scripts/test_check_wasm_runtime.py
 go-client-fmt|clients/go|gofmt -l .
 go-client-vet|clients/go|go vet ./...
 go-adapter-fmt|examples/explorer/backends/go|gofmt -l .

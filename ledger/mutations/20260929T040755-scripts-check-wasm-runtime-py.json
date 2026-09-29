@@ -1,0 +1,47 @@
+{
+  "at": "2026-09-29T04:07:55+00:00",
+  "file": "scripts/check_wasm_runtime.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_wasm_runtime.py"
+  ],
+  "commit": "0648395",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a missing wasm crate reads as fine",
+      "old": "    if WASM_CRATE not in crates:",
+      "new": "    if WASM_CRATE not in crates and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a missing wasm crate fails: exit 70, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "target-scoped dependency tables are not walked",
+      "old": "        for one in scoped.values():",
+      "new": "        for one in []:",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "the fixture's only target-scoped dependency is uuid, which is not a workspace crate and declares no tokio, so skipping those tables changes neither the closure nor any feature check. Walking them is for the shape slate-wasm actually uses \u2014 a workspace crate behind a cfg \u2014 and no fixture has one, because no real crate does either."
+    },
+    {
+      "name": "dev-dependencies are walked as dependencies",
+      "old": "DEP_SECTIONS = (\"dependencies\", \"build-dependencies\")",
+      "new": "DEP_SECTIONS = (\"dependencies\", \"build-dependencies\", \"dev-dependencies\")",
+      "verdict": "caught",
+      "caught_by": [
+        "the real shape passes: exit 1, wanted 0",
+        "an unlisted binary taking a runtime passes: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

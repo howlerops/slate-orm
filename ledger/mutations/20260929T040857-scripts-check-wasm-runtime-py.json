@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-29T04:08:57+00:00",
+  "file": "scripts/check_wasm_runtime.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_wasm_runtime.py"
+  ],
+  "commit": "0648395",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "target-scoped dependency tables are not walked",
+      "old": "        for one in scoped.values():",
+      "new": "        for one in []:",
+      "verdict": "caught",
+      "caught_by": [
+        "a workspace crate behind a cfg is in the closure: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
