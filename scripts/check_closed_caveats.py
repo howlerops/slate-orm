@@ -337,7 +337,26 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "retired-row-only-predicate": (
      "a_predicate_that_selects_only_the_retired_row_touches_nothing",
      "crates/slate-kernel/tests/soft_delete.rs",
- ),}
+ ),
+
+ # --- the grouped round-trip claims, all measured 2026-09-28 ----------------
+ #
+ # `WITNESSED` holds one name per closure, and both closures below are of a
+ # caveat that grouped several claims — four in one case, two in the other.
+ # So each names the *first* of its group and the rest ride on it, which is a
+ # real weakness of the roster and is stated rather than papered over: a
+ # revert that deleted only `clients/typescript/test/roundTrip.test.ts` would
+ # leave `many-to-many-two-reads` present and this guard quiet. What saves it
+ # here is that the other three are each witnessed in their own right by the
+ # closures of the caveats they came from — `ts-round-trips`,
+ # `ts-channel-options` and `go-paging-count`, all above — so the roster does
+ # cover them, just not through this row.
+ "many-to-many-two-reads": (
+     "a_many_to_many_is_two_reads_whatever_the_parent_count",
+     "crates/slate-orm/tests/read_counts.rs",
+ ),
+ "py-round-trips": ("UnaryStreamClientInterceptor", "clients/python/tests/test_round_trips.py"),
+}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
 #:
@@ -389,6 +408,34 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    # The same-day census, 2026-09-29. Six of these say "the rest of the open
+    # caveats are unread", which is answered by every open verdict now
+    # carrying a `checked` date from one of the two census passes — a state of
+    # `docs/caveat-status.json`, which is the file this guard already parses.
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        'closed by the two census passes, which between them read every open caveat against the tree. The artifact is a `checked` date on every open verdict in `docs/caveat-status.json`; a witness pointing at the file this guard parses would be circular',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
+        'closed by the two census passes. Same artifact as the row above: the reading leaves a date per verdict and nothing else, because a caveat that survives a reading changes no file',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        'closed by the two census passes reading the other 105. Same artifact: a `checked` date per open verdict',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        'closed by the two census passes reading the other ninety-one. Same artifact: a `checked` date per open verdict',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        'closed by the second census pass reading exactly those forty-eight. Same artifact: a `checked` date per open verdict',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        'closed by widening the sample to all ninety-nine, which is a count of caveats read and leaves no file of its own. The interval it produces is prose in the census entry',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It says nothing about the `deliberate` verdicts.'):
+        'closed by drawing the first sample from the `deliberate` population and reading it. Fifteen verdicts read, one found reversed; the reading is the artifact and the one reversal is a single field in the tracker, which a witness pointing at the tracker could not distinguish from any other edit',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It still says nothing about the 890 `deliberate` verdicts.'):
+        'closed by drawing the first sample from the `deliberate` population and reading it. Fifteen verdicts read, one found reversed; the reading is the artifact and the one reversal is a single field in the tracker, which a witness pointing at the tracker could not distinguish from any other edit',
     ('2026-09-14-the-testserver-joins-the-workspace.md',
      '`scripts/build_testserver.sh` is now unnecessary — it existe'):
         'closed by deleting `scripts/build_testserver.sh`. `git grep build_testserver` now finds only this entry\'s own sentence, and the entry records the deletion inline',
@@ -1641,6 +1688,39 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-four-say-absent-one-says-present.md',
      'The predicate paths were probed at one shape.'):
         'retired-row-only-predicate',
+
+    # The same-day census, 2026-09-29. Six of its ten closures are about the
+    # tracker's own state and are `=stamped`; these four name code.
+    ('2026-09-28-the-invisible-backlog-part-two.md',
+     'The four unmeasured round-trip claims are grouped here and n'):
+        'many-to-many-two-reads',
+    ('2026-09-28-two-reads-counted-rather-than-argued.md',
+     'It leaves the other two unmeasured claims where they were.'):
+        'py-round-trips',
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        '=stamped',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
+        '=stamped',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        '=stamped',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        '=stamped',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        '=stamped',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        '=stamped',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It says nothing about the `deliberate` verdicts.'):
+        '=read',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It still says nothing about the 890 `deliberate` verdicts.'):
+        '=read',
 }
 
 

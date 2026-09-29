@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-29T10:05:34+00:00",
+  "file": "scripts/check_closed_caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_closed_caveats.py"
+  ],
+  "commit": "92c3437",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the many-to-many read count is no longer the witness",
+      "old": "\"a_many_to_many_is_two_reads_whatever_the_parent_count\",",
+      "new": "\"a_many_to_many_is_two_reads_whatever_the_parent_counts\",",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the Python round-trip counter's stream interceptor is no longer the witness",
+      "old": "\"py-round-trips\": (\"UnaryStreamClientInterceptor\",",
+      "new": "\"py-round-trips\": (\"UnaryStreamClientInterceptorX\",",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "one of the six stamped exemptions loses its WITNESSED row",
+      "old": "    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',\n     'It does not examine the other ninety-one.'):\n        '=stamped',\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "the real roster: every closed verdict names a witness or an exemption",
+        "the real roster: no reason outlives the exemption it explains"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

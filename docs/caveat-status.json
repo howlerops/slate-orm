@@ -8496,9 +8496,9 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-part-two.md",
       "key": "The four unmeasured round-trip claims are grouped here and n",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Batching from a client, a many-to-many's two reads, a nested load's two reads and keyset paging on the wire are all structural claims; examples/deployed is the harness that could measure all four and exercises none of them."
+      "verdict": "closed",
+      "by": "all four measured within the day. A many-to-many's two reads and a nested load's two reads by crates/slate-orm/tests/read_counts.rs; batching from a client and keyset paging on the wire by the three clients' own channel counters \u2014 clients/python/tests/test_round_trips.py, clients/go/slate/related_test.go and clients/typescript/test/roundTrip.test.ts. What the grouping named as one piece of work was four pieces and all four were done.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
@@ -9526,9 +9526,10 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
       "key": "The two grouped findings are named, not fixed.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The scale hole \u2014 a client rendering a decimal from a scale nothing checks \u2014 and the response-head latency \u2014 a streamed read's rows in no measurement anywhere \u2014 are each one piece of work now rather than scattered sentences, and neither is started."
+      "verdict": "narrowed",
+      "by": "closed: the scale hole, which ledger/2026-09-28-the-scale-hole-was-closed-ten-days-ago.md found had been fixed on 2026-09-18 by commit 35d9182, ten days before this caveat grouped it as unstarted. Left: the response-head latency \u2014 a streamed read's rows are in no measurement anywhere, and timing to the response head is still what every client reports.",
+      "checked": "2026-09-29",
+      "residual": "the response-head latency. Every client's duration stops at the response head, so a streamed read's rows are in no measurement anywhere; timing them needs a client-side stopwatch that runs to the last row and a harness with a network under it."
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
@@ -10400,28 +10401,29 @@
       "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
       "key": "The 22 `moment` verdicts in this batch are the weakest.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing re-reads them. 'Nothing was measured' is a moment when there was nothing to measure and an open caveat when there was, and each was judged one at a time by one reader on one day."
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
       "key": "It does not fix any of the 118.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. They are visible and grouped where they repeat; the largest is the decimal scale a client declares and nothing checks, which three entries record independently."
+      "verdict": "narrowed",
+      "by": "closed: the one this caveat names as the largest. A client's declared decimal scale is checked against the server's \u2014 crates/slate-server/src/fingerprint.rs hashes it \u2014 so the sentence 'renders money a hundred times wrong in silence' was already false when it was written, and the five caveats recording that hole are now closed. Left: the rest of the 118, which this entry triaged and did not touch.",
+      "checked": "2026-09-29",
+      "residual": "the other 117. This entry triaged them and fixed none, and the census since has moved verdicts rather than closed gaps."
     },
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
       "key": "Nothing here has seen either ceiling bind.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "narrowed from 'untested end to end' to 'untestable from a client without a knob nobody should ship'. Observing either bind needs a way to block a handler: tonic polls the handler before the timeout's sleep, and concurrency_limit_per_connection releases its permit when the response future resolves, which for a streaming RPC is before any row is read."
     },
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
       "key": "The streaming observation is read, not measured.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "that tower's permit is released when the response future resolves is read off its shape and tonic's use of it, not instrumented. It is consistent with the timeout result \u2014 both follow from a streaming handler returning before its rows do \u2014 and consistency is not a measurement."
     },
     {
@@ -10456,30 +10458,30 @@
     {
       "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
       "key": "It does not re-read the other 113 open caveats against the t",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "five of them were false and that was found by accident, twice removed. The population they came from has not been re-examined, and nothing counts how many more were overtaken by work on their own day."
+      "verdict": "closed",
+      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
       "key": "Nothing stops the fourth time.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "the habit this wants \u2014 when a caveat says a thing is unbuilt, grep for it before writing the verdict \u2014 is a habit, and the three wrong verdicts were written by somebody who would have said they had it. No guard is proposed, because matching a prose caveat to the commit that closed it is the existence-not-aptness problem ledger/2026-09-26-the-citation-nobody-could-follow.md already records."
     },
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
       "key": "It does not measure `max_concurrent_requests` binding.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. The per-connection claim rests on the name of the tonic method called, which is a reading. Demonstrating it needs two connections and a handler that blocks on command, and the node ships no such handler \u2014 the same wall crates/slate-serverd/tests/ceilings.rs hit."
     },
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
       "key": "It does not re-read the rest of the open caveats.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The open population has not been re-examined against the tree; five were found false by accident and four more survived a grep, which is evidence about those four only. Deliberately phrased without a count \u2014 the four caveats closed in this same commit were progress markers, false the moment the next batch landed."
+      "verdict": "closed",
+      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
@@ -10490,9 +10492,9 @@
     {
       "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
       "key": "It reads eleven of 116, and changes four.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The remaining open caveats are unexamined, and the eleven read here were picked for being cheap to check, which is a biased sample of the population."
+      "verdict": "closed",
+      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
@@ -10512,7 +10514,7 @@
       "key": "It checks one claim, not the class.",
       "verdict": "open",
       "by": "nothing yet. Whether any other entry states something a later commit reversed is unexamined, and that count is what would decide whether a forward pointer is worth its cost.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-four-entries-that-were-true-when-they-were-written.md",
@@ -10525,15 +10527,15 @@
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
       "key": "It does not measure a round trip.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. examples/deployed is where a network round trip would be measured and it does not exercise a relation load; it needs MinIO, which this container does not have."
     },
     {
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
       "key": "It leaves the other two unmeasured claims where they were.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Batching from a client and keyset paging on the wire are claims about a client, so an instrument inside slate-orm cannot reach them; a per-connection request count the test could read is the cheaper design and is not built."
+      "verdict": "closed",
+      "by": "ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md and the two entries before it. Batching from a client and keyset paging on the wire are both counted at each client's own channel, in all three languages \u2014 which is exactly the instrument this caveat said an in-process counter could not reach.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
@@ -10553,7 +10555,7 @@
       "entry": "2026-09-28-the-port-allocator-runs-in-a-test-now.md",
       "key": "It does not remove the duplicate.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. examples/batchbench/run.sh carries its own copy of the allocator. Extracting a shared Python module under scripts/ for both to shell out to is the fix and is rejected in the entry as larger than this change; the guard covers both copies meanwhile."
     },
     {
@@ -10567,14 +10569,14 @@
       "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
       "key": "It does not establish when the handler pends.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. Core count, tokio's scheduler under load, socket readiness and timer resolution are all candidates and none was investigated; the limits page's advice is conservative because of it."
     },
     {
       "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
       "key": "It does not check the other measurements from this session f",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. crates/slate-orm/tests/read_counts.rs counts calls rather than timing and has no race of this kind, but no other single-machine number in the ledger was re-examined for whether it would reverse on a second machine."
     },
     {
@@ -10587,9 +10589,9 @@
     {
       "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
       "key": "It does not examine the other ninety-one.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Twenty-five of 116 have been read adversarially; the rest carry a verdict and a date and nobody has tried to falsify them."
+      "verdict": "closed",
+      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
@@ -10609,9 +10611,9 @@
     {
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
       "key": "It reads twelve, so the interval is wide.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. 0/12 bounds the rate below about 22% and no lower; forty would bring it to about 7%, and the seed is recorded so that is a continuation rather than a fresh sample."
+      "verdict": "closed",
+      "by": "the census read all ninety-nine, not forty: 4/99, 95% Clopper-Pearson [1.1%, 10.0%], recorded in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. That is tighter than the ~7% this caveat named as the target.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
@@ -10623,23 +10625,23 @@
     {
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
       "key": "It says nothing about the `deliberate` verdicts.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. 889 deliberate verdicts and no sample has ever been drawn from them; a decision that has stopped being defensible looks exactly like one that has not."
+      "verdict": "closed",
+      "by": "ledger/2026-09-28-the-first-sample-of-the-deliberate-verdicts.md, which drew fifteen deliberate verdicts and found one reversed. Something has now been said about that population; that fifteen is not a rate is carried separately, as that entry's own open caveat.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
       "key": "It leaves forty-eight of the ninety-nine unread",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The shuffle order says which they are, and fifteen of the 39 read here were settled by a grep returning nothing rather than by reading a function, so the coverage is less even than the count suggests."
+      "verdict": "closed",
+      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
       "key": "It still says nothing about the 890 `deliberate` verdicts.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. They outnumber the open verdicts seven to one and no sample has ever been drawn from them; this is the third entry to say so without doing it."
+      "verdict": "closed",
+      "by": "ledger/2026-09-28-the-first-sample-of-the-deliberate-verdicts.md, which drew fifteen deliberate verdicts and found one reversed. Something has now been said about that population; that fifteen is not a rate is carried separately, as that entry's own open caveat.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
@@ -10652,14 +10654,14 @@
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
       "key": "One in fifteen is not a rate.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. The interval around 1/15 runs from about 0.2% to 30%. What is established is that the population contains at least one false verdict, not how many."
     },
     {
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
       "key": "It does not check the 833 others.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. Fifteen per pass is fifty-six passes. The version that scales is a deliberate verdict carrying the paths its reasoning depends on, with a guard reporting when one changed since the verdict's date, and it is unbuilt."
     },
     {
@@ -10673,7 +10675,7 @@
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
       "key": "It leaves the 833 unsampled verdicts unsampled",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet, and one fewer idea than an hour ago. The only method known to work on that population is reading it, at fifteen per pass."
     },
     {
@@ -10687,7 +10689,7 @@
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
       "key": "The three-of-twenty-three verification is thin.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. Three shows the flags are not obviously stale and does not show the other twenty are sound; twenty more reads would price the flagged stratum, and this entry argues they are better spent at random."
     },
     {
@@ -10701,7 +10703,7 @@
       "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
       "key": "It says nothing about latency or bytes.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. examples/deployed is where a network round trip would be timed and it does not exercise paging; the README's 495-against-5 figure is still the only measurement of what a page reads from the store."
     },
     {
@@ -10729,14 +10731,14 @@
       "entry": "2026-09-28-the-go-client-was-already-counting.md",
       "key": "It does not check that the three agree.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. Each client is measured against its own expectation; the conformance runner compares answers rather than request counts, which is the distinction dialRecording's comment draws about why counting was needed."
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "It still says nothing about latency or bytes.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. Inherited unchanged from 2026-09-28-round-trips-counted-at-the-clients-channel.md: examples/deployed is where a network round trip would be timed, it needs MinIO, and it does not exercise paging."
     },
     {
@@ -10750,7 +10752,7 @@
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "No conformance case compares the three counts against each o",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. examples/explorer/run.sh --conformance compares the three SDKs' answers; none of its cases looks at how many requests an SDK sent, and each client's count lives in its own suite."
     },
     {
@@ -10764,7 +10766,7 @@
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "Nothing checks that a new client transport keeps this door.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. The three clients expose the channel three different ways (channel=, ...grpc.DialOption, ChannelOptions) and no guard fails if a fourth arrives without one; the witness roster catches removal of TypeScript's, not a future client's absence."
     },
     {
@@ -10778,14 +10780,14 @@
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
       "key": "The census is of `open` only.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. 895 deliberate verdicts, sampled once at 15 with 1 false, and no cheap route into them has survived measurement \u2014 the path-dependency flag and the citation flag were both measured and withdrawn today."
     },
     {
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
       "key": "Nothing acts on the cause this entry identifies.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-29",
       "by": "nothing yet. The mechanical version was measured here and flags 65 of 193 to find 4, with recall 2 of 3; what is left is a convention in ledger/README.md, which is not a check."
     },
     {
@@ -10794,6 +10796,41 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-28",
       "by": "a git grep returning nothing over every place a thing could live is the right instrument for 'nothing does X', and the alternative \u2014 reading every candidate file for each of twenty-two caveats \u2014 costs more than the census is worth. The weakness is named rather than removed, as the previous census entry named it."
+    },
+    {
+      "entry": "2026-09-29-the-population-the-census-excluded.md",
+      "key": "It leaves the twenty-one that held.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: it is a census, not a fix, and each of the twenty-one is already carried as its own open verdict with its own `by`. Recording a twenty-second caveat over them would put the same debt on the backlog twice \u2014 which is the exact failure this entry documents, a summary restating claims sourced elsewhere and then going stale on its own."
+    },
+    {
+      "entry": "2026-09-29-the-population-the-census-excluded.md",
+      "key": "It does not read the same-day caveats of any other day.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. 2026-09-28 was picked because the census had just excluded it. Whether 36% is a property of same-day caveats or of that one busy day is untested, over roughly two hundred entries."
+    },
+    {
+      "entry": "2026-09-29-the-population-the-census-excluded.md",
+      "key": "It does not touch the `narrowed` verdicts.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. Twenty-seven narrowed verdicts carry a `checked` date of 2026-09-26 or 2026-09-27, older than any open verdict, and a residual goes stale the way a caveat does."
+    },
+    {
+      "entry": "2026-09-29-the-population-the-census-excluded.md",
+      "key": "The \"summary entries go stale fastest\" claim rests on two in",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. Two data points in one subject on one day. Testing it means counting what fraction of stale caveats across the ledger sit in entries that restate a claim sourced elsewhere."
+    },
+    {
+      "entry": "2026-09-29-the-population-the-census-excluded.md",
+      "key": "The rate comparison is between two populations that were rea",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. A later session re-reading the same thirty-three would be the independent second reading, and none has. What limits the alternative explanation is stated in the entry: the bias would have to run the other way to produce this result."
     }
   ]
 }
