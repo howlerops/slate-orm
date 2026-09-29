@@ -66,6 +66,14 @@ in `ledger/2026-09-29-every-guard-now-has-one.md` — but the workflow as a
 workflow is untested, which is the thing its own header says is worth
 distrusting. The first `workflow_dispatch` is the test.
 
+> **Tried, and refused, within the hour.** This session attempted the dispatch
+> — `POST /repos/howlerops/slate-orm/actions/workflows/mutations.yml/dispatches`
+> — and got `403 Resource not accessible by integration`. The token this
+> container holds can read runs and logs and cannot start one. So the button
+> works for a person on any branch and does not work for the agent that wrote
+> it, which is a sharper version of the caveat below rather than a softer one:
+> the workflow is untested *and* the party most likely to test it cannot.
+
 ## What this does not do
 
 **It has never fired, and the scheduled half cannot until this is on `main`.**

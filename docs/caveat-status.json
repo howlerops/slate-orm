@@ -11848,8 +11848,10 @@
     {
       "entry": "2026-09-29-a-weekly-run-and-a-button.md",
       "key": "It has never fired, and the scheduled half cannot until this",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "attempted and refused: a workflow_dispatch from this container returns 403 Resource not accessible by integration, so the token can read runs and not start one. A person on any branch can press it; the agent that wrote it cannot.",
+      "residual": "the workflow has still never executed, and nothing in this container can make it; the cron half additionally waits on a merge to main"
     },
     {
       "entry": "2026-09-29-a-weekly-run-and-a-button.md",
