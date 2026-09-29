@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-29T08:15:33+00:00",
+  "file": "crates/slate-server/src/auth.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_secret_types.py"
+  ],
+  "commit": "96217fd",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": []
+}

@@ -2043,14 +2043,20 @@ three.
 | wide key range | 50,000 | 7.1 | 10 | 5,000 |
 | full scan | 200,000 | 26.0 | 20 – 21 | **9,524 – 10,000** |
 
-<!-- not a cost-model claim -->
-
 **Both constants hold.** The decisive arm is the forced index scan, which does
 400 primary-key reads and served **408 GETs in every one of the three runs** —
-1.02 requests per row, against `POINT_READ_COST = 1.0`. The full scan returns
-9,524–10,000 rows per request, against `SCAN_ROW_COST`'s 8,000; that is inside
-the 8,000–10,526 band already recorded above, and `SCAN_ROW_COST` is left
-alone for the reason given there.
+1.02 requests per row, against `POINT_READ_COST = 1.0`.
+
+<!-- not a cost-model claim -->
+
+The full scan returns 9,524–10,000 rows per request, against `SCAN_ROW_COST`'s
+8,000; that is inside the 8,000–10,526 band already recorded above, and
+`SCAN_ROW_COST` is left alone for the reason given there. The figure is a
+measurement of this run, not an assertion about `1 / SCAN_ROW_COST`, which is
+why it carries the marker — and why it is in a paragraph of its own: the marker
+covers a whole paragraph, so leaving it joined to the sentence above would take
+`POINT_READ_COST = 1.0` out of the guard as well, which is exactly what it did
+until a mutation said so.
 
 **The point-get row is warm-up, not the cost of a point read.** It is the
 first query issued against a freshly loaded store, so it pays for the manifest

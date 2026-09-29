@@ -11665,8 +11665,10 @@
     {
       "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
       "key": "Twenty guards still have no real-tree mutation.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-a-guard-whose-roster-was-itself.md: eight of twenty-seven now, and the two added found two defects -- a guard whose roster was itself, and one whose pattern matched a mention",
+      "residual": "eighteen remain, and they include every substantial one: check_handlers, check_write_paths, check_secret_types, check_site_claims"
     },
     {
       "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
@@ -11690,6 +11692,38 @@
     {
       "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
       "key": "Only `docs/` is in scope.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "Eighteen guards still have no real-tree mutation.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "Nothing re-runs any real-tree mutation, and this entry adds ",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "The self-skip is by filename.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "`PINNED` matches any `@v<digit>` token.",
+      "verdict": "narrowed",
+      "by": "comments are stripped before PINNED is applied, which removes the most likely source -- a version quoted in prose; the two it finds in the one real installer are both the Go tools it means",
+      "residual": "a live non-Go version-pinned string in a file that also runs `go install` would read as a pinned Go tool; nothing in the tree does today",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "The cost-prose marker's granularity is unchanged.",
       "verdict": "open",
       "checked": "2026-09-29"
     }

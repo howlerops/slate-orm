@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-29T08:23:17+00:00",
+  "file": "scripts/check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "96217fd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a bare mention of GOTOOLCHAIN counts as a decision again",
+      "old": "DECIDES = re.compile(r\"\"\"GOTOOLCHAIN[\"']?\\]?\\s*[:=]\"\"\")",
+      "new": "DECIDES = re.compile(r\"GOTOOLCHAIN\")",
+      "verdict": "caught",
+      "caught_by": [
+        "GOTOOLCHAIN named only in a docstring is not a decision"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
