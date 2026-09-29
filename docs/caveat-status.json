@@ -10233,9 +10233,9 @@
     {
       "entry": "2026-09-21-refusing-a-view-everywhere-else-is-free.md",
       "key": "It does not check the property it relies on.",
-      "verdict": "open",
-      "by": "nothing fails if a future Catalog gains a second name-to-TableDef lookup a view could satisfy. check_handlers.py rule 1 covers the handlers and not the catalog; the guard is writable and was not written.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/check_handlers.py rule 10: every public Catalog method whose return type mentions TableDef is listed in HANDS_OUT_A_TABLE, and table_by_name missing from that set is its own failure. The caveat declined the guard because there was no view to leak; views shipped in F5b/F5c. Three mutations of the real catalog.rs caught, six of the guard caught. See ledger/2026-09-29-the-empty-room-has-furniture-now.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-refusing-a-view-everywhere-else-is-free.md",

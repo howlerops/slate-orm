@@ -779,6 +779,19 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "pub const COMPARISONS:",
      "crates/slate-sql/src/sql.rs",
  ),
+
+ # --- the empty room has furniture now, 2026-09-29 --------------------------
+ #
+ # The view design rests on `Catalog::table_by_name` being the only public
+ # name-to-`TableDef` lookup, and rule 10 is what holds it. The needle is the
+ # roster rather than a rule number or a test name: the rule's whole content
+ # *is* the roster, a renumbering would go stale, and a test name would
+ # survive the rule being pointed at nothing. Occurs once in the guard and
+ # once in its tests, so the path pins which.
+ "catalog-lookup-roster": (
+     "HANDS_OUT_A_TABLE = {",
+     "scripts/check_handlers.py",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -976,6 +989,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
+     'It does not check the property it relies on.'): 'catalog-lookup-roster',
     ('2026-09-21-contains-in-the-sql-front-end.md',
      'The SQL operator list has the weakness the wire\'s had.'):
         'sql-comparison-vocabulary',

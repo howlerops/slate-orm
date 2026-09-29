@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-29T22:36:10+00:00",
+  "file": "crates/slate-schema/src/catalog.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_handlers.py"
+  ],
+  "commit": "84a441f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a second public name-to-table lookup joins the catalog",
+      "old": "    /// Every table in the catalog.\n    #[must_use]\n    pub fn tables(&self) -> &[TableDef] {",
+      "new": "    /// Every table in the catalog.\n    #[must_use]\n    pub fn find_named(&self, name: &str) -> Option<&TableDef> {\n        self.tables.iter().find(|t| t.name() == name)\n    }\n\n    #[must_use]\n    pub fn tables(&self) -> &[TableDef] {",
+      "verdict": "caught",
+      "caught_by": [
+        "check_handlers: crates/slate-schema/src/catalog.rs: `Catalog::find_named` is public and hands out a `TableDef`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a public getter hands out the whole name mapping",
+      "old": "    /// Every foreign key pointing at `parent`, with the table that declares it.",
+      "new": "    #[must_use]\n    pub fn by_name(&self) -> BTreeMap<&str, &TableDef> {\n        BTreeMap::new()\n    }\n\n    /// Every foreign key pointing at `parent`, with the table that declares it.",
+      "verdict": "caught",
+      "caught_by": [
+        "check_handlers: crates/slate-schema/src/catalog.rs: `Catalog::by_name` is public and hands out a `TableDef`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the anchor `table_by_name` is renamed away",
+      "old": "    pub fn table_by_name(&self, name: &str) -> Option<&TableDef> {",
+      "new": "    pub fn lookup_named(&self, name: &str) -> Option<&TableDef> {",
+      "verdict": "caught",
+      "caught_by": [
+        "check_handlers: `Catalog::table_by_name` is not among the 4 public method(s) returning a `TableDef` in crates/slate-schema/src/catalog.rs, so rule 10 is measuring a roster against an anchor that is gone. It was renamed or removed; either way every other entry's reason referred to it."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

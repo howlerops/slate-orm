@@ -1,0 +1,92 @@
+{
+  "at": "2026-09-29T22:36:41+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "84a441f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "rule 10 keys on the whole signature, not the return type",
+      "old": "            if arrow and \"TableDef\" in returns:",
+      "new": "            if \"TableDef\" in \" \".join(signature):",
+      "verdict": "caught",
+      "caught_by": [
+        "a handler that authorises before fingerprinting passes",
+        "a fingerprint whose table arrives already authorised passes",
+        "a tree with no authenticators needs no roster",
+        "a handler that authorises its inputs first passes",
+        "a function taking a catalog but no request is not a converter",
+        "a converter holding a context can check for itself",
+        "one converter delegating to another is not a handler",
+        "a handler that authenticates passes, even with no table to authorise"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the scan stops at the first closing brace again",
+      "old": "            inside = False\n            signature = []\n            continue",
+      "new": "            break",
+      "verdict": "caught",
+      "caught_by": [
+        "a lookup in a second `impl Catalog` block is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the anchor branch settles for any method called `table`",
+      "old": "    elif \"table_by_name\" not in handing_out:",
+      "new": "    elif \"table\" not in handing_out:",
+      "verdict": "caught",
+      "caught_by": [
+        "a renamed `table_by_name` fails rather than passing"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires branch tests for None rather than empty",
+      "old": "    if not handing_out:",
+      "new": "    if handing_out is None:",
+      "verdict": "caught",
+      "caught_by": [
+        "a catalog with no public accessor at all fails, not passes",
+        "no catalog file at all fails, not passes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the unrostered difference is taken the other way round",
+      "old": "        for name in sorted(found - set(HANDS_OUT_A_TABLE))",
+      "new": "        for name in sorted(set(HANDS_OUT_A_TABLE) - found)",
+      "verdict": "caught",
+      "caught_by": [
+        "a second lookup taking a name is reported",
+        "a lookup that takes no name and returns the whole mapping is reported",
+        "a lookup in a second `impl Catalog` block is reported",
+        "a signature wrapped across lines is still read"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a private method counts as public surface",
+      "old": "PUBLIC_METHOD = re.compile(r\"^\\s*pub(?:\\(crate\\))?\\s+(?:const\\s+|async\\s+)*fn\\s+(\\w+)\")",
+      "new": "PUBLIC_METHOD = re.compile(r\"^\\s*(?:pub(?:\\(crate\\))?\\s+)?(?:const\\s+|async\\s+)*fn\\s+(\\w+)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a private lookup is not the public surface"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

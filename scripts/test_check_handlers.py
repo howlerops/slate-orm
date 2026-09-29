@@ -613,19 +613,75 @@ impl Authenticator for Known {}
 #: `crates/slate-server/src/auth.rs`, a file in *this* tree, against a
 #: `SOURCES` the fixture had replaced. `check_cost_prose.py`'s `main` carries
 #: the same note about `docs` and `readmes`, and this is the third time.
-def workspace(root: pathlib.Path) -> None:
+#: The smallest `impl Catalog` rule 10 can be satisfied by: the four public
+#: methods that hand out a `TableDef` today, and two that take one and hand
+#: back something else.
+#:
+#: `insert` and `from_tables` are here to be *ignored*. They mention `TableDef`
+#: in their signatures and the rule must not roster them, which is the whole
+#: reason it splits on the arrow; a fixture with only the four would pass a
+#: rule keyed on the whole signature just as happily.
+CATALOG = """\
+pub struct Catalog {
+    tables: Vec<TableDef>,
+}
+
+impl Catalog {
+    pub const fn new() -> Self {
+        Self { tables: Vec::new() }
+    }
+
+    pub fn from_tables<I: IntoIterator<Item = TableDef>>(tables: I) -> Result<Self> {
+        Ok(Self::new())
+    }
+
+    pub fn insert(&mut self, table: TableDef) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn table(&self, id: TableId) -> Option<&TableDef> {
+        self.tables.iter().find(|t| t.id() == id)
+    }
+
+    pub fn table_by_name(&self, name: &str) -> Option<&TableDef> {
+        self.tables.iter().find(|t| t.name() == name)
+    }
+
+    pub fn tables(&self) -> &[TableDef] {
+        &self.tables
+    }
+
+    pub fn referencing(&self, parent: TableId) -> Vec<(&TableDef, &ForeignKeyDef)> {
+        Vec::new()
+    }
+}
+"""
+
+
+def workspace(root: pathlib.Path, catalog: str | None = CATALOG) -> None:
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["crates/quiet"]\n'
     )
     src = root / "crates" / "quiet" / "src"
     src.mkdir(parents=True)
     (src / "lib.rs").write_text("pub fn nothing() {}\n")
+    # Every case needs one for the same reason every case needs a manifest:
+    # rule 10 reads a fixed path under `root` rather than the files it is
+    # handed, and its never-fires half fails a run that finds no catalog. On
+    # the first run without this, twelve cases failed naming a temporary
+    # directory — the same shape as the nine that failed when rule 9 arrived,
+    # and the fourth time in this file's history.
+    if catalog is not None:
+        schema = root / "crates" / "slate-schema" / "src"
+        schema.mkdir(parents=True)
+        (schema / "catalog.rs").write_text(catalog)
 
 
 def run(
     body: str | dict[str, str] | None,
     crates: dict[str, str] | None = None,
     inside_crate: str | None = None,
+    catalog: str | None = CATALOG,
 ) -> tuple[int, str]:
     """`crates` adds `crates/<name>/src/lib.rs` files and lists them as members,
     which is the only way to write a case about rule 9.
@@ -637,7 +693,7 @@ def run(
     never a listed member."""
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
-        workspace(root)
+        workspace(root, catalog)
         if crates:
             listed = ['"crates/quiet"'] + [f'"crates/{name}"' for name in crates]
             (root / "Cargo.toml").write_text(
@@ -781,6 +837,141 @@ SCOPE_CASES: list[tuple[str, dict[str, str], int, str]] = [
 ]
 
 
+#: Rule 10's cases: what `crates/slate-schema/src/catalog.rs` may hand out.
+#:
+#: name, the catalog source (`None` for no file at all), the exit code, and
+#: the text the report must carry. The service is always the passing fixture,
+#: so a failure here is rule 10's and no other rule's.
+CATALOG_CASES: list[tuple[str, str | None, int, str]] = [
+    (
+        "the four accessors that exist today are rostered",
+        CATALOG,
+        0,
+        "",
+    ),
+    (
+        # The obvious second resolver, and the one a parameter-keyed rule
+        # would also catch.
+        "a second lookup taking a name is reported",
+        CATALOG.replace(
+            "    pub fn tables(",
+            "    pub fn matching(&self, prefix: &str) -> Vec<&TableDef> {\n"
+            "        Vec::new()\n"
+            "    }\n\n    pub fn tables(",
+        ),
+        1,
+        "`Catalog::matching` is public and hands out a `TableDef`",
+    ),
+    (
+        # The case the rule is keyed on the *return* type for. This method
+        # takes no name at all and is a name-to-table lookup for every caller
+        # that holds the map; a rule looking for `&str` in the parameters
+        # passes it in silence.
+        "a lookup that takes no name and returns the whole mapping is reported",
+        CATALOG.replace(
+            "    pub fn tables(",
+            "    pub fn by_name(&self) -> HashMap<&str, &TableDef> {\n"
+            "        HashMap::new()\n"
+            "    }\n\n    pub fn tables(",
+        ),
+        1,
+        "`Catalog::by_name` is public and hands out a `TableDef`",
+    ),
+    (
+        # A second inherent `impl` block is legal Rust and is where an
+        # accessor added to a long file lands. The first version of the loop
+        # stopped at the first closing brace and never saw this.
+        "a lookup in a second `impl Catalog` block is reported",
+        CATALOG + "\nimpl Catalog {\n"
+        "    pub fn later(&self, name: &str) -> Option<&TableDef> {\n"
+        "        None\n"
+        "    }\n}\n",
+        1,
+        "`Catalog::later` is public and hands out a `TableDef`",
+    ),
+    (
+        # The reason the rule splits on the arrow: both of these mention
+        # `TableDef` and neither hands one back. They are in `CATALOG`
+        # already, so this case is the assertion that the passing fixture is
+        # passing for the right reason rather than for want of a subject.
+        "a method that takes a `TableDef` and returns none is not rostered",
+        CATALOG.replace(
+            "    pub fn table(",
+            "    pub fn absorb(&mut self, other: Vec<TableDef>) -> Result<()> {\n"
+            "        Ok(())\n"
+            "    }\n\n    pub fn table(",
+        ),
+        0,
+        "",
+    ),
+    (
+        "a private lookup is not the public surface",
+        CATALOG.replace(
+            "    pub fn tables(",
+            "    fn hidden(&self, name: &str) -> Option<&TableDef> {\n"
+            "        None\n"
+            "    }\n\n    pub fn tables(",
+        ),
+        0,
+        "",
+    ),
+    (
+        # A wrapped signature. The accumulate-to-the-brace loop exists for
+        # this, and without it the rule reads `pub fn wrapped(` — which has
+        # no arrow — and misses the method entirely.
+        "a signature wrapped across lines is still read",
+        CATALOG.replace(
+            "    pub fn tables(",
+            "    pub fn wrapped(\n"
+            "        &self,\n"
+            "        name: &str,\n"
+            "    ) -> Option<&TableDef> {\n"
+            "        None\n"
+            "    }\n\n    pub fn tables(",
+        ),
+        1,
+        "`Catalog::wrapped` is public and hands out a `TableDef`",
+    ),
+    (
+        "a roster entry for a method that is gone is reported",
+        CATALOG.replace(
+            "    pub fn referencing(&self, parent: TableId) -> Vec<(&TableDef, &ForeignKeyDef)> {\n"
+            "        Vec::new()\n"
+            "    }\n",
+            "",
+        ),
+        1,
+        "HANDS_OUT_A_TABLE lists `referencing`",
+    ),
+    (
+        # The anchor's own never-fires half, separate from the one below: the
+        # file parsed and methods were found, and the sentence rule 10
+        # defends had stopped being about anything.
+        "a renamed `table_by_name` fails rather than passing",
+        CATALOG.replace("pub fn table_by_name(", "pub fn lookup(").replace(
+            "    pub fn table(&self, id: TableId) -> Option<&TableDef> {",
+            "    pub fn table(&self, id: TableId) -> Option<&TableDef> {",
+        ),
+        1,
+        "is not among the",
+    ),
+    (
+        "a catalog with no public accessor at all fails, not passes",
+        "pub struct Catalog {\n    tables: Vec<TableDef>,\n}\n"
+        "\nimpl Catalog {\n    pub const fn new() -> Self {\n"
+        "        Self { tables: Vec::new() }\n    }\n}\n",
+        1,
+        "so rule 10 checked nothing",
+    ),
+    (
+        "no catalog file at all fails, not passes",
+        None,
+        1,
+        "so rule 10 checked nothing",
+    ),
+]
+
+
 def main() -> int:
     failed = 0
     for name, body, expected, wanted in CASES:
@@ -799,6 +990,16 @@ def main() -> int:
         if served:
             crates = {served: "pub fn nothing() {}\n"}
         code, said = run("", crates=crates, inside_crate=served)
+        ok = code == expected and (not wanted or wanted in said)
+        failed += not ok
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok:
+            print(f"        expected exit {expected} and {wanted!r}, got {code}")
+            for line in said.splitlines():
+                print(f"      {line}")
+
+    for name, catalog, expected, wanted in CATALOG_CASES:
+        code, said = run("", catalog=catalog)
         ok = code == expected and (not wanted or wanted in said)
         failed += not ok
         print(f"{'ok  ' if ok else 'FAIL'}  {name}")
@@ -827,7 +1028,7 @@ def main() -> int:
     if not ok:
         print(f"        exit {code}: {said}")
 
-    total = len(CASES) + len(SCOPE_CASES) + 1
+    total = len(CASES) + len(SCOPE_CASES) + len(CATALOG_CASES) + 1
     print(f"\n{total - failed} passed, {failed} failed")
     return 1 if failed else 0
 
