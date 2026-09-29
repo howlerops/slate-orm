@@ -138,6 +138,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "carries no allocator of its own",
      "scripts/test_free_ports.py",
  ),
+ # --- the image, built by CI rather than asserted, 2026-09-29
+ #
+ # The job, not a test file: what settles the caveat is that the Dockerfile is
+ # built and started on every push, and the step that would go missing if
+ # somebody trimmed the job is the one that runs the image.
+ "image-built-in-ci": (
+     "It starts inside the image, and validates a configuration",
+     ".github/workflows/ci.yml",
+ ),
  "no-adversarial-floor": (
      "candidate = draw(LOW, below - 1)",
      "scripts/free_ports.py",
@@ -2245,6 +2254,8 @@ WITNESSED: dict[tuple[str, str], str] = {
      'It does not remove the duplicate.'): 'one-allocator',
     ('2026-09-28-the-port-allocator-runs-in-a-test-now.md',
      'The 10050 floor is chosen, not found.'): 'no-adversarial-floor',
+    ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
+     'The image has never been built.'): 'image-built-in-ci',
 }
 
 

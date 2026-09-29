@@ -421,6 +421,13 @@ jobs:
       # deliberately not here.
       - run: python3 scripts/check_mutations_roster.py
       - run: python3 scripts/test_check_mutations_roster.py
+      # The release's own first job runs this too, with the tag. Here it is
+      # the tree against itself, which is the half that can go wrong on an
+      # ordinary commit — somebody bumping `package.json` and not `Cargo.toml`
+      # finds out now rather than on the day a tag publishes the older number
+      # to a registry that will not let it be reused.
+      - run: python3 scripts/check_versions.py
+      - run: python3 scripts/test_check_versions.py
 
   quickstarts:
     name: the landing page's code

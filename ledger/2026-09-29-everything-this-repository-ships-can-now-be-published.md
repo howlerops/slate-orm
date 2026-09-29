@@ -163,6 +163,18 @@ module tag and the two registry uploads run at all. That is unavoidable — a ta
 that publishes cannot be rehearsed — and it is why as much as possible was
 moved into `ci.yml`, where it runs on every push.
 
+~~**The image has never been built.** The `COPY` set resolves and the workspace
+is `--locked`-satisfiable, which is a real check and is not the same as an
+image. `rust:1-bookworm` may not have the toolchain the workspace's
+`rust-version = "1.90"` wants; the distroless base may lack something
+`slate-serverd` links; `strip` may not be on the build image.~~ **Answered by
+the first push**, which is the soonest anything here could find out: CI run
+496, twenty-three jobs green, the `container image` job building the file,
+running the image against the quickstart page's TOML with `--check`, and
+confirming the base still has no shell. All three guesses were wrong in the
+comfortable direction. It runs on every push, so this is re-taken rather than
+asserted.
+
 **The image has never been built.** The `COPY` set resolves and the workspace
 is `--locked`-satisfiable, which is a real check and is not the same as an
 image. `rust:1-bookworm` may not have the toolchain the workspace's
@@ -171,6 +183,20 @@ image. `rust:1-bookworm` may not have the toolchain the workspace's
 show as a red `image` job on the first push of this branch, which is the
 soonest anything here can find out, and none of them is a guess this container
 could have settled.
+
+> The paragraph above is the original, kept standing under its own strike —
+> the convention three other entries here use. It was true for about forty
+> minutes and it is the honest record of what was and was not known when the
+> work was pushed, which is the part worth keeping. The tracker reads this
+> copy; the strike says what happened to it.
+
+**Nothing checks that `check.sh` and `ci.yml` cover the same guards.**
+`test_check_sh.py` reads one direction — every workflow step is in the script
+or rostered as one it cannot run — and nothing reads the other. Found the same
+way the line above was: `check_versions.py` was added to `check.sh` and not to
+`ci.yml`, and it took reading run 496's step list to notice that the release's
+new guard was not running in CI at all. It is there now; the missing rule is
+not.
 
 **`latest` points at a prerelease.** Deliberate — there are no stable releases
 and a `latest` that resolves to nothing is worse than one that resolves to a

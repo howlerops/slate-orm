@@ -12225,8 +12225,9 @@
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
       "key": "The image has never been built.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "CI run 496 on this branch, all twenty-three jobs green. The container image job built the Dockerfile, ran the image against the quickstart page's TOML with --check, and confirmed the base still has no shell -- every step reported success, so none of the three things this caveat named as unknown (the toolchain in rust:1-bookworm against the workspace's rust-version, what the distroless base lacks, whether strip is on the build image) is unknown any more. The job is in .github/workflows/ci.yml and runs on every push, so the answer is re-taken rather than asserted.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
@@ -12278,6 +12279,12 @@
     {
       "entry": "2026-09-29-three-could-be-anothers-counted.md",
       "key": "The `NOT IN` work is named, not done.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
+      "key": "Nothing checks that `check.sh` and `ci.yml` cover the same g",
       "verdict": "open",
       "checked": "2026-09-29"
     }
