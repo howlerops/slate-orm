@@ -373,6 +373,12 @@ jobs:
       # a schema the server does not have, and no type system sees it.
       - run: python3 scripts/check_proto_copies.py
       - run: python3 scripts/test_check_proto_copies.py
+      # A client with no way to pass interceptors, TLS or keepalive through
+      # to its channel is one a caller cannot instrument or secure. The
+      # TypeScript client shipped that way for months, and the roster here is
+      # read off `clients/` so a fourth arriving without a door is seen.
+      - run: python3 scripts/check_transport_door.py
+      - run: python3 scripts/test_check_transport_door.py
 
   quickstarts:
     name: the landing page's code

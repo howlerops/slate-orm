@@ -10766,9 +10766,9 @@
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "Nothing checks that a new client transport keeps this door.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The three clients expose the channel three different ways (channel=, ...grpc.DialOption, ChannelOptions) and no guard fails if a fourth arrives without one; the witness roster catches removal of TypeScript's, not a future client's absence."
+      "verdict": "closed",
+      "by": "scripts/check_transport_door.py, run by CI: the roster is read off clients/, so a fourth client is seen arriving, and each door must also be walked through by its demo adapter",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
@@ -10942,9 +10942,9 @@
     {
       "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
       "key": "Nothing still checks that a fourth client arrives with a tra",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet, and one client wider than before: the TypeScript client re-exports grpc, which is a third way to reach a channel and not a guard. No check fails if a fourth client arrives exposing none."
+      "verdict": "closed",
+      "by": "scripts/check_transport_door.py, run by CI: the roster is read off clients/, so a fourth client is seen arriving, and each door must also be walked through by its demo adapter",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
@@ -11140,6 +11140,34 @@
       "key": "`observing.rs`'s fix is latent-only.",
       "verdict": "deliberate",
       "by": "this entry: the mutation that demonstrates the anchoring lives where the count is ten; duplicating it where the counts are 2 and 1 would demonstrate nothing a prefix match could not satisfy",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "It does not check that an interceptor installed through a do",
+      "verdict": "deliberate",
+      "by": "this entry: the conformance runner's round-trip case compares three counts and disagrees if one adapter's counter is inert, which is the other half of the same claim and lives where it can actually run a client",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "A fourth client can satisfy it with a door and a fake walker",
+      "verdict": "deliberate",
+      "by": "this entry: the rule makes the omission loud rather than impossible, which is the bargain every grep-shaped guard in scripts/ strikes",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "The three patterns are three hand-written regexes.",
+      "verdict": "deliberate",
+      "by": "this entry: a renamed signature turns the rule red for the right reason, and MANIFESTS reports an unclassifiable directory rather than skipping it",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "Nothing checks the adapters are the only callers.",
+      "verdict": "deliberate",
+      "by": "this entry: a per-client test would be more robust and would not exist for the language nobody has written, which is the client this rule is for",
       "reviewed": "2026-09-29"
     }
   ]

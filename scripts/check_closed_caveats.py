@@ -411,6 +411,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "open-streams-unbounded": (
      "open_streams_are_not_bounded_by_the_concurrency_limit",
      "crates/slate-serverd/tests/ceilings.rs",
+ ),
+
+ # --- a door for the fourth client, 2026-09-29 --------------------------------
+ "transport-door": (
+     "a fourth client with no door fails and names it",
+     "scripts/test_check_transport_door.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -605,6 +611,12 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # One guard closes both readings of the same gap: the door the third
+    # client was missing, and the door a fourth would be.
+    ('2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md',
+     'Nothing checks that a new client transport keeps this door.'): 'transport-door',
+    ('2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md',
+     'Nothing still checks that a fourth client arrives with a tra'): 'transport-door',
     # One test closes two readings: that the permit is released before a row
     # is read, and that open streams are therefore bounded by nothing.
     ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',
