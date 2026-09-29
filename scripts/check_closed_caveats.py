@@ -402,6 +402,18 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It says nothing about the `deliberate` verdicts.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It still says nothing about the 890 `deliberate` verdicts.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-first-sample-of-the-deliberate-verdicts.md',
+     'One in fifteen is not a rate.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-census-finished-and-three-more-were-already-answered.md',
+     'The census is of `open` only.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
     ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
      'It leaves forty-eight of the ninety-nine unread'):
         'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
@@ -1672,6 +1684,18 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-four-say-absent-one-says-present.md',
      'The predicate paths were probed at one shape.'):
         'retired-row-only-predicate',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It says nothing about the `deliberate` verdicts.'):
+        '=read',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It still says nothing about the 890 `deliberate` verdicts.'):
+        '=read',
+    ('2026-09-28-the-first-sample-of-the-deliberate-verdicts.md',
+     'One in fifteen is not a rate.'):
+        '=read',
+    ('2026-09-28-the-census-finished-and-three-more-were-already-answered.md',
+     'The census is of `open` only.'):
+        '=read',
     ('2026-09-28-the-invisible-backlog-part-two.md',
      'The four unmeasured round-trip claims are grouped here and n'):
         'offset-costs-the-same',

@@ -10624,9 +10624,9 @@
     {
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
       "key": "It says nothing about the `deliberate` verdicts.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. 889 deliberate verdicts and no sample has ever been drawn from them; a decision that has stopped being defensible looks exactly like one that has not."
+      "verdict": "closed",
+      "by": "sixty of the 900 deliberate verdicts are read: 1 of 60 false, 1.67% with a 95% interval of 0.04% to 8.94%, in ledger/2026-09-29-the-deliberate-verdicts-priced.md. The population is not the worse one \u2014 the open verdicts run 4.04% [1.11, 10.02] over the same kind of reading.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
@@ -10638,9 +10638,9 @@
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
       "key": "It still says nothing about the 890 `deliberate` verdicts.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. They outnumber the open verdicts seven to one and no sample has ever been drawn from them; this is the third entry to say so without doing it."
+      "verdict": "closed",
+      "by": "sixty of the 900 deliberate verdicts are read: 1 of 60 false, 1.67% with a 95% interval of 0.04% to 8.94%, in ledger/2026-09-29-the-deliberate-verdicts-priced.md. The population is not the worse one \u2014 the open verdicts run 4.04% [1.11, 10.02] over the same kind of reading.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
@@ -10652,16 +10652,17 @@
     {
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
       "key": "One in fifteen is not a rate.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The interval around 1/15 runs from about 0.2% to 30%. What is established is that the population contains at least one false verdict, not how many."
+      "verdict": "closed",
+      "by": "sixty is. 1/60 = 1.67% [0.04%, 8.94%] exact binomial, continuing the same recorded draw rather than starting a fresh one.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
       "key": "It does not check the 833 others.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Fifteen per pass is fifty-six passes. The version that scales is a deliberate verdict carrying the paths its reasoning depends on, with a guard reporting when one changed since the verdict's date, and it is unbuilt."
+      "verdict": "narrowed",
+      "by": "forty-five more were read, none moved. Sixty of 900 now carry a real reading rather than a stamp.",
+      "checked": "2026-09-29",
+      "residual": "840 of the 900 remain unread, and at the interval's top there would be eighty-three false verdicts among them. Reading is still the only method \u2014 two mechanical routes were measured and withdrawn."
     },
     {
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
@@ -10673,9 +10674,10 @@
     {
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
       "key": "It leaves the 833 unsampled verdicts unsampled",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet, and one fewer idea than an hour ago. The only method known to work on that population is reading it, at fifteen per pass."
+      "verdict": "narrowed",
+      "by": "forty-five of them are sampled. The entry's claim that reading is the only method that works on this population is unchanged and is now the third measurement supporting it.",
+      "checked": "2026-09-29",
+      "residual": "840 of the 900 remain unread, and at the interval's top there would be eighty-three false verdicts among them. Reading is still the only method \u2014 two mechanical routes were measured and withdrawn."
     },
     {
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
@@ -10778,9 +10780,9 @@
     {
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
       "key": "The census is of `open` only.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. 895 deliberate verdicts, sampled once at 15 with 1 false, and no cheap route into them has survived measurement \u2014 the path-dependency flag and the citation flag were both measured and withdrawn today."
+      "verdict": "closed",
+      "by": "the deliberate population has a rate now: sixty of the 900 deliberate verdicts are read: 1 of 60 false, 1.67% with a 95% interval of 0.04% to 8.94%, in ledger/2026-09-29-the-deliberate-verdicts-priced.md. The population is not the worse one \u2014 the open verdicts run 4.04% [1.11, 10.02] over the same kind of reading.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
@@ -10851,6 +10853,34 @@
       "verdict": "open",
       "checked": "2026-09-29",
       "by": "nothing yet. The refusal arrives from the server after the request is encoded and decoded, so the bytes are spent; none of the three clients checks the length before sending."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "840 remain unread.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. Sixty of 900 is a sample; the interval rules out a high rate and not a moderate one, and at 8.9% there would be eighty-three false verdicts among them."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "The sample is of verdicts, not of harm.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "estimating how bad a false verdict would be means reading each one for what depends on it, which is more work than the reading this measures and does not scale any better. The one found was harmless; that is an anecdote and is recorded as one."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "Reading remains the only method.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet, and two guards were designed, measured and withdrawn to establish it. The design that would work needs a `depends` field per verdict and a backfill of 900 rows, each of which is the reading it would replace."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "A verdict read for \"the reasoning still applies\" is read by ",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "thirty of the forty-five have no mechanical subject \u2014 'prose has nothing to mutate', 'an untested path is worse than a refusal' \u2014 and there is nothing to grep for. Naming the weakness is what can be done about it; the alternative is to exclude such verdicts from the sample, which would measure the easy two thirds and report it as the whole."
     }
   ]
 }
