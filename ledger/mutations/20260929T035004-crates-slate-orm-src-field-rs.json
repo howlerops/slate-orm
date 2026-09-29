@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-29T03:50:04+00:00",
+  "file": "crates/slate-orm/src/field.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--test",
+    "money",
+    "--no-fail-fast"
+  ],
+  "commit": "3174583",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the divisor wraps instead of saturating",
+      "old": "let divisor = 10i64.saturating_pow(u32::from(scale));",
+      "new": "let divisor = 10i64.wrapping_pow(u32::from(scale));",
+      "verdict": "caught",
+      "caught_by": [
+        "rendering_is_exact_at_the_schema_s_maximum_scale"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the padding width stops following the scale above four",
+      "old": "            width = usize::from(scale)",
+      "new": "            width = usize::from(scale.min(4))",
+      "verdict": "caught",
+      "caught_by": [
+        "rendering_is_exact_at_the_schema_s_maximum_scale"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

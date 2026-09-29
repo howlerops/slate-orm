@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T03:53:19+00:00",
+  "file": "clients/typescript/src/value.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npm test"
+  ],
+  "commit": "3174583",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "with the class-only assertion, deleting the refusal survives",
+      "old": "  if (!Number.isInteger(scale) || scale < 0) {",
+      "new": "  if (false) {",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "measuring the weakness this run exists to demonstrate: bigint exponentiation throws its own RangeError for a negative or fractional exponent, so asserting the class alone passes with the guard deleted. The tree carries a message match instead; this run is the evidence for why."
+    }
+  ],
+  "restored_clean": true
+}

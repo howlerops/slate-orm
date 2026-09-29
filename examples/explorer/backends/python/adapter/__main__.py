@@ -1395,6 +1395,15 @@ class Adapter:
         (-1250, 3),
         (9223372036854775807, 2),
         (-9223372036854775808, 2),
+        # Above scale 4, which nothing in the demo declares and no row here
+        # reached until the caveat asking for it was taken up. 18 is the
+        # schema's MAX_SCALE: at that scale an i64 has one digit left of the
+        # point, which is why the cap is where it is.
+        (1250, 6),
+        (-75, 9),
+        (1250, 18),
+        (9223372036854775807, 18),
+        (-9223372036854775808, 18),
     )
 
     def render_decimals(self, _session, _body):

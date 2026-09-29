@@ -417,6 +417,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "transport-door": (
      "a fourth client with no door fails and names it",
      "scripts/test_check_transport_door.py",
+ ),
+
+ # --- the decimal renderers above scale four, 2026-09-29 ----------------------
+ "decimal-at-max-scale": (
+     "rendering_is_exact_at_the_schema_s_maximum_scale",
+     "crates/slate-orm/tests/money.rs",
+ ),
+ "negative-scale-refused": (
+     "a scale that is not a non-negative integer is refused",
+     "clients/typescript/test/decimal.test.ts",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -611,6 +621,14 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
+     'Scale above 4 is untested.'): 'decimal-at-max-scale',
+    # The TypeScript test rather than Go's type: a refusal Go makes
+    # unrepresentable leaves nothing to grep for, and this one is the run-time
+    # half that a `git grep` can actually see.
+    ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
+     'The negative-scale divergence is recorded, not resolved.'):
+        'negative-scale-refused',
     # One guard closes both readings of the same gap: the door the third
     # client was missing, and the door a fourth would be.
     ('2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md',

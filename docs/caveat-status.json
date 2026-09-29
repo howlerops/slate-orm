@@ -11054,16 +11054,16 @@
     {
       "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
       "key": "Scale above 4 is untested.",
-      "verdict": "open",
-      "by": "nothing yet, and named as the next row to add: Go computes its divisor in an int64 loop and would overflow silently around scale 19 where Python and TypeScript would not. Not added here because the three would then genuinely disagree and the case would be a bug report rather than a comparison.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-a-negative-scale-is-not-a-scale.md: scales 6, 9 and 18 are in the shared conformance table and in all four suites, and the three SDKs agree on every one. The caveat's stated mechanism was wrong and is withdrawn there: Go is exact through scale 19 and no column can declare 20",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
       "key": "The negative-scale divergence is recorded, not resolved.",
-      "verdict": "open",
-      "by": "nothing yet. Measured: Python's to_string_with_scale raises ValueError, Go's StringWithScale and TypeScript's unitsToString both return '1250'. Two clients clamp on purpose and say so; one raises on purpose and says so. No column declares a negative scale, so nothing on the wire produces one.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-a-negative-scale-is-not-a-scale.md: all four renderers refuse now. Go's argument is a uint8 and TypeScript throws RangeError, joining Rust's u8 and Python's ValueError",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
@@ -11168,6 +11168,41 @@
       "key": "Nothing checks the adapters are the only callers.",
       "verdict": "deliberate",
       "by": "this entry: a per-client test would be more robust and would not exist for the language nobody has written, which is the client this rule is for",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "The Go type change is not mutation-tested, and cannot be.",
+      "verdict": "deliberate",
+      "by": "this entry: a compile-time refusal has no run to observe; the mutation that would show it makes a nonexistent caller compile, not a test fail",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "It does not make `ColumnDef.Scale` a `uint8` in the other tw",
+      "verdict": "deliberate",
+      "by": "this entry: Python's refuses at construction and TypeScript's renderer refuses its own argument, so the field would be a second guard for one thing",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "Nothing refuses a scale above 18 in a renderer.",
+      "verdict": "deliberate",
+      "by": "this entry: the schema refuses it at build time, so no column produces one; a renderer would have to hold MAX_SCALE, which it has no other reason to know",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "The demo UI's `money` is still a fourth renderer and is not ",
+      "verdict": "deliberate",
+      "by": "this entry: nine lines in a browser that is not a slate client, called with a constant scale of 2, so neither divergence it now has is reachable",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "The `-1` and `-2` rows the two clients used to carry are gon",
+      "verdict": "deliberate",
+      "by": "this entry: reintroducing clamping fails the refusal tests, which is the property worth holding; what a clamped output would have been is not",
       "reviewed": "2026-09-29"
     }
   ]

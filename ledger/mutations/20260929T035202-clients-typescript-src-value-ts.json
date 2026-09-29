@@ -1,0 +1,60 @@
+{
+  "at": "2026-09-29T03:52:02+00:00",
+  "file": "clients/typescript/src/value.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npm test"
+  ],
+  "commit": "3174583",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the negative-scale refusal is gone",
+      "old": "  if (!Number.isInteger(scale) || scale < 0) {",
+      "new": "  if (false) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a scale that is not a non-negative integer is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only a non-integer is refused, a negative passes through",
+      "old": "  if (!Number.isInteger(scale) || scale < 0) {",
+      "new": "  if (!Number.isInteger(scale)) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a scale that is not a non-negative integer is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only a negative is refused, a fraction passes through",
+      "old": "  if (!Number.isInteger(scale) || scale < 0) {",
+      "new": "  if (scale < 0) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a scale that is not a non-negative integer is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the padding width stops following the scale above four",
+      "old": "  return `${negative ? \"-\" : \"\"}${whole}.${part.toString().padStart(digits, \"0\")}`;",
+      "new": "  return `${negative ? \"-\" : \"\"}${whole}.${part.toString().padStart(Math.min(digits, 4), \"0\")}`;",
+      "verdict": "caught",
+      "caught_by": [
+        "units render against a scale"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

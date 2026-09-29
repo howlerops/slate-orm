@@ -71,12 +71,28 @@ export const units = (value: bigint | number): Value => ({
  * Render units against a scale, as a decimal string.
  *
  * Mirrors `slate_orm::Units::to_string_with_scale`, and the conformance corpus
- * compares the two. A scale below zero is treated as zero rather than throwing:
- * this is a rendering helper, and a caller who got a scale wrong wants a number
- * they can see is wrong, not an exception in a render path.
+ * compares the two.
+ *
+ * A scale that is not a non-negative integer throws. It used to be clamped to
+ * zero, with a comment saying a caller who got a scale wrong wants a number
+ * they can see is wrong rather than an exception in a render path — which was
+ * the wrong call, because scale zero does not look wrong. The Go client's
+ * `ColumnDef.Scale` comment says it best: a wrong scale "reads the *right*
+ * column and renders every value a power of ten out, for ever, with nothing
+ * anywhere reporting it".
+ *
+ * Rust makes it unrepresentable (`u8`) and Go now does the same (`uint8`);
+ * neither Python nor TypeScript can, so both refuse at run time, Python with
+ * `ValueError` and this with `RangeError`. `uuid()` below already throws for a
+ * wrong length, so this is the idiom of the file rather than a new one. See
+ * `ledger/2026-09-29-a-negative-scale-is-not-a-scale.md` for the four
+ * behaviours that were measured before the side was picked.
  */
 export function unitsToString(value: bigint, scale: number): string {
-  const digits = Math.max(0, Math.trunc(scale));
+  if (!Number.isInteger(scale) || scale < 0) {
+    throw new RangeError(`a scale is a non-negative integer, got ${scale}`);
+  }
+  const digits = scale;
   if (digits === 0) {
     return value.toString();
   }

@@ -395,18 +395,31 @@ the scale never travels, so each client formats against a scale it holds
 locally, and `/api/conditional-update` compares that at exactly one value and
 one scale because that is what `books.price` declares.
 
-Twelve rows, each for something that can only go wrong somewhere else: scale 0
-(no point at all, and the branch where the two halves diverge), a value smaller
-than one whole unit (where the zero padding is the answer and dropping it turns
-`0.05` into `0.5`), a *negative* smaller than one whole unit (`-0.75`, where the
-sign has to survive a whole part that rounds to zero), scales 1, 3 and 4 so
-"pad to two" does not pass, and both i64 extremes, where negating the magnitude
-overflows in two of the three languages.
+Seventeen rows, each for something that can only go wrong somewhere else:
+scale 0 (no point at all, and the branch where the two halves diverge), a value
+smaller than one whole unit (where the zero padding is the answer and dropping
+it turns `0.05` into `0.5`), a *negative* smaller than one whole unit
+(`-0.75`, where the sign has to survive a whole part that rounds to zero),
+scales 1, 3 and 4 so "pad to two" does not pass, and both i64 extremes, where
+negating the magnitude overflows in two of the three languages.
+
+The last five are scales 6, 9 and 18, added because nothing reached above 4 and
+a caveat asked whether the three still agreed up there. 18 is `slate_schema`'s
+`MAX_SCALE`, where an `i64` has one digit left of the point — which is why the
+cap is where it is, and why no row goes higher: a scale of 19 cannot come from
+a column.
+
+**No negative scale, and that is not an omission.** A scale is a `u8` in the
+schema and in two of the four renderers, so a negative one cannot be written
+down in Go at all and would not compile into this table. The other two refuse
+at run time — Python raises `ValueError`, TypeScript throws `RangeError` — and
+a refusal is not a rendering, so it belongs in each client's own suite rather
+than in a table of texts to compare.
 
 Fixed rather than taken from the body, for the reason `/api/nearest` gives: a
 table from the caller would let one adapter be asked a question the other two
-were not. `units` is a string by the 64-bit rule above — two of the twelve do
-not survive a JSON number, and they are the two the table exists for.
+were not. `units` is a string by the 64-bit rule above — four of the seventeen
+do not survive a JSON number, and they are the rows the table exists for.
 
 ### `POST /api/round-trips`
 

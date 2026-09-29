@@ -12,7 +12,7 @@ import (
 // renderedCase is one (units, scale) the three clients must render alike.
 type renderedCase struct {
 	units int64
-	scale int
+	scale uint8
 }
 
 // renderedCases is the shared table. See the Python adapter's `RENDERED` for
@@ -36,6 +36,15 @@ var renderedCases = []renderedCase{
 	{-1250, 3},
 	{math.MaxInt64, 2},
 	{math.MinInt64, 2},
+	// Above scale 4, which nothing in the demo declares and no row here
+	// reached until the caveat asking for it was taken up. 18 is the schema's
+	// MAX_SCALE: at that scale an i64 has one digit left of the point, which
+	// is why the cap is where it is.
+	{1250, 6},
+	{-75, 9},
+	{1250, 18},
+	{math.MaxInt64, 18},
+	{math.MinInt64, 18},
 }
 
 // renderDecimals runs every client's decimal renderer over one shared table.

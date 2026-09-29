@@ -123,12 +123,34 @@ test("units render against a scale", () => {
     // no trouble with it; the case is here so the three clients agree at the
     // end of the range rather than only in the middle.
     [-9223372036854775808n, 2, "-92233720368547758.08"],
-    // A negative scale is a caller's mistake in a render path, and a render
-    // path is the worst place to throw. It reads as 0.
-    [1250n, -1, "1250"],
+    // Scale 18 is the schema's MAX_SCALE, where an i64 has one digit left of
+    // the point. Added because a caveat asked whether the three agreed above
+    // scale 4 and nothing answered it.
+    [1250n, 18, "0.000000000000001250"],
+    [9223372036854775807n, 18, "9.223372036854775807"],
+    [-9223372036854775808n, 18, "-9.223372036854775808"],
   ];
   for (const [value, scale, expected] of cases) {
     assert.equal(unitsToString(value, scale), expected, `${value} at ${scale}`);
+  }
+});
+
+test("a scale that is not a non-negative integer is refused", () => {
+  // It used to clamp to zero, which renders 1250 units as "1250" — a number
+  // that is a power of ten out and does not look wrong. Rust and Go make a
+  // negative scale unrepresentable; this language cannot, so it throws, and
+  // Python raises ValueError for the same reason.
+  //
+  // Matched on the *message*, not on `RangeError`, because asserting the class
+  // alone is vacuous here: `10n ** BigInt(-1)` and `BigInt(1.5)` each throw a
+  // RangeError of their own, so every case below passed with the guard
+  // deleted. Found by mutating it, which is the only way that shows.
+  for (const scale of [-1, -2, 1.5, NaN]) {
+    assert.throws(
+      () => unitsToString(1250n, scale),
+      /a scale is a non-negative integer/,
+      `scale ${scale}`,
+    );
   }
 });
 

@@ -304,6 +304,15 @@ const RENDERED: [bigint, number][] = [
   [-1250n, 3],
   [9223372036854775807n, 2],
   [-9223372036854775808n, 2],
+  // Above scale 4, which nothing in the demo declares and no row here reached
+  // until the caveat asking for it was taken up. 18 is the schema's MAX_SCALE:
+  // at that scale an i64 has one digit left of the point, which is why the cap
+  // is where it is.
+  [1250n, 6],
+  [-75n, 9],
+  [1250n, 18],
+  [9223372036854775807n, 18],
+  [-9223372036854775808n, 18],
 ];
 
 /** The id range `/api/round-trips` owns, clear of every other one. */
