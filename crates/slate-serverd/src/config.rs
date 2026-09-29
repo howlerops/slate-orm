@@ -442,6 +442,33 @@ pub(crate) struct LimitSettings {
     /// Unset means unbounded, which is what shipped.
     #[serde(default)]
     pub(crate) max_concurrent_requests: Option<usize>,
+    /// How many response **streams** may be open at once, across the node.
+    ///
+    /// The other half of the setting above, and a separate one because the
+    /// two bound different things. `max_concurrent_requests` releases its
+    /// permit when the handler returns; every read here is server-streaming,
+    /// so that is before a single row has been sent.
+    /// `ledger/2026-09-29-ten-streams-under-a-limit-of-one.md` measured the
+    /// consequence: ten concurrent reads, all served, against a node
+    /// configured for one. This one's permit rides on the response body and
+    /// comes back when the stream ends or the caller goes away.
+    ///
+    /// **A caller over it is refused, not queued.** `RESOURCE_EXHAUSTED`,
+    /// immediately. A stream is held for as long as its reader likes, so a
+    /// queue in front of one has no deadline, and a client reading `n + 1`
+    /// streams round-robin would wait on a permit only it could release.
+    ///
+    /// Node-wide, one semaphore for the process. Tonic offers
+    /// `max_concurrent_streams`, which is HTTP/2's per-connection setting and
+    /// is the exact scope mistake `max_concurrent_requests` was just fixed
+    /// for; a caller opening a second socket would get a second allowance.
+    ///
+    /// `0` is refused at startup — it would refuse every read — and unset
+    /// means unbounded, which is what shipped. It bounds the *count* of open
+    /// streams and says nothing about how long one may be held or how many
+    /// rows it may carry.
+    #[serde(default)]
+    pub(crate) max_open_streams: Option<usize>,
     /// How long one request may **wait** before it is cancelled — unreliably.
     ///
     /// Not a latency bound, and not a safe thing to set small. It becomes

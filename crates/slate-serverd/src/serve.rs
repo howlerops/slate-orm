@@ -64,6 +64,12 @@ pub(crate) struct Serving {
     pub(crate) grace: Duration,
     /// Requests admitted at once across the node, unset for unbounded.
     pub(crate) concurrency: Option<usize>,
+    /// Response streams open at once across the node, unset for unbounded.
+    ///
+    /// A different thing from `concurrency` and not a finer version of it:
+    /// that one's permit comes back when the handler returns, this one's when
+    /// the body is done. See [`crate::streams`].
+    pub(crate) open_streams: Option<usize>,
     /// How long one request may *wait*, unset for no timeout. Not a latency
     /// bound — see the setting it comes from in [`crate::config`].
     pub(crate) request_timeout: Option<Duration>,
@@ -96,6 +102,7 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     let Serving {
         grace,
         concurrency,
+        open_streams,
         request_timeout,
         observing,
     } = serving;
@@ -202,6 +209,22 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
             // the type name, which is why the old one read as correct.
             .layer(tower::util::option_layer(
                 concurrency.map(tower::limit::GlobalConcurrencyLimitLayer::new),
+            ))
+            // **Inside the admission limit, outside the observer.**
+            //
+            // Inside, because a request that is refused for want of a stream
+            // permit should not also be occupying an admission permit while it
+            // is refused — and because the two caps are independent, so the
+            // cheaper test belongs nearer the handler.
+            //
+            // Outside `ObserveLayer`, so a refusal is *counted*. The refusal
+            // is a trailers-only response with `grpc-status: 8`, which is
+            // exactly what `head_status` reads, so the node's own summary and
+            // `/metrics` report a capped read the way they report any other
+            // failure. Layered the other way round it would be invisible,
+            // which is the property that makes a limit impossible to tune.
+            .layer(tower::util::option_layer(
+                open_streams.map(crate::streams::StreamLimitLayer::new),
             ))
             .layer(crate::observe::ObserveLayer::new(
                 serving_counters,

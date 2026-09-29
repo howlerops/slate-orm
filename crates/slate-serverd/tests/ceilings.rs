@@ -77,6 +77,48 @@ rows = [
 
 const APP: Identity = Identity::app("u64:1", "u64:1");
 
+/// Rows enough that a reader who does not read keeps the stream open.
+///
+/// **This number is the whole mechanism of the stream-cap test, and two rows
+/// were not enough.** A permit that rides on the response body comes back when
+/// the body is *done*, and a body is done when the server has finished
+/// writing it — not when the client has read it. Two rows fit in one frame, so
+/// the first stream's permit was already back before the second request was
+/// sent and the refusal never happened.
+///
+/// What holds a body open is HTTP/2 flow control: the connection and stream
+/// windows start at 64 KiB, and a server that has filled them stops writing
+/// until the reader consumes. At two `u64`s a row and 256 rows a message this
+/// is roughly half a megabyte, which is eight windows — margin enough that the
+/// test does not depend on the exact framing.
+///
+/// So the cap bounds streams the node is **still producing**, which is the
+/// resource worth bounding, and not idle handles a client is holding. That
+/// distinction is real and is written up in the entry rather than hidden
+/// behind a number that happens to work.
+const WIDE: usize = 20_000;
+
+/// `WIDE` rows of seed, generated rather than written out.
+fn wide_seed() -> String {
+    let mut seed = String::from("[[seed]]\ntable = \"docs\"\nrows = [\n");
+    for id in 1..=WIDE {
+        seed.push_str(&format!("  {{ tenant_id = 1, id = {id} }},\n"));
+    }
+    seed.push_str("]\n");
+    seed
+}
+
+fn serving_seeded(files: &Files, limits: &str, tag: &str, seed_text: &str) -> Serving {
+    let config = files.write(&format!("{tag}.toml"), &config(limits));
+    let seed = files.write(&format!("{tag}-seed.toml"), seed_text);
+    Serving::start(&[
+        "--config",
+        &config.display().to_string(),
+        "--seed",
+        &seed.display().to_string(),
+    ])
+}
+
 fn serving(files: &Files, limits: &str, tag: &str) -> Serving {
     let config = files.write(&format!("{tag}.toml"), &config(limits));
     let seed = files.write(&format!("{tag}-seed.toml"), SEED);
@@ -382,4 +424,136 @@ async fn scrape(address: &str, path: &str) -> String {
     .expect("the metrics endpoint should answer, not hang")
     .expect("the metrics response should be readable");
     answered
+}
+
+/// The same ten streams, against a node that bounds *streams*.
+///
+/// The test above measures the absence: ten open reads under
+/// `max_concurrent_requests = 1`, all served, because that permit comes back
+/// when the handler returns and every read here is server-streaming. This is
+/// the mechanism the entry for that measurement said did not exist —
+/// `[limits] max_open_streams`, a node-wide semaphore whose permit rides on
+/// the response body.
+///
+/// **The discriminator is a refusal, not a delay.** Two streams are opened
+/// against a cap of one and neither is drained. The first must carry its rows;
+/// the second must come back `RESOURCE_EXHAUSTED` rather than block, because a
+/// queue in front of a stream has no deadline — see `crate::streams`. Then the
+/// first is drained, its permit returns, and a third opens: that half is what
+/// says the permit is *released* rather than merely taken, and without it a
+/// layer that refused everything after the first request would pass.
+#[tokio::test]
+async fn a_second_stream_is_refused_when_one_may_be_open() {
+    use std::time::Duration;
+
+    let files = Files::new();
+    let serving = serving_seeded(
+        &files,
+        // Both limits, and the concurrency one generous. The refusal below
+        // must be attributable to the stream cap: with `max_concurrent_requests`
+        // unset a reader could object that admission was never bounded, and
+        // with it at 1 a refusal could be either layer.
+        "[limits]\nmax_concurrent_requests = 8\nmax_open_streams = 1",
+        "open-streams",
+        &wide_seed(),
+    );
+    let client = connect(&serving).await;
+
+    let ask = || {
+        APP.on(harness::proto::QueryRequest {
+            transaction: String::new(),
+            query: Some(query("docs")),
+            freshness: None,
+        })
+    };
+
+    let mut first = client.clone();
+    let mut held = tokio::time::timeout(Duration::from_secs(20), first.query(ask()))
+        .await
+        .expect("the first stream should open at once under a cap of one")
+        .expect("the first query under max_open_streams = 1")
+        .into_inner();
+
+    // Undrained, so its permit is still out. `tokio::time::timeout` is the
+    // assertion that matters here: a layer that *queued* would hang, and a
+    // hang is not a failure unless something makes it one.
+    let mut second = client.clone();
+    let refused = tokio::time::timeout(Duration::from_secs(20), second.query(ask()))
+        .await
+        .expect("the second query should be refused, not queued behind the first");
+    let status = refused.expect_err("a second stream should be refused under a cap of one");
+    assert_eq!(
+        status.code(),
+        tonic::Code::ResourceExhausted,
+        "the refusal should name the quota, not the node's health; got {status:?}"
+    );
+    assert!(
+        status.message().contains("open response streams"),
+        "the refusal should say which limit refused it; got {:?}",
+        status.message()
+    );
+
+    // Drain the first, which returns its permit when the body ends.
+    let mut seen = 0;
+    while let Some(message) = held.message().await.expect("draining the first stream") {
+        seen += message.rows.len();
+    }
+    assert_eq!(seen, WIDE, "the first stream carried every seeded row");
+    drop(held);
+
+    // And now a third opens. This is the half that distinguishes a released
+    // permit from a layer that refuses everything after the first request —
+    // a mutation replacing the semaphore with a "one request ever" flag passes
+    // every assertion above and fails here.
+    //
+    // Retried rather than asserted once: the permit is returned when the body
+    // is dropped, which happens on the server's schedule and not on this
+    // task's, so a single immediate attempt is a race. Twenty tries at 50 ms
+    // is a second, against a drop that should take microseconds.
+    let mut third = None;
+    for _ in 0..20 {
+        let mut again = client.clone();
+        match again.query(ask()).await {
+            Ok(opened) => {
+                third = Some(opened.into_inner());
+                break;
+            }
+            Err(status) if status.code() == tonic::Code::ResourceExhausted => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(status) => panic!("a third stream failed for an unexpected reason: {status:?}"),
+        }
+    }
+    let mut third = third.expect("the permit should return when the first stream is drained");
+    let mut after = 0;
+    while let Some(message) = third.message().await.expect("draining the third stream") {
+        after += message.rows.len();
+    }
+    assert_eq!(after, WIDE, "the third stream carried every seeded row");
+
+    drop(client);
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+/// `max_open_streams = 0` is refused at startup rather than served.
+///
+/// Zero would refuse every read, which is the same reasoning
+/// `max_concurrent_requests = 0` is refused for and the same shape of mistake:
+/// a number that reads as "no limit" and means "no service".
+#[test]
+fn an_open_stream_limit_of_zero_is_refused_by_name() {
+    let files = Files::new();
+    let config = files.write(
+        "zero-streams.toml",
+        &config("[limits]\nmax_open_streams = 0"),
+    );
+    let finished = harness::run(&["--config", &config.display().to_string(), "--check"]);
+
+    assert_ne!(finished.code, Some(0), "a zero cap must not be accepted");
+    assert!(
+        finished.output().contains("max_open_streams"),
+        "the refusal must name the field; got:\n{}",
+        finished.output()
+    );
 }

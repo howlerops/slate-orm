@@ -11132,8 +11132,9 @@
     {
       "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
       "key": "Nothing bounds concurrent streams instead.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "`[limits] max_open_streams` in crates/slate-serverd/src/streams.rs: one node-wide semaphore whose permit rides on the response body, so it is held until the stream ends, and a caller over it is refused with RESOURCE_EXHAUSTED rather than queued. Not tonic's per-connection max_concurrent_streams, which is the scope mistake this caveat warned the next person about. crates/slate-serverd/tests/ceilings.rs watches it bind and release. ledger/2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md"
     },
     {
       "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
@@ -12020,6 +12021,41 @@
       "verdict": "open",
       "checked": "2026-09-29",
       "by": "nothing yet, and this is the trap CLAUDE.md names: a check that never fires is a check nobody has debugged. It has been seen to pass and to fail here; CI's demo job is where it runs next, on a different kernel and a different Go."
+    },
+    {
+      "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
+      "key": "It bounds a count, not bytes or time.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: a count is what the caveat that asked for this named, and bytes and duration are a different mechanism. slate-kernel's per-request ceilings bound the work behind a stream; what did not exist was any bound on how many are in flight."
+    },
+    {
+      "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
+      "key": "It does not bound idle handles.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry, on a measurement: the permit comes back when the server has finished writing, so a drained handle costs a socket and no permit. That is the resource split the entry argues is the right one \u2014 a socket is the listener's business and a scan in flight is the node's."
+    },
+    {
+      "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
+      "key": "The 20,000 rows are calibrated against a default window.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. Neither tonic's nor hyper's initial HTTP/2 window is pinned here, so a version that raises it past half a megabyte would let the whole response through and turn the test's refusal into a pass by accident. The margin is eight windows and is not a guarantee; a handler that blocks on command would be, and shipping that knob was rejected in ledger/2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md."
+    },
+    {
+      "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
+      "key": "Nothing measures what the layer costs.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. An Arc clone, an atomic decrement and a body wrapper per request; observe.rs's equivalent wrapper is 4.7 ns a frame and this one does strictly less, so the cost is very likely smaller \u2014 an inference from a neighbouring measurement, not a measurement of this."
+    },
+    {
+      "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
+      "key": "No client knows about it.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: RESOURCE_EXHAUSTED is the code the execution ceilings already use and all three clients already turn it into their refused-request exception, which is the correct handling. A caller-visible distinction would be a new error detail on the wire and a change in three clients, for a refusal a caller retries either way."
     }
   ]
 }

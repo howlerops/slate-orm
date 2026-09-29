@@ -606,6 +606,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "teardown-cleanup-terms-first": (
      "started.send_signal(signal.SIGTERM)",
      "scripts/test_run_teardown.py",
+ ),
+
+ # A node-wide cap on open response streams, 2026-09-29. The needle is the
+ # permit moving into the body, which is the whole difference from the
+ # admission limit the caveat was about: a revert that kept the setting and
+ # dropped the permit when the handler returned would leave the config field,
+ # the layer and the test name in place and bound nothing.
+ "open-stream-cap": (
+     "Held { inner: body, held }",
+     "crates/slate-serverd/src/streams.rs",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -2158,7 +2168,9 @@ WITNESSED: dict[tuple[str, str], str] = {
         'teardown-cleanup-terms-first',
     ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
      'It is not in `check.sh` and not in `ci.yml`.'):
-        'teardown-in-ci',
+        'teardown-in-ci',    ('2026-09-29-ten-streams-under-a-limit-of-one.md',
+     'Nothing bounds concurrent streams instead.'):
+        'open-stream-cap',
 }
 
 

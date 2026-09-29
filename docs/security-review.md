@@ -513,10 +513,18 @@ they take effect and found the shape of what they do instead.
 so a caller who opened a second socket got a second allowance; it bounded one
 channel, not the node. **That half is fixed**: it is now
 `tower::limit::GlobalConcurrencyLimitLayer`, one semaphore for the process,
-layered outside the per-connection stack. What survives is narrower and is
+layered outside the per-connection stack. What survived is narrower and is
 recorded on the setting: the permit is released when the response future
 resolves, which for a server-streaming RPC is before any row is read, so the
-bound is on requests *admitted* rather than on streams open.
+bound is on requests *admitted* rather than on streams open. **That half is now
+fixed too**, by a second setting rather than by widening the first, because
+they bound different things: `max_open_streams` is a node-wide semaphore whose
+permit rides on the response body, and a caller over it is refused with
+`RESOURCE_EXHAUSTED` rather than queued — a queue in front of a stream has no
+deadline. What it bounds is streams the node is **still producing**: the permit
+comes back when the server has finished writing, which for a small answer is at
+once. That is the resource worth capping and it is not the same as the number
+of handles a client holds.
 `request_timeout` becomes `Server::timeout`, whose
 `GrpcTimeout` future polls the handler before it polls the sleep, so a handler
 that finishes on its first poll cannot be cancelled — and one that pends once

@@ -56,6 +56,7 @@ mod security;
 mod seed;
 mod serve;
 mod storage;
+mod streams;
 mod value;
 mod views;
 
@@ -128,6 +129,13 @@ async fn run(arguments: cli::Cli) -> Started<()> {
     if concurrency == Some(0) {
         return Err(Fault::new(
             "`[limits] max_concurrent_requests = 0` would serve nobody; \
+             leave it unset for no limit",
+        ));
+    }
+    let open_streams = document.limits.max_open_streams;
+    if open_streams == Some(0) {
+        return Err(Fault::new(
+            "`[limits] max_open_streams = 0` would refuse every read; \
              leave it unset for no limit",
         ));
     }
@@ -447,6 +455,7 @@ async fn run(arguments: cli::Cli) -> Started<()> {
         serving: serve::Serving {
             grace,
             concurrency,
+            open_streams,
             request_timeout,
             observing,
         },
