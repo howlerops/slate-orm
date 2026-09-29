@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T20:54:01+00:00",
+  "file": "crates/slate-kernel/benches/queries.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "9c3e356",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the soft-delete measurement is renamed away",
+      "old": "fn soft_delete(c: &mut Criterion)",
+      "new": "fn retired_row_cost(c: &mut Criterion)",
+      "verdict": "caught",
+      "caught_by": [
+        "check_closed_caveats: ok    some verdict is recorded closed at all  (464 closed verdicts)"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

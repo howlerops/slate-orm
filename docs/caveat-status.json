@@ -9202,9 +9202,9 @@
     {
       "entry": "2026-09-19-a-row-that-is-gone-but-still-there.md",
       "key": "Nothing measures the cost. Every read of a soft-deleting tab",
-      "verdict": "open",
-      "by": "still unbenchmarked. Every read of a soft-deleting table carries one extra IsNull conjunct, and on a table with no partial index the retired rows stay in every index and are filtered after the fetch.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "crates/slate-kernel/benches/queries.rs, the `soft_delete` group: the IsNull conjunct is 141 ns a row scanned (+35% on a whole-tenant scan, three runs, no overlap, 11% noise floor), and a retired row costs a read what a live row costs -- 1.60x per useful row on a scan and 1.90x on an index scan at half retired. Written up in ledger/2026-09-29-what-a-retired-row-costs-a-read.md, which also corrects the caveat's implication that a retired row costs anything extra.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-a-row-with-names-on-it.md",
@@ -12619,6 +12619,42 @@
       "key": "Twelve of forty-eight were checked mechanically, thirty-six ",
       "verdict": "deliberate",
       "by": "ledger/2026-09-29-the-deliberate-sample-carried-to-216.md, which names the same ceiling: a claim with no mechanical subject can only be read, and a second independent reader is not something this repository has. Restated here because the ratio of read-to-checked is worse in this batch than the last.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-retired-row-costs-a-read.md",
+      "key": "It is one table shape at one size, in memory, with no I/O ch",
+      "verdict": "narrowed",
+      "by": "crates/slate-kernel/benches/queries.rs uses LatencyProfile::free(); the `read` group beside it has an `io` profile that would charge the discarded point lookups.",
+      "residual": "the same five configurations under LatencyProfile::object_storage(), where a retired row on the index path has cost a charged round trip. Not run here because the io profile's own group uses sample_size(20) for being slow by construction, and this entry's finding does not depend on it.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-retired-row-costs-a-read.md",
+      "key": "It does not measure a partial index",
+      "verdict": "open",
+      "by": "the caveat's own entry proposes a partial index as the fix for exactly this cost, and `by_kind` in the bench is a plain index by construction. 'A partial index fixes it' is an argument in two entries and a measurement in none.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-retired-row-costs-a-read.md",
+      "key": "It does not break the 141 ns down.",
+      "verdict": "open",
+      "by": "one extra conjunct, one more live column and a possible plan difference are three explanations and the measurement separates none. scan_row_breakdown in the same file is the shape that would.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-retired-row-costs-a-read.md",
+      "key": "It measures reads only.",
+      "verdict": "deliberate",
+      "by": "this entry: the caveat closed here says 'every read', and the write side and the storage the retired rows occupy are different questions with their own caveats in ledger/2026-09-19-a-row-that-is-gone-but-still-there.md. Widening one measurement to cover three claims is how a number gets quoted for the wrong thing.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-retired-row-costs-a-read.md",
+      "key": "The benchmark carries no assertion",
+      "verdict": "deliberate",
+      "by": "true of every group in crates/slate-kernel/benches/queries.rs, and deliberately: a threshold over a timing on this container is the flake ledger/2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md records. The dated entry is where a number that moved can be compared against what was observed.",
       "reviewed": "2026-09-29"
     }
   ]

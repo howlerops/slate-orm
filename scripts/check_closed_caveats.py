@@ -727,6 +727,24 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "python3 scripts/test_codegen.py",
      ".github/workflows/ci.yml",
  ),
+
+ # --- what a soft-deleting table costs a read, 2026-09-29 --------------------
+ #
+ # The bench group that answered `2026-09-19-a-row-that-is-gone-but-still-there.md`'s
+ # "nothing measures the cost".
+ #
+ # The needle was `benchmark_group("soft_delete")` and that was wrong, found by
+ # mutating it: the string occurs **twice** in the file — once for the control
+ # and once for the retired cases — so renaming either group away left the
+ # closure green with half the measurement gone. `git grep -q` answers "is it
+ # anywhere", which is the wrong question for a needle that is not unique.
+ # The function signature occurs once and cannot. Its failure mode is the safe
+ # one: a rename that keeps the measurement turns this red and somebody
+ # re-reads, where the group name's was a deletion that stayed green.
+ "soft-delete-read-cost": (
+     "fn soft_delete(c: &mut Criterion)",
+     "crates/slate-kernel/benches/queries.rs",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -921,6 +939,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-19-a-row-that-is-gone-but-still-there.md',
+     'Nothing measures the cost. Every read of a soft-deleting tab'):
+        'soft-delete-read-cost',
     ('2026-09-20-the-accessor-three-adapters-now-call.md',
      'Nothing outside the demo calls it.'): 'retired-outside-the-demo',
     ('2026-09-18-the-python-that-runs-ci-had-no-checker.md',
