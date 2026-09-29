@@ -12806,6 +12806,27 @@
       "verdict": "deliberate",
       "by": "this entry: iter_batched's routine is an FnMut and the async block must own what it moves, so the borrow cannot outlive one call. It is a handful of allocations, identical at both sizes, so it inflates both readings equally and does not move the per-row comparison the entry quotes. Named in the numbers rather than hidden.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-open-list-is-real.md",
+      "key": "It does not reduce the count",
+      "verdict": "deliberate",
+      "by": "this entry: the measurement is the deliverable and a route that does not work is worth recording so the next session does not spend the same hour. The one duplicate found is two true statements of one gap, so it is not a row to delete either.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-open-list-is-real.md",
+      "key": "Three routes is not every route.",
+      "verdict": "open",
+      "by": "clustering by the file a reason cites, and asking which open rows no longer have a subject in the tree, are both unmeasured. The second is the more promising: a gap in deleted code is a gap that closed itself.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-open-list-is-real.md",
+      "key": "It says nothing about whether the 140 are worth doing",
+      "verdict": "deliberate",
+      "by": "ledger/2026-09-28-the-first-two-days-of-the-invisible-backlog.md: the tracker records whether a claim is still true, which is a different question from whether it is worth acting on, and giving each row an owner would make docs/caveat-status.json a backlog that several agents would all edit.",
+      "reviewed": "2026-09-29"
     }
   ]
 }
