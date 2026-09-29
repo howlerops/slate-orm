@@ -11305,6 +11305,29 @@
       "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
       "key": "The probe is not in the tree.",
       "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "It closes nothing.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "No mutation test.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "The `SIGTERM`-to-`run.sh` observation is unresolved and may ",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "It is not in `check.sh` and not in `ci.yml`.",
+      "verdict": "open",
+      "checked": "2026-09-29"
     }
   ]
 }
