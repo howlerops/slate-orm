@@ -185,22 +185,22 @@ async fn the_same_query_succeeds_with_no_timeout_set() {
 
 /// A node started with `max_concurrent_requests` still serves.
 ///
-/// **This is weaker than it looks and is written to say so.**
-/// `max_concurrent_requests` maps to tonic's `concurrency_limit_per_connection`,
-/// which is a `tower` concurrency limit over the *HTTP* service: the permit is
-/// held by the response future and released when that future resolves. For a
-/// server-streaming RPC — `Query`, `Join` and `Aggregate` are all streaming —
-/// the response future resolves once the headers are ready, before a single row
-/// has been read. So a held-open stream holds no permit, and there is no way
-/// from a client to keep one for long enough to observe the limit refuse
-/// anything.
+/// **It is node-wide now, and still weaker than it looks.**
+/// `max_concurrent_requests` was tonic's `concurrency_limit_per_connection`,
+/// which gave a caller a fresh allowance per socket; it is now
+/// `tower::limit::GlobalConcurrencyLimitLayer`, one semaphore for the process.
+/// That fixes the half that was a lie about scope. The half that remains is
+/// about *when the permit is released*: a `tower` concurrency limit holds the
+/// permit in the response future and drops it when that future resolves, and
+/// for a server-streaming RPC — `Query`, `Join` and `Aggregate` are all
+/// streaming — that is once the headers are ready, before a single row has
+/// been read. So a held-open stream holds no permit, and there is still no way
+/// from a client to keep one long enough to watch the limit refuse anything.
 ///
 /// What is asserted is therefore the whole of what a client can see: the value
-/// reaches the builder without the node refusing to start, and a request still
-/// gets an answer. Whether the limit ever *binds* is recorded as open against
-/// `ledger/2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md` rather
-/// than asserted here, because a test that cannot fail for the right reason is
-/// worse than an admission.
+/// reaches the layer without the node refusing to start, and a request still
+/// gets an answer. Whether the limit ever *binds* stays open, because a test
+/// that cannot fail for the right reason is worse than an admission.
 #[tokio::test]
 async fn a_concurrency_limit_in_the_file_still_serves() {
     let files = Files::new();
@@ -241,4 +241,145 @@ fn a_concurrency_limit_of_zero_is_refused_by_name() {
         "the refusal must name the field; got:\n{}",
         finished.output()
     );
+}
+
+/// How many streams to hold open at once, against a limit of one.
+///
+/// Ten rather than two, because two could be a scheduling accident and ten
+/// could not: if a permit were held for a stream's life, the second `query`
+/// would queue behind the first and never return, and the timeout below would
+/// fail rather than the assertion.
+const OPEN_AT_ONCE: usize = 10;
+
+/// **The limit bounds requests admitted, not streams open**, measured.
+///
+/// `a_concurrency_limit_in_the_file_still_serves` above says this is so and
+/// says it from reading: a `tower` concurrency limit holds its permit in the
+/// response future, and a server-streaming handler's future resolves once the
+/// stream is *returned*, before a row is read. The entry that shipped the
+/// node-wide limit recorded the same thing as read rather than measured, which
+/// is the weaker half of a claim about a resource control.
+///
+/// This is the measurement, and it is a count rather than a duration: ten
+/// `Query` streams are opened and none is drained until all ten exist. Under a
+/// limit of one, every one of them is admitted.
+///
+/// It is a *negative* result and it is the useful kind. A caller who opens ten
+/// thousand slow streams is bounded by nothing here, so `max_concurrent_requests`
+/// is not the control a deployment reaches for to cap that — and a future
+/// change that started holding the permit for the stream's life would fail
+/// here, deliberately, rather than quietly making the setting mean something
+/// else.
+#[tokio::test]
+async fn open_streams_are_not_bounded_by_the_concurrency_limit() {
+    use std::time::Duration;
+
+    let files = Files::new();
+    let mut serving = serving(
+        &files,
+        // The metrics port is what makes `OPEN_AT_ONCE` load-bearing. Without
+        // it nothing in this test depends on the number: a mutation reducing
+        // ten to one SURVIVED, because every assertion was about the streams
+        // that *were* opened and none about how many. The server's own counter
+        // is the only witness a client has that ten requests were admitted
+        // under a limit of one.
+        "[limits]\nmax_concurrent_requests = 1\n\n[observability]\nmetrics_address = \"127.0.0.1:0\"",
+        "streams",
+    );
+    let metrics = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+    let client = connect(&serving).await;
+
+    // Opened sequentially, and that is enough: a permit held for a stream's
+    // life would make the *second* call queue behind the first for ever, and
+    // `tower`'s limit queues rather than refusing. So the discriminator is
+    // whether the call returns at all, not how fast.
+    let mut open = Vec::new();
+    for n in 0..OPEN_AT_ONCE {
+        let mut one = client.clone();
+        let request = APP.on(harness::proto::QueryRequest {
+            transaction: String::new(),
+            query: Some(query("docs")),
+            freshness: None,
+        });
+        let opened = tokio::time::timeout(Duration::from_secs(20), one.query(request))
+            .await
+            .unwrap_or_else(|_| {
+                panic!("stream {n} never opened with {n} already open and a limit of one")
+            })
+            .expect("a query stream under a concurrency limit of one");
+        open.push(opened.into_inner());
+    }
+    assert_eq!(open.len(), OPEN_AT_ONCE, "every stream was admitted");
+
+    // And each is a usable stream rather than an admitted empty one: the rows
+    // arrive after all ten were opened, which is the half that says the
+    // permits were released before the data and not that the reads were
+    // already finished.
+    for (n, mut stream) in open.into_iter().enumerate() {
+        let mut seen = 0;
+        while let Some(message) = stream
+            .message()
+            .await
+            .unwrap_or_else(|error| panic!("draining stream {n}: {error}"))
+        {
+            seen += message.rows.len();
+        }
+        assert_eq!(seen, 2, "stream {n} carried both seeded rows");
+    }
+
+    drop(client);
+
+    // Ten admitted, counted by the node rather than inferred from the client
+    // having ten handles. The layer that counts wraps the handler, so this is
+    // the server saying it let ten `Query` requests in while its concurrency
+    // limit was one.
+    let scraped = scrape(&metrics, "/metrics").await;
+    let wanted =
+        format!("slate_requests_total{{method=\"/slate.v1.Records/Query\"}} {OPEN_AT_ONCE}");
+    // Whole line, not `contains`. A count is a prefix of a bigger count, so
+    // `contains("… 1")` is satisfied by "… 10" — a mutation that replaced
+    // `{OPEN_AT_ONCE}` with a literal `1` survived exactly that, and the
+    // assertion had been reading as a check on the number while matching any
+    // number starting with it.
+    assert!(
+        scraped.lines().any(|line| line.trim() == wanted),
+        "the node should have counted {OPEN_AT_ONCE} admitted queries; got:\n{scraped}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+/// One line of HTTP against the metrics port.
+///
+/// A copy of `observing.rs`'s, and the duplication is deliberate: a shared
+/// helper would go in `harness/`, and the harness is shared by seven test
+/// binaries that do not scrape anything. Seven lines here against a module
+/// six files import for nothing.
+async fn scrape(address: &str, path: &str) -> String {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let mut socket = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("the metrics port should accept a connection");
+    socket
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: m\r\nConnection: close\r\n\r\n").as_bytes(),
+        )
+        .await
+        .expect("a request should be writable");
+    let mut answered = String::new();
+    // Bounded, for the reason `observing.rs` gives: a bound-but-unaccepted
+    // listener completes the handshake out of the kernel's backlog, so only
+    // the read hangs — and a hanging test is a six-hour CI job rather than a
+    // red cross.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        socket.read_to_string(&mut answered),
+    )
+    .await
+    .expect("the metrics endpoint should answer, not hang")
+    .expect("the metrics response should be readable");
+    answered
 }

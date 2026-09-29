@@ -106,6 +106,39 @@ def main() -> int:
             set(),
         ),
         case(
+            # Found by mutating the real tree. The match was a substring, so
+            # `.bar` was satisfied by the word "toolbar" anywhere in any
+            # source, and a class named for an English word was unguarded.
+            "a class whose only occurrence is inside a longer word is reported",
+            {
+                "site/style.css": CSS + ".bar { height: 2px; }\n",
+                "site/workbench.js": SCRIPT + "const wrap = \"<div id='toolbar'></div>\";\n",
+            },
+            {"every class site/style.css defines"},
+        ),
+        case(
+            # A line comment *above* a use, which is where they usually are.
+            # `A_COMMENT` needs DOTALL for the block forms, and a greedy `.*$`
+            # under it runs from the first `//` to the end of the file — which
+            # it did, and forty-three live classes read as dead against the
+            # real tree. The fixture's own comment case sits at the end of its
+            # file, so it could not tell the two apart.
+            "a line comment does not hide the uses below it",
+            {"site/workbench.js": "// built by hand, for now\n" + SCRIPT},
+            set(),
+        ),
+        case(
+            # The other half, and the one the real tree had: `api.ts` explains
+            # an environment variable by saying "what a shell produces", which
+            # kept `.shell` alive after its one `class="shell"` was gone.
+            "a class named only inside a source comment is reported",
+            {
+                "site/style.css": CSS + ".legacy { opacity: 0; }\n",
+                "site/workbench.js": SCRIPT + "// the legacy panel became the workbench\n",
+            },
+            {"every class site/style.css defines"},
+        ),
+        case(
             # A class attached by string concatenation. Accepted deliberately;
             # the docstring says why, and this case is what stops someone
             # "tightening" the match to whole attribute values.

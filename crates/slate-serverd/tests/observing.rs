@@ -195,14 +195,20 @@ async fn a_scrape_reports_what_the_node_served() {
     assert!(answered.contains("text/plain; version=0.0.4"), "{answered}");
 
     let query_method = "/slate.v1.Records/Query";
+    // Whole line, not `contains`: a count is a prefix of a bigger count, so
+    // `contains("… 2")` passes on "… 20" and `contains("… 1")` on "… 10".
+    // Latent here — the counts are 2 and 1 today — and found by a mutation in
+    // `ceilings.rs`, where the count is ten and the same shape let a wrong
+    // literal survive.
+    let counted = |line: &str| answered.lines().any(|one| one.trim() == line);
     assert!(
-        answered.contains(&format!(
+        counted(&format!(
             "slate_requests_total{{method=\"{query_method}\"}} 2"
         )),
         "both calls should be counted:\n{answered}"
     );
     assert!(
-        answered.contains(&format!(
+        counted(&format!(
             "slate_request_failures_total{{method=\"{query_method}\"}} 1"
         )),
         "the refusal should be counted as a failure:\n{answered}"

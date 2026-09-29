@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T01:58:48+00:00",
+  "file": "examples/explorer/conformance/conformance.py",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "2896ea3",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the batch case asks for singles, so the pair stops differing",
+      "old": "(\"four rows in a batch cost one request\", \"/api/round-trips\", {\"workload\": \"batch\"}, \"app\"),",
+      "new": "(\"four rows in a batch cost one request\", \"/api/round-trips\", {\"workload\": \"singles\"}, \"app\"),",
+      "verdict": "caught",
+      "caught_by": [
+        "'four singles cost four requests' and 'four rows in a batch cost one request' returned the same answer, so whatever separates them was dropped by all three clients or ignored by the server"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

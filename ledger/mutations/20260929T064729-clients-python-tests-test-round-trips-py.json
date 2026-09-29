@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T06:47:29+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_round_trips.py -q"
+  ],
+  "commit": "8a2e68f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the paging range is widened to admit equality",
+      "old": "    assert 12 <= by_cursor - by_offset <= 40, (",
+      "new": "    assert 0 <= by_cursor - by_offset <= 40, (",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "Loosening a bound cannot fail against a value that already satisfies the tighter one: the observed difference is 17, and 17 passes `>= 0` as happily as `>= 12`. The bound's job is to refuse *zero*, which is what a cursor dropped from the request would produce, and that shape was mutated directly in the same run as `the cursor is dropped from the paged request` and was caught. Scoring a bound by loosening it measures the fixture, not the rule."
+    }
+  ],
+  "restored_clean": true
+}

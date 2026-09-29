@@ -34,7 +34,7 @@ forthcoming:
   number."
 - "pgrust is not production ready. Do not put data you care about in it."
 
-The methodology in `benchmarks/README.md` is better than most vendor
+The methodology in pgrust's own `benchmarks/README.md` is better than most vendor
 benchmarking: per query, stop the server, drop the OS page cache, restart, three
 tries with cold and hot reported separately; both OLTP arms on identical configs
 with `fsync` and `synchronous_commit` left at Postgres' defaults; binary SHA256

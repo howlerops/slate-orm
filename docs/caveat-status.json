@@ -7412,9 +7412,9 @@
     {
       "entry": "2026-09-13-in-list-per-row-cost.md",
       "key": "It does not cap the list. A caller can still send a very lar",
-      "verdict": "open",
-      "by": "still uncapped. tonic's 4 MB default request size is the only bound, which admits a few hundred thousand values; ExecutionLimits has no max_in_list_values and the entry that added the ceilings recorded the same gap.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ExecutionLimits::max_in_values, 10,000 by default, checked in QueryCursor::open and raising KernelError::InListTooLarge. crates/slate-kernel/tests/security_probe_resources.rs has the refusal, the at-the-ceiling control and the predicate-write case.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-in-list-per-row-cost.md",
@@ -7433,9 +7433,9 @@
     {
       "entry": "2026-09-13-per-request-ceilings.md",
       "key": "`max_concurrent_requests` maps to tonic's per-connection lim",
-      "verdict": "open",
-      "by": "still per-connection. A node-wide bound needs a semaphore in the service and none is there; a caller opening more connections still gets more concurrency.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "it is tower::limit::GlobalConcurrencyLimitLayer now \u2014 one semaphore for the process, layered outside the per-connection stack in crates/slate-serverd/src/serve.rs, so a second socket gets no second allowance. What survives is narrower and is recorded on the setting: the permit is released when the response future resolves, so the bound is on requests admitted rather than on streams open.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-per-request-ceilings.md",
@@ -7447,9 +7447,9 @@
     {
       "entry": "2026-09-13-per-request-ceilings.md",
       "key": "Nothing here bounds the *number* of values in an `IN` list, ",
-      "verdict": "open",
-      "by": "the same uncapped IN list the in-list entry records. tonic's 4 MB default is the only bound on a decoded request and there is no cap on the list itself.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the fifth ceiling. max_in_values sits beside the four in ExecutionLimits and is the only one that refuses before a row is read, because the list arrives whole in the request.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-point-the-readme-at-everything-new.md",
@@ -7556,9 +7556,9 @@
     {
       "entry": "2026-09-13-the-typescript-package-was-not-importable.md",
       "key": "The Go and Python clients are not checked this way. Go has n",
-      "verdict": "open",
-      "by": "still unchecked for Python. A wrong `packages` in clients/python/pyproject.toml produces the same class of bug and nothing imports the built package from outside its own tree; Go genuinely cannot have it, since the module path is the import path.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "clients/python/tests/test_packaging.py, which builds a wheel and an sdist from a clean copy, checks every module and stub is shipped, installs the wheel into a throwaway prefix and imports it in a subprocess. Written since and never connected back; read end to end and confirmed in ledger/2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-the-typescript-package-was-not-importable.md",
@@ -7749,9 +7749,9 @@
     {
       "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
       "key": "The bar chart is asserted on count and threshold, not on geo",
-      "verdict": "open",
-      "by": "still true: a CSS change rendering every bar at zero width passes. Asserting geometry means asserting rendered pixel widths, which nothing here does.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "e2e/explorer.mjs has read getBoundingClientRect().width off every `.chart .row .fill` since 09c543d, 2026-09-14 -- refusing a zero width, refusing identical bars for different counts, and checking the widest bar is the largest count. The 2026-09-28 re-read looked at the unit suite in test/ and not at e2e/; see ledger/2026-09-29-two-caveats-that-were-already-answered.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
@@ -8035,9 +8035,9 @@
     {
       "entry": "2026-09-14-the-kernel-on-wasm.md",
       "key": "Nothing else in the workspace is checked for the same proble",
-      "verdict": "open",
-      "by": "still a reading rather than a check. slate-tuple and slate-schema do not depend on tokio and nothing asserts they keep not depending on it; the wasm build in CI covers slate-kernel only, because that is the one crate compiled for the target.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/check_wasm_runtime.py, run by CI: slate-wasm's dependency closure is computed and checked against tokio's wasm features, and every library crate outside it that takes a non-dev tokio must be listed with a reason. ledger/2026-09-29-a-library-that-named-a-thread-pool.md; the closure half is also built for wasm32 by the playground job",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-14-the-kernel-on-wasm.md",
@@ -8107,9 +8107,9 @@
     {
       "entry": "2026-09-14-withdrawing-the-rename-caveat.md",
       "key": "The Python client has no equivalent test. Its fingerprint is",
-      "verdict": "open",
-      "by": "still absent. Its fingerprint is the reference the other two were ported from and is pinned against them, so the property follows \u2014 and this entry's own five paragraphs are about what 'follows' rather than 'shown' costs.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-the-python-client-had-no-renamed-column-to-declare.md: docs.note was once `comment` in the Python fixture, and test_a_renamed_column_is_accepted_under_its_previous_name serves both spellings, refuses a third, and pins that the two fingerprints differ",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-14-writes-in-the-playground.md",
@@ -8381,9 +8381,9 @@
     {
       "entry": "2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md",
       "key": "No freshness-floor assertion on the TypeScript side. The Go ",
-      "verdict": "open",
-      "by": "still absent. The Go client's interceptor test covers the shape of the mistake and not every instance of it, and the entry is explicit that this is weaker than it sounds.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-a-control-that-controlled-nothing-in-two-clients.md: the TypeScript suite reads the floor off the wire through an interceptor, which Client.connect's `options` argument made possible; and the Go control it was ported from was vacuous and is fixed",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md",
@@ -8497,7 +8497,7 @@
       "entry": "2026-09-28-the-invisible-backlog-part-two.md",
       "key": "The four unmeasured round-trip claims are grouped here and n",
       "verdict": "closed",
-      "by": "all four measured within the day. A many-to-many's two reads and a nested load's two reads by crates/slate-orm/tests/read_counts.rs; batching from a client and keyset paging on the wire by the three clients' own channel counters \u2014 clients/python/tests/test_round_trips.py, clients/go/slate/related_test.go and clients/typescript/test/roundTrip.test.ts. What the grouping named as one piece of work was four pieces and all four were done.",
+      "by": "all four are measured. A many-to-many's two reads and a nested load's two reads by crates/slate-orm/tests/read_counts.rs; batching from a client and keyset paging by clients/python/tests/test_round_trips.py, clients/go/slate/round_trip_test.go and clients/typescript/test/roundTrip.test.ts. The fourth's phrasing \u2014 paging is 'cheaper on the wire' \u2014 did not survive the counting: four offset pages cost four Query calls, exactly as four keyset pages do.",
       "reviewed": "2026-09-29"
     },
     {
@@ -8639,9 +8639,9 @@
     {
       "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
       "key": "No `tracing`.",
-      "verdict": "open",
-      "by": "untouched. A span per request with a subscriber is the other half of the observability row.",
-      "checked": "2026-09-28"
+      "verdict": "deliberate",
+      "by": "crates/slate-serverd/src/observe.rs carries a `Why not `tracing`` section: tracing without a subscriber logs nothing, so adopting it means adopting a subscriber and its configuration surface. The file names the condition under which that becomes the right answer. A decision with its reasoning written down, not a gap.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
@@ -8795,9 +8795,9 @@
     {
       "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
       "key": "The demo's UI does not show it.",
-      "verdict": "open",
-      "by": "still no panel. The endpoint exists and the conformance corpus drives it; a visitor sees nothing.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the same ConditionalWrites panel, with the delete's third case \u2014 against a row that is gone, a plain delete reports affected 0 and a conditional one refuses. That distinction is the e2e check.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
@@ -8946,9 +8946,9 @@
     {
       "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
       "key": "`--check` proves the file matches the catalog, not that anyb",
-      "verdict": "open",
-      "by": "still proved by mutation rather than by a check. Closing it means asserting a refusal \u2014 a deliberately wrong declaration that must fail \u2014 and the conformance harness has no way to express 'this case should break'.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/check_generated_is_used.py reads every path `codegen.py --check` is given out of ci.yml and requires two things of each: an import-shaped mention inside the file's own package, and the call named in REACHES that puts its declarations on a request. An adapter that stopped calling `declaring` now fails the guards job. The first draft of rule 1 grepped the bare module stem and was itself vacuous -- 483 files match `\\bschema\\b` -- which its own test caught; see ledger/2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
@@ -9235,9 +9235,9 @@
     {
       "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
       "key": "The demo UI has no control for it \u2014 the identity switcher sh",
-      "verdict": "open",
-      "by": "still no control. The conformance corpus is where the behaviour is demonstrated, not the browser.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx: the soft-delete panel takes `include_deleted` and the identity switcher makes the refusal visible \u2014 as `reader` the same request comes back permission-denied rather than empty, which is the distinction the flag exists for. An e2e check asserts both, and a mutation that never set the flag fails it.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-asking-for-the-rows-that-are-gone.md",
@@ -9333,16 +9333,16 @@
     {
       "entry": "2026-09-19-the-fifth-table-list.md",
       "key": "The constant is still hand-maintained, and the next table to",
-      "verdict": "deliberate",
-      "by": "and the test says so when it breaks, which is the whole argument for leaving it: a list that fails loudly on the next table is a list somebody updates, where a derived one would silently absorb a table nobody meant to add.",
-      "reviewed": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/api.ts: TABLES is shown(CATALOG_TABLES), derived from the generated catalog rather than hand-written. Closed by the codegen work and confirmed in ledger/2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-fifth-table-list.md",
       "key": "Nothing checks that the *order* of tables matches, only the ",
-      "verdict": "open",
-      "by": "`deepEqual` over an object compares neither order, so the test's name slightly overstates what it holds \u2014 which the entry says and nothing has fixed.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-the-fifth-table-list-is-derived-now.md: the tab order is pinned against the catalog's, and the column-order half was already pinned \u2014 measured, deepEqual compares arrays in order and object keys as a set, so 'compares neither' was half a sentence too strong",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
@@ -9353,16 +9353,16 @@
     {
       "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
       "key": "It does not improve the error message that caused the mistak",
-      "verdict": "open",
-      "by": "`expected a comparison after the column, found `matches`` is accurate and unhelpful, and a suggestion would have saved the detour. The keyword-alias reasoning argues against the alias, not against the hint.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the message now names the spelling that exists: `matches` and five other dialects' words get \"A regular expression is spelt `~` here\", any other word gets the word-spelled tests, and punctuation gets nothing. Three tests in lang/pred.rs, five mutations all caught. The `matches` alias stays rejected, which is what this entry asked for; see ledger/2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-regex-hole-that-was-not-there.md",
       "key": "It does not audit the rest of the note for the same class of",
-      "verdict": "open",
-      "by": "the three remaining findings were each checked against the code when written \u2014 and so was the regex one, and it was wrong, so 'checked when written' is a weaker guarantee here than it sounded.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "audited, and it found one -- in the same file as the correction. docs/validation.md's \"What this note does not settle\" still called the regex question moot on the withdrawn grounds, four sections below the withdrawal. Fixed, and the wording is in scripts/retired_claims.json so a third copy fails a check. The three findings themselves hold and have all been built; the two mechanically checkable architectural refusals were re-verified against schema.rs and Expr. See ledger/2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-rules-a-client-can-see.md",
@@ -9475,9 +9475,9 @@
     {
       "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
       "key": "The plain (non-conditional) delete arm's \"failed having appl",
-      "verdict": "open",
-      "by": "still unpinned, and the two routes tried are written beside the tests rather than left as an absence: an absent key answers Ok(false) by design, and an unauthorized delete is refused before the session task is dispatched to.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-20-the-child-that-made-the-arm-reachable.md reached the arm with a child table declared ON DELETE RESTRICT, which the entry's own estimate had ruled out as needing a foreign key on the shared `docs` fixture. Three tests in crates/slate-server/tests/transaction_counts.rs cover it. The entry strikes this bullet and leaves the original standing on purpose, so the tracker only ever saw the stale copy -- see ledger/2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
@@ -9494,9 +9494,9 @@
     {
       "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
       "key": "The `Result`-typed signature above is not implemented.",
-      "verdict": "open",
-      "by": "it would make the insert-arm mistake a compile error rather than a test failure, which is the stronger guarantee; the shape mismatch across the seven arms is why it is written down instead of written.",
-      "checked": "2026-09-28"
+      "verdict": "deliberate",
+      "by": "the entry's own Alternatives section rejected it on cost and the premise still holds, re-read against session.rs today: seven tally.applied call sites over four outcome shapes -- Result<()> from insert_many/upsert_many with the count kept separately, the same accumulated in three different loops, Result<u64> from purge_deleted, and Result<Vec<Row>> from delete_where and update_where. Three arms would build a Result purely to destructure it. The entry names the trigger to revisit -- an eighth arm -- and that has not happened.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-guard-i-did-not-build.md",
@@ -9526,10 +9526,9 @@
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
       "key": "The two grouped findings are named, not fixed.",
-      "verdict": "narrowed",
-      "by": "closed: the scale hole, which ledger/2026-09-28-the-scale-hole-was-closed-ten-days-ago.md found had been fixed on 2026-09-18 by commit 35d9182, ten days before this caveat grouped it as unstarted. Left: the response-head latency \u2014 a streamed read's rows are in no measurement anywhere, and timing to the response head is still what every client reports.",
-      "checked": "2026-09-29",
-      "residual": "the response-head latency. Every client's duration stops at the response head, so a streamed read's rows are in no measurement anywhere; timing them needs a client-side stopwatch that runs to the last row and a harness with a network under it."
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. The scale hole \u2014 a client rendering a decimal from a scale nothing checks \u2014 and the response-head latency \u2014 a streamed read's rows in no measurement anywhere \u2014 are each one piece of work now rather than scattered sentences, and neither is started."
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
@@ -9855,16 +9854,17 @@
     {
       "entry": "2026-09-20-the-third-decoder-test.md",
       "key": "The decoders still never see a row the server sent.",
-      "verdict": "open",
-      "by": "the live-row coverage exists for books and shipments only; these build values by hand, like the Go and TypeScript cases.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "the /api/typed handlers in all three adapters decode rows the server actually sent, for all five tables, and the conformance runner compares the three",
+      "residual": "the three decoder *test files* still build their values by hand, which is what this caveat's own sentence is about; what is no longer true is the gap it names",
+      "checked": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-third-decoder-test.md",
       "key": "No live-row case for `authors`, `sales` or `editions` in any",
-      "verdict": "open",
-      "by": "tracked separately from the language gap this entry closed, and still open.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "all three demo adapters' /api/typed read authors 1, sales 100 and editions 500 and decode each with the generated row type -- examples/explorer/backends/python/adapter/__main__.py, backends/go/handlers.go, backends/node/src/main.ts -- and the conformance runner's `two rows through the generated decoders` case compares the three",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-20-the-third-decoder-test.md",
@@ -9929,9 +9929,9 @@
     {
       "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
       "key": "`access` is compared only for equality between two cases.",
-      "verdict": "open",
-      "by": "nothing asserts its content, so a server that renamed every plan would keep the corpus green.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: EXPECTED_ACCESS rosters the plan every case that reports one must carry, both directions \u2014 a case answering an access path nobody rostered fails, and a roster line whose case stopped reporting one fails as stale. Twelve cases; a mutation renaming one line failed the live run.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
@@ -9962,9 +9962,9 @@
     {
       "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
       "key": "No case covers a search that matches nothing *through the in",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nor a multi-term search whose terms are in different rows \u2014 `\"solaris cyberiad\"` would be a sharper conjunction test than `\"the games\"` and is not there."
+      "verdict": "closed",
+      "by": "'solaris cyberiad' \u2014 two real terms never in the same title \u2014 by index and by scan, with a MUST_DIFFER pair on the access path. It is the sharper conjunction test the caveat named and it covers the empty answer through the index at the same time, because the correct answer is nothing.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
@@ -10023,16 +10023,16 @@
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
       "key": "The corpus compares renderers at one scale.",
-      "verdict": "open",
-      "by": "every adapter renders against 2, because that is what books.price declares. A disagreement showing only at scale 0 or a negative value would not appear; each client's own suite has its edge-case table, written independently rather than shared.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: `/api/render-decimals` runs one shared table of twelve (units, scale) pairs through all three renderers \u2014 scales 0, 1, 2, 3 and 4, two negatives below one whole unit including the -0.75 this caveat named, and both i64 extremes. They agree on every row.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
       "key": "The demo's UI does not show the conditional update.",
-      "verdict": "open",
-      "by": "the endpoint exists and the corpus drives it; no panel does.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the ConditionalWrites panel shows it, with the other writer as the control: unguarded it applies and the price reads 12.50, with somebody else moving the price it is refused and 11.00 is what is stored. Asserted in the e2e.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
@@ -10043,9 +10043,9 @@
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
       "key": "`price` is not in any aggregate case.",
-      "verdict": "open",
-      "by": "SUM over a decimal is exact and that is the claim worth comparing across three clients; it is the obvious next case and is not there.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: every /api/aggregate case now carries `total`, a SUM over books.price, and two cases sort by it \u2014 which is what makes it load-bearing, because a sort naming Agg(1) where there is no second aggregate is refused by the server. Measured on the demo's data: Le Guin 4144, Banks 3249, Lem 3025, Butler 2625, exact counts of cents.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
@@ -10063,9 +10063,9 @@
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
       "key": "No `sum(price)` anywhere in the corpus.",
-      "verdict": "open",
-      "by": "/api/aggregate returns counts only, so the one aggregate that returns a decimal is compared by no client case. The SQL front end's HAVING sum(price) covers it in the browser; the three SDKs do not.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: every /api/aggregate case now carries `total`, a SUM over books.price, and two cases sort by it \u2014 which is what makes it load-bearing, because a sort naming Agg(1) where there is no second aggregate is refused by the server. Measured on the demo's data: Le Guin 4144, Banks 3249, Lem 3025, Butler 2625, exact counts of cents.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
@@ -10138,9 +10138,9 @@
     {
       "entry": "2026-09-19-which-guard-covers-which-field.md",
       "key": "`MUST_DIFFER` still compares whole answers. Two cases that d",
-      "verdict": "open",
-      "by": "two cases differing for a reason unrelated to the field under test would satisfy it, and nothing checks the difference is the right one.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: every MUST_DIFFER pair now names the top-level field the difference has to be in, and a pair whose field is absent from either answer is reported rather than comparing None to None.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-which-guard-covers-which-field.md",
@@ -10159,9 +10159,9 @@
     {
       "entry": "2026-09-21-contains-in-the-sql-front-end.md",
       "key": "No search box in the demo's web UI.",
-      "verdict": "open",
-      "by": "the last surface, and the only part of F6b left.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the Search panel in examples/explorer/web/src/panels.tsx, on its own tab. It shows the access path beside the rows, because both paths return the same books by construction and the plan is the only thing that distinguishes them; two e2e checks assert that rather than that the panel rendered.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-contains-in-the-sql-front-end.md",
@@ -10195,9 +10195,9 @@
     {
       "entry": "2026-09-21-contains-on-the-wire.md",
       "key": "No conformance case.",
-      "verdict": "open",
-      "by": "the demo's catalog still has no text index to point one at, which is the same follow-up as the search box.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "both premises are false. examples/explorer/head.toml declares by_title_text, and the corpus carries eight search cases plus MUST_DIFFER pairs on the access path. Written before the demo's text index landed and never re-read.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-contains-on-the-wire.md",
@@ -10236,9 +10236,9 @@
     {
       "entry": "2026-09-21-refusing-a-view-everywhere-else-is-free.md",
       "key": "It leaves the refusal's wording wrong",
-      "verdict": "open",
-      "by": "\"no table named `recent_books`\" about a view that does exist, now that views do.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "closed as a side effect of the finding-8 fix. authorize_join_inputs resolves every input name through authorized_table -> table -> no_such_table before any converter runs, so convert.rs's `no table named` branch is unreachable for a declared view; check_handlers.py rule 3 requires that ordering of every such call site. Demonstrated rather than read: two mutations reverting those resolutions both survived the views suite. See ledger/2026-09-29-two-caveats-that-were-already-answered.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-slate-sql-gets-its-own-tests.md",
@@ -10401,30 +10401,29 @@
       "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
       "key": "The 22 `moment` verdicts in this batch are the weakest.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "nothing re-reads them. 'Nothing was measured' is a moment when there was nothing to measure and an open caveat when there was, and each was judged one at a time by one reader on one day."
     },
     {
       "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
       "key": "It does not fix any of the 118.",
-      "verdict": "narrowed",
-      "by": "closed: the one this caveat names as the largest. A client's declared decimal scale is checked against the server's \u2014 crates/slate-server/src/fingerprint.rs hashes it \u2014 so the sentence 'renders money a hundred times wrong in silence' was already false when it was written, and the five caveats recording that hole are now closed. Left: the rest of the 118, which this entry triaged and did not touch.",
-      "checked": "2026-09-29",
-      "residual": "the other 117. This entry triaged them and fixed none, and the census since has moved verdicts rather than closed gaps."
+      "verdict": "open",
+      "checked": "2026-09-28",
+      "by": "nothing yet. They are visible and grouped where they repeat; the largest is the decimal scale a client declares and nothing checks, which three entries record independently."
     },
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
       "key": "Nothing here has seen either ceiling bind.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "narrowed from 'untested end to end' to 'untestable from a client without a knob nobody should ship'. Observing either bind needs a way to block a handler: tonic polls the handler before the timeout's sleep, and concurrency_limit_per_connection releases its permit when the response future resolves, which for a streaming RPC is before any row is read."
     },
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
       "key": "The streaming observation is read, not measured.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "that tower's permit is released when the response future resolves is read off its shape and tonic's use of it, not instrumented. It is consistent with the timeout result \u2014 both follow from a streaming handler returning before its rows do \u2014 and consistency is not a measurement."
+      "verdict": "closed",
+      "by": "crates/slate-serverd/tests/ceilings.rs: open_streams_are_not_bounded_by_the_concurrency_limit is the instrument. That tower's permit is released when the response future resolves was read off its shape; ten streams held open under a limit of one is that shape observed, and the server's counter says all ten were admitted.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
@@ -10459,28 +10458,29 @@
       "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
       "key": "It does not re-read the other 113 open caveats against the t",
       "verdict": "closed",
-      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "by": "re-read, and the count this asked for exists: 4 of 99 were overtaken by work, and all four by a commit from the same session within eighty minutes of the entry that recorded them.",
       "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
       "key": "Nothing stops the fourth time.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "the habit this wants \u2014 when a caveat says a thing is unbuilt, grep for it before writing the verdict \u2014 is a habit, and the three wrong verdicts were written by somebody who would have said they had it. No guard is proposed, because matching a prose caveat to the commit that closed it is the existence-not-aptness problem ledger/2026-09-26-the-citation-nobody-could-follow.md already records."
     },
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
       "key": "It does not measure `max_concurrent_requests` binding.",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": "the per-connection half is fixed rather than measured: the limit is node-wide now, which removes the claim that rested on the name of the tonic method called.",
       "checked": "2026-09-29",
-      "by": "nothing yet. The per-connection claim rests on the name of the tonic method called, which is a reading. Demonstrating it needs two connections and a handler that blocks on command, and the node ships no such handler \u2014 the same wall crates/slate-serverd/tests/ceilings.rs hit."
+      "residual": "nothing has seen it bind. A tower permit is released when the response future resolves, which for a server-streaming RPC is before any row is read, so a client cannot hold one long enough to watch a refusal. Unchanged by the scope fix."
     },
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
       "key": "It does not re-read the rest of the open caveats.",
       "verdict": "closed",
-      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "by": "re-read. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
       "reviewed": "2026-09-29"
     },
     {
@@ -10493,7 +10493,7 @@
       "entry": "2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md",
       "key": "It reads eleven of 116, and changes four.",
       "verdict": "closed",
-      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "by": "the remaining open caveats are no longer unexamined, and the bias this names was measured rather than argued: the cheap sample moved 4 of 25, the random draw 1 of 51. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
       "reviewed": "2026-09-29"
     },
     {
@@ -10514,7 +10514,7 @@
       "key": "It checks one claim, not the class.",
       "verdict": "open",
       "by": "nothing yet. Whether any other entry states something a later commit reversed is unexamined, and that count is what would decide whether a forward pointer is worth its cost.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-28"
     },
     {
       "entry": "2026-09-28-the-four-entries-that-were-true-when-they-were-written.md",
@@ -10527,14 +10527,14 @@
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
       "key": "It does not measure a round trip.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "nothing yet. examples/deployed is where a network round trip would be measured and it does not exercise a relation load; it needs MinIO, which this container does not have."
     },
     {
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
       "key": "It leaves the other two unmeasured claims where they were.",
       "verdict": "closed",
-      "by": "ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md and the two entries before it. Batching from a client and keyset paging on the wire are both counted at each client's own channel, in all three languages \u2014 which is exactly the instrument this caveat said an in-process counter could not reach.",
+      "by": "both were measured within the hour. Batching from a client and keyset paging on the wire are counted at each client's own channel in clients/python/tests/test_round_trips.py, clients/go/slate/round_trip_test.go and clients/typescript/test/roundTrip.test.ts \u2014 the instrument-in-the-clients design this entry named as the more expensive of the two, built rather than the per-connection counter.",
       "reviewed": "2026-09-29"
     },
     {
@@ -10555,7 +10555,7 @@
       "entry": "2026-09-28-the-port-allocator-runs-in-a-test-now.md",
       "key": "It does not remove the duplicate.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "nothing yet. examples/batchbench/run.sh carries its own copy of the allocator. Extracting a shared Python module under scripts/ for both to shell out to is the fix and is rejected in the entry as larger than this change; the guard covers both copies meanwhile."
     },
     {
@@ -10569,14 +10569,14 @@
       "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
       "key": "It does not establish when the handler pends.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "nothing yet. Core count, tokio's scheduler under load, socket readiness and timer resolution are all candidates and none was investigated; the limits page's advice is conservative because of it."
     },
     {
       "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
       "key": "It does not check the other measurements from this session f",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "nothing yet. crates/slate-orm/tests/read_counts.rs counts calls rather than timing and has no race of this kind, but no other single-machine number in the ledger was re-examined for whether it would reverse on a second machine."
     },
     {
@@ -10590,7 +10590,7 @@
       "entry": "2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md",
       "key": "It does not examine the other ninety-one.",
       "verdict": "closed",
-      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "by": "every open caveat has now been read adversarially. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
       "reviewed": "2026-09-29"
     },
     {
@@ -10612,7 +10612,7 @@
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
       "key": "It reads twelve, so the interval is wide.",
       "verdict": "closed",
-      "by": "the census read all ninety-nine, not forty: 4/99, 95% Clopper-Pearson [1.1%, 10.0%], recorded in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. That is tighter than the ~7% this caveat named as the target.",
+      "by": "the draw was extended to all 99 rather than to forty. The interval is now 4/99 = 4.0% [1.1%, 10.0%] exact binomial, against the 0/12 bound of 22%.",
       "reviewed": "2026-09-29"
     },
     {
@@ -10626,21 +10626,21 @@
       "entry": "2026-09-28-a-random-twelve-found-nothing.md",
       "key": "It says nothing about the `deliberate` verdicts.",
       "verdict": "closed",
-      "by": "ledger/2026-09-28-the-first-sample-of-the-deliberate-verdicts.md, which drew fifteen deliberate verdicts and found one reversed. Something has now been said about that population; that fifteen is not a rate is carried separately, as that entry's own open caveat.",
+      "by": "sixty of the 900 deliberate verdicts are read: 1 of 60 false, 1.67% with a 95% interval of 0.04% to 8.94%, in ledger/2026-09-29-the-deliberate-verdicts-priced.md. The population is not the worse one \u2014 the open verdicts run 4.04% [1.11, 10.02] over the same kind of reading.",
       "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
       "key": "It leaves forty-eight of the ninety-nine unread",
       "verdict": "closed",
-      "by": "the census over the same-day population, ledger/2026-09-29-the-population-the-census-excluded.md, which read the thirty-three open caveats written on 2026-09-28 against the tree and so finished the open population begun in ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md. Every open verdict now carries a checked date from one of the two passes.",
+      "by": "the forty-eight were read. the whole open population has now been read against the tree: the 99 pre-2026-09-28 verdicts across ledger/2026-09-28-fifty-one-of-ninety-nine-read-at-random.md and ledger/2026-09-28-the-census-finished-and-three-more-were-already-answered.md, and today's own 33 in ledger/2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md.",
       "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-fifty-one-of-ninety-nine-read-at-random.md",
       "key": "It still says nothing about the 890 `deliberate` verdicts.",
       "verdict": "closed",
-      "by": "ledger/2026-09-28-the-first-sample-of-the-deliberate-verdicts.md, which drew fifteen deliberate verdicts and found one reversed. Something has now been said about that population; that fifteen is not a rate is carried separately, as that entry's own open caveat.",
+      "by": "sixty of the 900 deliberate verdicts are read: 1 of 60 false, 1.67% with a 95% interval of 0.04% to 8.94%, in ledger/2026-09-29-the-deliberate-verdicts-priced.md. The population is not the worse one \u2014 the open verdicts run 4.04% [1.11, 10.02] over the same kind of reading.",
       "reviewed": "2026-09-29"
     },
     {
@@ -10653,16 +10653,17 @@
     {
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
       "key": "One in fifteen is not a rate.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. The interval around 1/15 runs from about 0.2% to 30%. What is established is that the population contains at least one false verdict, not how many."
+      "verdict": "closed",
+      "by": "sixty is. 1/60 = 1.67% [0.04%, 8.94%] exact binomial, continuing the same recorded draw rather than starting a fresh one.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
       "key": "It does not check the 833 others.",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": "forty-five more were read, none moved. Sixty of 900 now carry a real reading rather than a stamp.",
       "checked": "2026-09-29",
-      "by": "nothing yet. Fifteen per pass is fifty-six passes. The version that scales is a deliberate verdict carrying the paths its reasoning depends on, with a guard reporting when one changed since the verdict's date, and it is unbuilt."
+      "residual": "840 of the 900 remain unread, and at the interval's top there would be eighty-three false verdicts among them. Reading is still the only method \u2014 two mechanical routes were measured and withdrawn."
     },
     {
       "entry": "2026-09-28-the-first-sample-of-the-deliberate-verdicts.md",
@@ -10674,9 +10675,10 @@
     {
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
       "key": "It leaves the 833 unsampled verdicts unsampled",
-      "verdict": "open",
+      "verdict": "narrowed",
+      "by": "forty-five of them are sampled. The entry's claim that reading is the only method that works on this population is unchanged and is now the third measurement supporting it.",
       "checked": "2026-09-29",
-      "by": "nothing yet, and one fewer idea than an hour ago. The only method known to work on that population is reading it, at fifteen per pass."
+      "residual": "840 of the 900 remain unread, and at the interval's top there would be eighty-three false verdicts among them. Reading is still the only method \u2014 two mechanical routes were measured and withdrawn."
     },
     {
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
@@ -10689,7 +10691,7 @@
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
       "key": "The three-of-twenty-three verification is thin.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "nothing yet. Three shows the flags are not obviously stale and does not show the other twenty are sound; twenty more reads would price the flagged stratum, and this entry argues they are better spent at random."
     },
     {
@@ -10702,9 +10704,10 @@
     {
       "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
       "key": "It says nothing about latency or bytes.",
-      "verdict": "open",
+      "verdict": "narrowed",
       "checked": "2026-09-29",
-      "by": "nothing yet. examples/deployed is where a network round trip would be timed and it does not exercise paging; the README's 495-against-5 figure is still the only measurement of what a page reads from the store."
+      "by": "the bytes half is measured. The same interceptor now weighs every request with ByteSize(), and two tests read the numbers: a batch of twenty costs 1382 bytes against 1300 sent singly (exactly 4n+2 more), and four cursor pages cost 215 against 198 by offset. Both go against the phrase they were meant to confirm. See ledger/2026-09-29-bytes-do-not-need-a-network.md",
+      "residual": "latency. A duration on a loopback socket against an in-memory store is mostly scheduling, and this session already published one timing claim that reversed on another machine. examples/deployed is still where it would be timed and it still needs MinIO."
     },
     {
       "entry": "2026-09-28-round-trips-counted-at-the-clients-channel.md",
@@ -10730,16 +10733,17 @@
     {
       "entry": "2026-09-28-the-go-client-was-already-counting.md",
       "key": "It does not check that the three agree.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. Each client is measured against its own expectation; the conformance runner compares answers rather than request counts, which is the distinction dialRecording's comment draws about why counting was needed."
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: four `/api/round-trips` cases compare the three clients' request counts against each other, and three MUST_DIFFER pairs stop an adapter that ignores the workload agreeing with two others doing the same.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "It still says nothing about latency or bytes.",
-      "verdict": "open",
+      "verdict": "narrowed",
       "checked": "2026-09-29",
-      "by": "nothing yet. Inherited unchanged from 2026-09-28-round-trips-counted-at-the-clients-channel.md: examples/deployed is where a network round trip would be timed, it needs MinIO, and it does not exercise paging."
+      "by": "the bytes half is measured in all three clients now. Go needed a sendingStream wrapper before it could weigh a read at all -- the stream interceptor saw a nil, which is the half-blindness this entry is named for, one level down. The three agree on the framing cost: Python's twenty rows batch to 1382 bytes against 1300, Go's to 502 against 420, the same +82 from totals three times the size. See ledger/2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "residual": "latency, in every client. A loopback duration against an in-memory store is mostly scheduling; examples/deployed is where it would be timed and it needs MinIO."
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
@@ -10751,9 +10755,9 @@
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "No conformance case compares the three counts against each o",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. examples/explorer/run.sh --conformance compares the three SDKs' answers; none of its cases looks at how many requests an SDK sent, and each client's count lives in its own suite."
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: four `/api/round-trips` cases, served by a counting client in each of the three adapters. Measured: 4 `Insert` for four singles, 1 `Batch` for the same four, 3 `Query` for three keyset pages, 1 `Related` for three parents \u2014 identical in all three.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
@@ -10765,9 +10769,9 @@
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "Nothing checks that a new client transport keeps this door.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. The three clients expose the channel three different ways (channel=, ...grpc.DialOption, ChannelOptions) and no guard fails if a fourth arrives without one; the witness roster catches removal of TypeScript's, not a future client's absence."
+      "verdict": "closed",
+      "by": "scripts/check_transport_door.py, run by CI: the roster is read off clients/, so a fourth client is seen arriving, and each door must also be walked through by its demo adapter",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
@@ -10779,15 +10783,15 @@
     {
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
       "key": "The census is of `open` only.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. 895 deliberate verdicts, sampled once at 15 with 1 false, and no cheap route into them has survived measurement \u2014 the path-dependency flag and the citation flag were both measured and withdrawn today."
+      "verdict": "closed",
+      "by": "the deliberate population has a rate now: sixty of the 900 deliberate verdicts are read: 1 of 60 false, 1.67% with a 95% interval of 0.04% to 8.94%, in ledger/2026-09-29-the-deliberate-verdicts-priced.md. The population is not the worse one \u2014 the open verdicts run 4.04% [1.11, 10.02] over the same kind of reading.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
       "key": "Nothing acts on the cause this entry identifies.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-28",
       "by": "nothing yet. The mechanical version was measured here and flags 65 of 193 to find 4, with recall 2 of 3; what is left is a convention in ledger/README.md, which is not a check."
     },
     {
@@ -10798,39 +10802,1096 @@
       "by": "a git grep returning nothing over every place a thing could live is the right instrument for 'nothing does X', and the alternative \u2014 reading every candidate file for each of twenty-two caveats \u2014 costs more than the census is worth. The weakness is named rather than removed, as the previous census entry named it."
     },
     {
-      "entry": "2026-09-29-the-population-the-census-excluded.md",
-      "key": "It leaves the twenty-one that held.",
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "It does not measure what a page costs in bytes or seconds.",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "the bytes half is measured, and it answers this caveat's own question -- \"an offset page's request carries an integer where a cursor's carries a key, and nothing weighs them\". Weighed: four cursor pages are 215 bytes against 198 by offset, +17, about 9%. The cursor costs more, not less. See ledger/2026-09-29-bytes-do-not-need-a-network.md",
+      "residual": "seconds. Same reason as the sibling caveat: a loopback duration is mostly scheduling, and examples/deployed needs MinIO."
+    },
+    {
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "It does not check the store-read side of the claim.",
       "verdict": "deliberate",
       "reviewed": "2026-09-29",
-      "by": "this entry: it is a census, not a fix, and each of the twenty-one is already carried as its own open verdict with its own `by`. Recording a twenty-second caveat over them would put the same debt on the backlog twice \u2014 which is the exact failure this entry documents, a summary restating claims sourced elsewhere and then going stale on its own."
+      "by": "the 495-against-5 figure is a kernel measurement recorded in the README and re-running it is a separate piece of work with its own harness. This entry separates two halves of a conflated sentence and re-measures the half that was never measured; inheriting the half that was is the right scope."
     },
     {
-      "entry": "2026-09-29-the-population-the-census-excluded.md",
-      "key": "It does not read the same-day caveats of any other day.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet. 2026-09-28 was picked because the census had just excluded it. Whether 36% is a property of same-day caveats or of that one busy day is untested, over roughly two hundred entries."
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "The open count went down by eight and will go back up.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "the pre-commit hook requires a 'What this does not do' section and every item in it becomes a caveat, so zero is unreachable by construction. The reachable invariant is 0 untriaged, which caveats.py checks and check.sh runs."
     },
     {
-      "entry": "2026-09-29-the-population-the-census-excluded.md",
-      "key": "It does not touch the `narrowed` verdicts.",
+      "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
+      "key": "Two of the 33 that hold are about this entry's own subject a",
       "verdict": "open",
       "checked": "2026-09-29",
-      "by": "nothing yet. Twenty-seven narrowed verdicts carry a `checked` date of 2026-09-26 or 2026-09-27, older than any open verdict, and a residual goes stale the way a caveat does."
+      "by": "nothing yet. Latency and bytes on the wire needs MinIO; a conformance case comparing the three clients' request counts is tracked and not started."
     },
     {
-      "entry": "2026-09-29-the-population-the-census-excluded.md",
-      "key": "The \"summary entries go stale fastest\" claim rests on two in",
-      "verdict": "open",
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "Nothing has seen the concurrency limit bind.",
+      "verdict": "narrowed",
       "checked": "2026-09-29",
-      "by": "nothing yet. Two data points in one subject on one day. Testing it means counting what fraction of stale caveats across the ledger sit in entries that restate a claim sourced elsewhere."
+      "by": "narrowed from 'nothing has seen it bind' to 'nothing has seen it bind on a unary call'. The streaming half is settled: crates/slate-serverd/tests/ceilings.rs shows ten streams admitted under a limit of one, so it provably does not bind there.",
+      "residual": "a unary handler held long enough to keep a permit. Every read RPC is server-streaming and releases its permit before a row is read, which is measured now; a write is unary and nothing here makes one slow without a test-only knob."
     },
     {
-      "entry": "2026-09-29-the-population-the-census-excluded.md",
-      "key": "The rate comparison is between two populations that were rea",
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "It bounds admission, not open streams.",
+      "verdict": "closed",
+      "by": "crates/slate-serverd/tests/ceilings.rs: open_streams_are_not_bounded_by_the_concurrency_limit \u2014 ten Query streams opened and none drained until all ten exist, against max_concurrent_requests = 1, and the node's own /metrics counts ten admitted. The claim is measured now rather than argued, as a count and not a duration; it is still the same claim, which is that the limit does not bound this.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "The `IN` ceiling is not measured against a real cost.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "10,000 is argued for rather than derived \u2014 a list that long is a join \u2014 and the other four constants are documented as untuned for the same reason. A number derived from this container's hardware would be worse than an argument, because it would read as tuned for the reader's."
+    },
+    {
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "No client refuses a long list before sending it.",
       "verdict": "open",
       "checked": "2026-09-29",
-      "by": "nothing yet. A later session re-reading the same thirty-three would be the independent second reading, and none has. What limits the alternative explanation is stated in the entry: the bias would have to run the other way to produce this result."
+      "by": "nothing yet. The refusal arrives from the server after the request is encoded and decoded, so the bytes are spent; none of the three clients checks the length before sending."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "840 remain unread.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. Sixty of 900 is a sample; the interval rules out a high rate and not a moderate one, and at 8.9% there would be eighty-three false verdicts among them."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "The sample is of verdicts, not of harm.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "estimating how bad a false verdict would be means reading each one for what depends on it, which is more work than the reading this measures and does not scale any better. The one found was harmless; that is an anecdote and is recorded as one."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "Reading remains the only method.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet, and two guards were designed, measured and withdrawn to establish it. The design that would work needs a `depends` field per verdict and a backfill of 900 rows, each of which is the reading it would replace."
+    },
+    {
+      "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
+      "key": "A verdict read for \"the reasoning still applies\" is read by ",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "thirty of the forty-five have no mechanical subject \u2014 'prose has nothing to mutate', 'an untested path is worse than a refusal' \u2014 and there is nothing to grep for. Naming the weakness is what can be done about it; the alternative is to exclude such verdicts from the sample, which would measure the easy two thirds and report it as the whole."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "No `includeDeleted` control.",
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx: the soft-delete panel takes `include_deleted` and the identity switcher makes the refusal visible \u2014 as `reader` the same request comes back permission-denied rather than empty, which is the distinction the flag exists for. An e2e check asserts both, and a mutation that never set the flag fails it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "The search panel refetches on every keystroke.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "a read against a six-row table on loopback. A debounce would make the panel's behaviour depend on a timer, which is what e2e checks flake on, and the cost it would save is invisible at this corpus size."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "Nothing asserts the panels' prose.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "the standing residual for every panel in this file, not new here. The e2e asserts the numbers a panel reports; whether the explanation beside them is true is a reading, and site/check/docs.py's UNCHECKED roster makes the same trade for the same reason."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "The demo still groups a two-table join and nothing else.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "unchanged by this work and already recorded as deliberate on 2026-09-14-the-grouped-plan-in-the-demo.md: the coverage belongs in crates/slate-server/tests/multi.rs, and widening the demo to exercise every shape of every RPC would make it a test rather than a demonstration."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "The subquery fix is a dedup, not a join.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. IN (SELECT ...) still materialises in crates/slate-wasm/src/lib.rs's resolve_subqueries; a subquery whose distinct values exceed max_in_values is refused, and the refusal's own advice \u2014 put them in a table and join to it \u2014 is advice the front end could take itself."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "It still counts calls, not work.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet, and inherited unchanged from the two entries this closes the other half of: four rows in a batch are still four schema claims and four value encodings in the client, and no count can see that."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "It says nothing about latency or bytes.",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "the bytes half is measured in all three clients -- see ledger/2026-09-29-the-same-framing-cost-in-three-clients.md. A batch costs 4n+2 bytes more than the singles it replaces, in Python and in Go independently, and a cursor page costs more than an offset page in both. Both findings go against the phrase they were meant to confirm.",
+      "residual": "latency, and a runner that compares the three clients' byte counts against each other. The agreement reported is a person reading two tests; nothing asserts it, because the three adapters write different rows and a comparison would be asserting on the fixtures."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "Four rows and three pages are not a scale.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: sized so a disagreement is legible, not so the number means anything about throughput. Twenty, as the per-client suites use, runs against the shared demo database on every conformance run and every CI job; four shows the shape as well."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "Nothing still checks that a fourth client arrives with a tra",
+      "verdict": "closed",
+      "by": "scripts/check_transport_door.py, run by CI: the roster is read off clients/, so a fourth client is seen arriving, and each door must also be walked through by its demo adapter",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "The `MUST_DIFFER` pairs cannot see three clients wrong the s",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: every pair in this runner is written by hand and argued for in a comment, and a roster forcing one per workload would be a rule about a list of four. All four workloads have a pair today; a fifth added without one is compared for agreement, which is what the file did for everything before pairs existed."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "The lock is real and untested.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: the conformance runner is sequential, so nothing exercises contention. The alternative is no lock, and a count that is silently wrong under concurrency is worse than one that waits \u2014 the cost of the decision is an untested path, and it is recorded rather than covered by a test that would have to invent the concurrency."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "The endpoint ignores `X-Demo-Identity`.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "CONTRACT.md: row-level security changes which rows a read returns and not how many requests fetching them takes, so honouring the header would offer a knob that cannot move the answer. Not offered, rather than offered and meaningless."
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "A top-level field is not a path.",
+      "verdict": "deliberate",
+      "by": "this entry: every pair in the file today is satisfied by a top-level key, so a path syntax would be an expression language written for no current caller. Narrower than 'not byte-identical' and wider than each pair's comment, which is the trade recorded rather than smoothed over.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "The roster is a snapshot of this planner on this fixture.",
+      "verdict": "deliberate",
+      "by": "this entry: eleven books and one text index, so `Point Get` and `Table Scan` are what the demo's data produces. The failure names both strings so the diff is readable; deciding whether the planner or the fixture moved is the reading, and no roster can do that.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "Nothing rosters the rest of an `EXPLAIN`.",
+      "verdict": "open",
+      "by": "nothing yet. `indexOnly`, `sorts`, `residual` and `display` are compared across the three adapters and asserted against nothing, exactly as `access` was. The same roster would hold them; this stopped at the field the caveat named.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "The other field in that entry's pair of caveats is untouched",
+      "verdict": "open",
+      "by": "nothing yet. Inherited from 2026-09-19-which-guard-covers-which-field.md: the access hints, `build_limit` and the freshness token are unprobed, and each answer costs a full run.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
+      "key": "The harness change is about reporting, not about correctness",
+      "verdict": "deliberate",
+      "by": "this entry: a raised group becomes one failing check naming the exception, and the traceback is gone. Running the group directly is the way back to it, and keeping the traceback would mean not catching \u2014 which is the thing that made two mutations unscoreable.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "One scale, still.",
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: /api/render-decimals, added in the same session, compares all three renderers over scales 0, 1, 2, 3 and 4 including two negatives below one whole unit. Written before that endpoint existed and answered forty minutes later.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "It compares the sum, not the rounding.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing in the corpus divides a decimal, so what AVG over money should return is not asked here. SUM is exact by construction and that is the whole of the claim.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "The demo's UI does not show it.",
+      "verdict": "closed",
+      "by": "examples/explorer/web/src/panels.tsx: the grouped panel takes a `measure` control that draws and sorts by SUM(books.price), rendered against the column's scale. An e2e check asserts the bars descend by money, and a mutation that drew money while sorting by the count fails it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "`having` still reads the count.",
+      "verdict": "deliberate",
+      "by": "this entry: a group condition over money exercises a different server path \u2014 a decimal against a bound rather than a u64 \u2014 and is a different case rather than the same one with a field added. The three HAVING cases are about the group condition, not about which aggregate it reads.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-one-aggregate-that-returns-money.md",
+      "key": "Two of the twelve groupings are refusals or near it.",
+      "verdict": "open",
+      "by": "still true and worth knowing when reading 'every grouping': `badPrice` is refused at plan time and carries no groups, so the sum is compared on eleven.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "It compares rendering, not parsing.",
+      "verdict": "deliberate",
+      "by": "this entry: no client offers reading a decimal string back into units \u2014 a decimal arrives as a count and leaves as a string \u2014 so the round trip does not exist to be compared.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "Twelve rows is not a property test.",
+      "verdict": "deliberate",
+      "by": "this entry: a hand-written differential tests what somebody thought of, which CLAUDE.md says to know rather than pretend otherwise. What it adds over each client's own table is that all three are held to one list; an oracle over random (units, scale) pairs is the version that scales and is unbuilt.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "Scale above 4 is untested.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-a-negative-scale-is-not-a-scale.md: scales 6, 9 and 18 are in the shared conformance table and in all four suites, and the three SDKs agree on every one. The caveat's stated mechanism was wrong and is withdrawn there: Go is exact through scale 19 and no column can declare 20",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "The negative-scale divergence is recorded, not resolved.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-a-negative-scale-is-not-a-scale.md: all four renderers refuse now. Go's argument is a uint8 and TypeScript throws RangeError, joining Rust's u8 and Python's ValueError",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
+      "key": "No guard holds the three tables to each other except the run",
+      "verdict": "deliberate",
+      "by": "this entry: three literals in three languages, and the conformance case catches a drift because `units` and `scale` are in the answer \u2014 demonstrated by two mutations. A parser over three syntaxes would fail without a running stack, which is the only thing it would add.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The `app` half of the retired-rows control changes nothing v",
+      "verdict": "deliberate",
+      "by": "this entry: the fixture keeps no retired row, and seeding one would move the README guard's count, the conformance cases that read shipments, and the restore panel's arithmetic \u2014 four things so that one number differs. The refusal is the half the caveat called interesting and it needs no retired row.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The money measure is one column at one scale.",
+      "verdict": "open",
+      "by": "still true: books.price is the demo's only decimal, the UI holds the scale as a literal the way the three adapters hold theirs, and nothing checks it against the catalog \u2014 the generated catalog.ts carries column names only.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The e2e's mutation-readability is fixed, not tested.",
+      "verdict": "open",
+      "by": "nothing yet. Re-indenting those lines puts the runner back to scoring UNREADABLE, which interrupts rather than passing quietly, but nothing fails. A guard holding every runner here to one output format is the version that scales; scripts/test_check_sh.py is the precedent for where it would live.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "The order property does not pin the numbers.",
+      "verdict": "deliberate",
+      "by": "this entry: 'descending in money' is true of the right answer and of several wrong ones. The values are compared across the three SDKs by the conformance runner, which is where a number belongs; this checks that the control reaches the sort.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
+      "key": "Nothing shows both measures at once.",
+      "verdict": "deliberate",
+      "by": "this entry: a second series answers 'which author is expensive per book', which is a chart change that has to argue for itself rather than a control with an endpoint already behind it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "It still has not seen the limit bind.",
+      "verdict": "narrowed",
+      "by": "this entry closed the streaming half \u2014 ten streams open under a limit of one, measured at the node's own counter; the residual is a unary call held long enough to keep its permit, which needs a slow handler and so needs the test-only knob this entry rejected",
+      "residual": "no unary RPC has been observed holding a permit",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "Ten is not ten thousand.",
+      "verdict": "deliberate",
+      "by": "this entry: ten establishes that the setting does not bound the count at all, which is the fact a deployment needs; ten thousand would measure the container, not the node",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "Nothing bounds concurrent streams instead.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "The metrics port is now part of this test's configuration.",
+      "verdict": "deliberate",
+      "by": "this entry: the count needs a witness, and the node's own counter is the one thing the client cannot get wrong about on its own",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-ten-streams-under-a-limit-of-one.md",
+      "key": "`observing.rs`'s fix is latent-only.",
+      "verdict": "deliberate",
+      "by": "this entry: the mutation that demonstrates the anchoring lives where the count is ten; duplicating it where the counts are 2 and 1 would demonstrate nothing a prefix match could not satisfy",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "It does not check that an interceptor installed through a do",
+      "verdict": "deliberate",
+      "by": "this entry: the conformance runner's round-trip case compares three counts and disagrees if one adapter's counter is inert, which is the other half of the same claim and lives where it can actually run a client",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "A fourth client can satisfy it with a door and a fake walker",
+      "verdict": "deliberate",
+      "by": "this entry: the rule makes the omission loud rather than impossible, which is the bargain every grep-shaped guard in scripts/ strikes",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "The three patterns are three hand-written regexes.",
+      "verdict": "deliberate",
+      "by": "this entry: a renamed signature turns the rule red for the right reason, and MANIFESTS reports an unclassifiable directory rather than skipping it",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-door-for-the-fourth-client.md",
+      "key": "Nothing checks the adapters are the only callers.",
+      "verdict": "deliberate",
+      "by": "this entry: a per-client test would be more robust and would not exist for the language nobody has written, which is the client this rule is for",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "The Go type change is not mutation-tested, and cannot be.",
+      "verdict": "deliberate",
+      "by": "this entry: a compile-time refusal has no run to observe; the mutation that would show it makes a nonexistent caller compile, not a test fail",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "It does not make `ColumnDef.Scale` a `uint8` in the other tw",
+      "verdict": "deliberate",
+      "by": "this entry: Python's refuses at construction and TypeScript's renderer refuses its own argument, so the field would be a second guard for one thing",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "Nothing refuses a scale above 18 in a renderer.",
+      "verdict": "deliberate",
+      "by": "this entry: the schema refuses it at build time, so no column produces one; a renderer would have to hold MAX_SCALE, which it has no other reason to know",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "The demo UI's `money` is still a fourth renderer and is not ",
+      "verdict": "deliberate",
+      "by": "this entry: nine lines in a browser that is not a slate client, called with a constant scale of 2, so neither divergence it now has is reachable",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-negative-scale-is-not-a-scale.md",
+      "key": "The `-1` and `-2` rows the two clients used to carry are gon",
+      "verdict": "deliberate",
+      "by": "this entry: reintroducing clamping fails the refusal tests, which is the property worth holding; what a clamped output would have been is not",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "It reads manifests, not features as resolved.",
+      "verdict": "deliberate",
+      "by": "this entry: cargo unifies features across the graph and no manifest says so; the wasm build in CI is what catches that, which is the division of labour the file is built around",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "`RUNTIME_ON_PURPOSE`'s reasons are unchecked prose.",
+      "verdict": "deliberate",
+      "by": "this entry: the rule enforces that a reason exists and that its crate is real and still outside the closure; each reason is one sentence so a reader can check it",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "It only knows about tokio.",
+      "verdict": "deliberate",
+      "by": "this entry: tokio is the runtime this workspace uses and the one the incident was about; a second would need the rule widened",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-library-that-named-a-thread-pool.md",
+      "key": "Nothing checks the wasm build's own feature list stays right",
+      "verdict": "deliberate",
+      "by": "this entry: ON_WASM can go stale in one direction only \u2014 a feature tokio adds makes this refuse loudly, one it removes is caught by the CI wasm build",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "It does not cover several previous names, or `MAX_SPELLINGS`",
+      "verdict": "deliberate",
+      "by": "this entry: unchanged from the 09-14 entry's own version for Go and TypeScript \u2014 a client sends one hash either way and cannot tell the cases apart; crates/slate-server/src/fingerprint.rs is where the enumeration lives",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "The fixture now carries a rename no migration produced.",
+      "verdict": "deliberate",
+      "by": "this entry: a schema fixture records the previous name directly, which is the right shape for it; whether a rename migration works is slate-schema's",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "Nothing stops the fourth client arriving without this test.",
+      "verdict": "closed",
+      "by": "scripts/check_renamed_column.py, run by check.sh and ci.yml's guards job: the client roster is read off clients/, so a fourth arriving without a renamed-column test is refused by name",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "The packaging caveat was closed by reading, not by running.",
+      "verdict": "deliberate",
+      "by": "this entry: the four tests do run, inside the 345 \u2014 what was not checked is their behaviour on a machine without network, and their own file records the one time they skipped silently",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
+      "key": "It covers `Related` and no other RPC.",
+      "verdict": "deliberate",
+      "by": "this entry: the floor is built in one shared helper per client, so a mutation there breaks every read and surfaces here \u2014 the same weaker claim the 09-16 entry made about Go, restated honestly",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
+      "key": "The Python client still has no such assertion.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md: a Recording interceptor in the Python suite, and the assertion found that this client's floor survives monotonic_reads=False where Go's and TypeScript's do not",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-control-that-controlled-nothing-in-two-clients.md",
+      "key": "The harness's staleness guard fired twice on unrelated crate",
+      "verdict": "deliberate",
+      "by": "this entry: the guard's own comment calls modification times crude and erring toward refusal is the safe direction; recorded because two false positives in one session is the first evidence the crudeness costs anything",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "It does not resolve the divergence.",
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-read-your-writes-is-not-monotonic-reads.md: Go and TypeScript adopted Python's semantics \u2014 the flag gates only whether a read advances the watermark, so a session that wrote reads its own writes in all three",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "It does not check the other RPCs.",
+      "verdict": "deliberate",
+      "by": "this entry: the floor is built in one helper per client, so a mutation there breaks every read and surfaces here \u2014 the same position all three suites take",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "Nothing compares the three automatically.",
+      "verdict": "deliberate",
+      "by": "this entry: the conformance runner compares answers and this is a per-session flag that changes only the request; an endpoint existing only for the flag is a worse home than the three suites that each already have an interceptor",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md",
+      "key": "The probe is not in the tree.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "It closes nothing.",
+      "verdict": "moment"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "No mutation test.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "The `SIGTERM`-to-`run.sh` observation is unresolved and may ",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md",
+      "key": "It is not in `check.sh` and not in `ci.yml`.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "No conformance case compares the three on this.",
+      "verdict": "deliberate",
+      "by": "this entry and the one before it: the runner reaches endpoints, not per-session flags, and an endpoint existing only to expose one is a worse home than the three suites that each have an interceptor",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "It does not touch `Freshness.any()` or an explicitly passed ",
+      "verdict": "deliberate",
+      "by": "this entry: only the implied floor moved; a named freshness level and a transaction's reads are unchanged by construction",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "Nothing measures what the restored floor costs.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
+      "key": "The `monotonic` field is now consulted in exactly one place ",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "key": "It does not reduce the count.",
+      "verdict": "deliberate",
+      "by": "this entry: five places still name the tables and none is hand-maintained now; the 2026-09-19 entry's argument that the count is the problem is untouched and is its own caveat",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "key": "Nothing checks the order a visitor actually sees.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
+      "key": "The `--check` that keeps `catalog.ts` honest is CI's, not th",
+      "verdict": "deliberate",
+      "by": "this entry: the generated file's currency is a different job's to check, and duplicating it here would be a second implementation of the same rule",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "It does not prove the fingerprint reaches the server.",
+      "verdict": "open",
+      "by": "true and the strongest remaining half. Rule 2 checks that a named call appears in a named file; an adapter calling `Declaring` on an empty map, or building a second client that skips it, stays green. The run-time version belongs in examples/explorer/run.sh --conformance, which still has no way to express 'this case should break'.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "The Python entry's rule 2 is weaker than the other two.",
+      "verdict": "deliberate",
+      "by": "that client takes a `Table` per call, so there is no single attachment to look for and rule 2 restates rule 1 for that one file. Inventing a call to grep for would mean changing the client to suit the guard. The REACHES comment records it, and closing it properly is the run-time claim above.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "`examples/retention/purge.py` reaches its declaration dynami",
+      "verdict": "deliberate",
+      "by": "it imports the module its `--schema` argument names at run time, which no static rule can follow. The check reads seed.py's static import instead and the roster comment says so. Following it would mean executing purge.py in the guards job, which needs a server.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "The import shape is approximate.",
+      "verdict": "open",
+      "by": "true. Both arms are regexes over lines, and a re-export chain satisfies rule 1 for the right reason today while continuing to satisfy it after the middle link stops re-exporting. Nothing in the five real files is a re-export, so this is a hazard rather than a defect.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
+      "key": "Nothing checks the other four caveats in that entry.",
+      "verdict": "open",
+      "by": "true: `One catalog is generated from` and `Nothing generates the catalog itself` are untouched and still open in this file.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "The roster is a list of guesses, not a measurement.",
+      "verdict": "deliberate",
+      "by": "one of the six is attested and five are read off other dialects. Measuring which words people type would need users typing them, and the cost of a wrong guess is one generic hint rather than a defect. A seventh spelling gets the generic arm, which is the right failure.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "No other error message in the parser was reviewed for the sa",
+      "verdict": "open",
+      "by": "true. This one was fixed because an entry recorded what it cost; `expected a column name, found ...` and the operand-type refusals may have the same shape and were not read.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "The audit covered `docs/validation.md` and nothing else.",
+      "verdict": "deliberate",
+      "by": "the caveat being closed named \"the rest of the note\", and that is what was read. Tracing the note's claims about other documents to their own copies is the retired-claims guard's job once a phrase is on its list, which is the caveat below rather than this one.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
+      "key": "It does not add a guard that a correction reaches the rest o",
+      "verdict": "open",
+      "by": "true and the sharper half. check_retired_claims.py catches a restatement anywhere once the phrase is listed, but nothing makes listing it part of withdrawing a claim -- which is precisely how this instance survived ten days. A guard would have to read a ledger entry's withdrawal and demand a list entry, which is a real rule and is not written.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "It does not check that the `by` names the entry the strike n",
+      "verdict": "open",
+      "by": "true. The rule demands a settled verdict and a non-empty `by`; a `closed` row citing the wrong entry passes. Checking it means parsing the strike's own prose for a ledger filename, which is a real rule and is not written.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "It matches on the key, so a struck bullet reworded past 60 c",
+      "verdict": "deliberate",
+      "by": "the key is how every verdict in this tracker is addressed, and a second matching scheme for one rule would be a second thing to keep in step. All three pairs here match exactly because striking a caveat means copying it. A paraphrasing strike is invisible and reads as no strike at all, which is the pre-rule behaviour rather than a regression.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "Nothing stops the pair being created wrongly in the first pl",
+      "verdict": "closed",
+      "by": "closed by counting: of 51 struck caveats, 3 keep a live twin and 48 do not, so the pair is three entries' practice rather than a convention and there is nothing to enforce. Building the proposed rule would have failed 48 entries. See ledger/2026-09-29-a-convention-i-inferred-from-one-entry.md",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "Two of the three pairs were already right, so the rate is on",
+      "verdict": "moment",
+      "by": "a statement about the sample at the time of writing, not a claim about anything. It is here so the one-in-three is not later read as a measured rate.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
+      "key": "It does not explain how one re-read missed both.",
+      "verdict": "moment",
+      "by": "an observation about that day's pass, not a claim about anything checkable. The entry deliberately offers no rate: two is not a sample.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
+      "key": "It adds no rule that would have caught either.",
+      "verdict": "open",
+      "by": "true and the sharper half. check_closed_caveats.py witnesses a *closed* caveat against the tree; nothing witnesses an open one against the thing it says is absent. A rule that did would have caught the bar chart the day the e2e assertion landed.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
+      "key": "It leaves the entry's other caveat open.",
+      "verdict": "open",
+      "by": "true, and it is now that entry's only open one: nothing fails if a future Catalog grows a second name-to-TableDef lookup a view could satisfy. check_handlers.py rule 1 covers the handlers, not the catalog.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "It measures no latency, and that half is still blocked.",
+      "verdict": "open",
+      "by": "true, and deliberately not faked. A loopback duration against an in-memory store is mostly scheduling; examples/deployed is where it would be timed and needs MinIO, which this container has none of.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "It measures the request only.",
+      "verdict": "deliberate",
+      "by": "ByteSize() is the protobuf payload. Draining a server-streaming response to weigh it would make the batch comparison meaningless -- the same twenty rows come back either way -- and the caveats are about what a caller sends. The class docstring says so rather than letting \"bytes\" imply \"on the wire\".",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "Only the Python client weighs.",
+      "verdict": "closed",
+      "by": "Go and TypeScript weigh now, each with the same two tests. Go needed a sendingStream wrapper in related_test.go first: grpc-go hands a stream interceptor the call and not the payload, so every Query was a nil. See ledger/2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "It does not explain the `4n + 2` from the wire format.",
+      "verdict": "closed",
+      "by": "decoded message by message rather than read off the encoding rules: two bytes for the oneof wrapping the insert in a BatchOperation, two for the repeated field holding it in the BatchRequest. And the `envelope` is not framing -- an empty BatchRequest weighs zero, so the two bytes are the atomicity enum. See ledger/2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-bytes-do-not-need-a-network.md",
+      "key": "Nothing weighs a relation load, a join or an aggregate.",
+      "verdict": "narrowed",
+      "by": "narrowed: the relation load is weighed. One `Related` for three parents is 53 bytes; three calls for one parent each are 147 -- batching SAVES 64% here, against costing 6% on the write path, because a relation shares its header across keys and a write batch shares nothing. See ledger/2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "checked": "2026-09-29",
+      "residual": "the join and the aggregate. A join's fair comparison is one Join against two Query calls the caller folds; the aggregate's request side is uninformative because the saving is in the response this instrument does not weigh. The join is worth doing, the aggregate probably is not."
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "It measures no latency, in any client.",
+      "verdict": "open",
+      "by": "true and unchanged: a loopback duration against an in-memory store is mostly scheduling, and examples/deployed needs MinIO.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "It compares the three by hand.",
+      "verdict": "open",
+      "by": "true. The deltas agreeing at +82 is a fact two tests report and a person noticed; nothing asserts the relation. A runner that did would need one shared workload with identical rows across the three adapters, which is a real change to /api/round-trips.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "The request only, again.",
+      "verdict": "deliberate",
+      "by": "inherited from the Python entry and settled there: each instrument sees what its own channel is about to send. Weighing a response would make the batch comparison meaningless, since the same rows come back either way.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "The Go paging test is the only thing that drains an offset r",
+      "verdict": "deliberate",
+      "by": "the drain is there so the request is sent; a caller who abandoned the stream half way would have sent the same request and would weigh the same, which is right. Testing that would be testing grpc rather than this client.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
+      "key": "Nothing weighs a relation load, a join or an aggregate",
+      "verdict": "narrowed",
+      "by": "narrowed: the relation load is weighed. One `Related` for three parents is 53 bytes; three calls for one parent each are 147 -- batching SAVES 64% here, against costing 6% on the write path, because a relation shares its header across keys and a write batch shares nothing. See ledger/2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "checked": "2026-09-29",
+      "residual": "the join and the aggregate. A join's fair comparison is one Join against two Query calls the caller folds; the aggregate's request side is uninformative because the saving is in the response this instrument does not weigh. The join is worth doing, the aggregate probably is not."
+    },
+    {
+      "entry": "2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "key": "No join, no aggregate.",
+      "verdict": "open",
+      "by": "true, and the reason differs between them: a join's fair comparison is one Join against two Query calls, which is worth measuring; the aggregate's request side is uninformative because both requests are small and the saving is in the response. The join is the piece of work left.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "key": "The relation comparison is against the same RPC, not against",
+      "verdict": "deliberate",
+      "by": "three Related calls for one parent each is the honest no-batching alternative and shares the fixture's declaration, which is what makes the subtraction clean. Three filtered Query calls would send something different again and the difference would be the query shape rather than the batching.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
+      "key": "Three parents, one shape.",
+      "verdict": "open",
+      "by": "true. The saving is roughly the header times n-1 so it grows with the fan-out, and nothing measures the slope the way the write path's five sizes did.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-convention-i-inferred-from-one-entry.md",
+      "key": "It does not check the majority convention either.",
+      "verdict": "open",
+      "by": "true, and it is the rule worth having: an entry that strikes a caveat and writes no closure inside the strike says a claim was answered and names nothing that answered it -- the mirror of the `by`-is-required rule for `closed`. This entry found the wrong rule and stopped rather than building the right one in the same breath.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-convention-i-inferred-from-one-entry.md",
+      "key": "One count, one day.",
+      "verdict": "moment",
+      "by": "3 of 51 is today's tree, stated as a measurement at a date. Nothing keeps the docstring's number honest as entries are added, which is the staleness this repository's guards exist for -- recorded as a passing observation rather than a gap, because the finding is the ratio and not the integers.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "It checks that a test exists and what it declares, never tha",
+      "verdict": "deliberate",
+      "by": "this entry: a static guard over source cannot run a suite. The three client suites run these tests; this only stops one going missing.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "`BOUNDARY` is a heuristic, not a parser.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "The three real-tree mutations were hand-run.",
+      "verdict": "closed",
+      "by": "scripts/mutate_guard.py: the five real-tree mutations were re-run through scripts/mutate.py and are recorded under ledger/mutations/, so the restore, the exactly-once anchor check and the reported-suite count now apply to them",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "The roster of test names is still weaker than a roster of do",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "`NEXT_TEST` in the test file is a fourth hand-maintained per",
+      "verdict": "narrowed",
+      "residual": "a fourth client with a PROVES entry and no NEXT_TEST line raises inside the fixture, which the loop reports as exit 70 rather than silently generating no case -- so it is caught loudly, by a message naming an exception rather than the missing line",
+      "checked": "2026-09-29",
+      "by": "scripts/test_check_renamed_column.py generates one case per client from PROVES and reports a fixture that raises as exit 70, so a fourth client with no NEXT_TEST line is a loud failure rather than a silently absent case"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "It is a runner, not a dialect, so `mutate.py --help` does no",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "Nothing makes the real-tree mutations run again.",
+      "verdict": "closed",
+      "by": "scripts/mutations.json and scripts/run_mutations.py: seventeen suites, one command, 17 clean; scripts/check_mutations_roster.py keeps the roster complete and runs in check.sh",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "Only `check_renamed_column.py` was actually mutated against.",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md: six guards now have one, and the survey found a gap -- not a guard green for the wrong reason, but a class no guard covered, now scripts/check_cited_files.py",
+      "residual": "twenty of the twenty-seven still have none, and the six were chosen by which mutation was cheapest to construct rather than by which guard was least examined"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "The fixture guards are written into `scripts/` and removed i",
+      "verdict": "narrowed",
+      "by": "scripts/test_mutate_guard.py removes them in a finally, which covers every exit but a kill; the six names (passes, refuses, raises, exits_two, silent, prints_a_traceback_and_passes) are not check_* so no guard's own roster picks them up while they exist",
+      "residual": "a SIGKILL mid-run leaves six files in scripts/, which scripts/mutate.py solved for itself with an in-flight marker and this does not",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "Twenty guards still have no real-tree mutation.",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-a-guard-whose-roster-was-itself.md: eight of twenty-seven now, and the two added found two defects -- a guard whose roster was itself, and one whose pattern matched a mention",
+      "residual": "eighteen remain, and they include every substantial one: check_handlers, check_write_paths, check_secret_types, check_site_claims"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "Nothing re-runs any of them.",
+      "verdict": "closed",
+      "by": "scripts/mutations.json and scripts/run_mutations.py: seventeen suites, one command, 17 clean; scripts/check_mutations_roster.py keeps the roster complete and runs in check.sh",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "`EXTERNAL` has one entry and no test of its own reason.",
+      "verdict": "deliberate",
+      "by": "this entry: whose a file is is a claim about another repository, and no check this repository runs can settle it. What is checkable -- that the path is still cited and still does not resolve here -- is checked from both sides.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "The suffix rule accepts a citation that resolves to the wron",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
+      "key": "Only `docs/` is in scope.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "Eighteen guards still have no real-tree mutation.",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md: seventeen of twenty-eight now, and the seven added found a fifth defect -- check_guard_scope checking only half its property",
+      "residual": "eleven remain"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "Nothing re-runs any real-tree mutation, and this entry adds ",
+      "verdict": "closed",
+      "by": "scripts/mutations.json and scripts/run_mutations.py: seventeen suites, one command, 17 clean; scripts/check_mutations_roster.py keeps the roster complete and runs in check.sh",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "The self-skip is by filename.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "`PINNED` matches any `@v<digit>` token.",
+      "verdict": "narrowed",
+      "by": "comments are stripped before PINNED is applied, which removes the most likely source -- a version quoted in prose; the two it finds in the one real installer are both the Go tools it means",
+      "residual": "a live non-Go version-pinned string in a file that also runs `go install` would read as a pinned Go tool; nothing in the tree does today",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
+      "key": "The cost-prose marker's granularity is unchanged.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "Eleven guards still have no real-tree mutation.",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "scripts/mutations.json's `unmutated` names all eleven with a sentence each, and scripts/check_mutations_roster.py refuses a guard in neither list -- so the eleven are a checked list rather than a number in prose",
+      "residual": "they still have no mutation, and seven of the eleven reasons are scheduling rather than a technical obstacle"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "The scope rule only sees `<root> / \"\u2026\"` paths.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "Nothing checks the two sentences beyond their tree lists.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
+      "key": "`check_toolchain_pins` and `check_handlers` were mutated at ",
+      "verdict": "narrowed",
+      "by": "both guards' fixture tests cover the other sites over a tree they build; what the single real-tree mutation establishes is that the guard is pointed at the real file at all, which was the whole finding for check_toolchain_pins",
+      "residual": "thirteen of check_handlers' fourteen call sites have never been broken in the real tree, so a guard that saw one and not the others would pass",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "Eleven guards still have no mutation; the roster records tha",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md: three of the eleven picked up, and one of the three was broken -- check_site_css counted a substring as a use",
+      "residual": "eight remain; one has a technical reason and seven are still deferred"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "Nothing runs `run_mutations.py` on a schedule.",
+      "verdict": "narrowed",
+      "by": ".github/workflows/mutations.yml: workflow_dispatch, which works on any branch from the moment this lands, and a weekly cron",
+      "residual": "it has never fired, and the cron half cannot until the file is on main -- GitHub runs scheduled workflows from the default branch alone; the button is what works today and nobody has pressed it",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "A suite's `why` is unchecked prose.",
+      "verdict": "deliberate",
+      "by": "this entry: whether a mutation breaks the property a guard exists for, rather than something incidental, is a judgement no rule over the text can make. Two mutations were rejected during the survey for exactly that and both were caught by reading.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "The eleven reasons will rot.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "Eight guards still have no mutation.",
+      "verdict": "closed",
+      "by": "scripts/mutations.json: twenty-seven of twenty-eight, all clean; the one left is check_build_output, whose subject is the absence of a tracked artifact and which mutate.py's one-file patch cannot express",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "The whole-word rule still accepts a name in any string.",
+      "verdict": "deliberate",
+      "by": "this entry: the existing case `a class only ever built dynamically still counts as used` is there to stop a tightening to attribute values, and a class built by concatenation never appears as one. Narrower than substring, wider than attribute, and that is where the evidence puts it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "Comment stripping is three regexes, not a lexer.",
+      "verdict": "narrowed",
+      "by": "a `//` inside a string before a class use would read as dead CSS, which fails loudly rather than quietly -- the safe direction for a check that blocks a commit; the run came out unchanged across both source sets, so none exists today",
+      "residual": "a URL or regex containing `//` placed above a class use would produce a false refusal, and nothing distinguishes that from real dead CSS in the message",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "The measurement was taken once.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "Nothing runs `run_mutations.py` on a schedule.",
+      "verdict": "narrowed",
+      "by": ".github/workflows/mutations.yml: workflow_dispatch, which works on any branch from the moment this lands, and a weekly cron",
+      "residual": "it has never fired, and the cron half cannot until the file is on main -- GitHub runs scheduled workflows from the default branch alone; the button is what works today and nobody has pressed it",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "One mutation per guard is one sample.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "The defect rate is five in twenty-eight, not a prediction.",
+      "verdict": "moment",
+      "by": "a count of this repository's guards on 2026-09-29, most written in the preceding three weeks. It is a record of what the survey found, not a rate anything can re-derive; the measurement that would make it one has nobody to take it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-every-guard-now-has-one.md",
+      "key": "Four of the five findings are the same failure.",
+      "verdict": "deliberate",
+      "by": "this entry declines to generalise: four instances is the evidence base that produced the wrong rule in ledger/2026-09-29-a-caveat-closed-by-a-line-through-it.md, where a convention inferred from one entry would have failed 48. Counted before generalising is the habit; the count here is four and the rule is not built.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "It has never fired, and the scheduled half cannot until this",
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "attempted and refused: a workflow_dispatch from this container returns 403 Resource not accessible by integration, so the token can read runs and not start one. A person on any branch can press it; the agent that wrote it cannot.",
+      "residual": "the workflow has still never executed, and nothing in this container can make it; the cron half additionally waits on a merge to main"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "Nothing checks this workflow's steps the way `test_check_sh.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "A weekly cadence means a broken guard can be broken for a we",
+      "verdict": "deliberate",
+      "by": "this entry: the five guards found broken today had been broken for days to weeks, so a week is an improvement of the same order. Per-push costs a minute on every push beside twenty-one other jobs, and the defect class moves with the guards rather than with the tree they read.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-weekly-run-and-a-button.md",
+      "key": "`git diff --exit-code` is a belt, not a brace.",
+      "verdict": "deliberate",
+      "by": "this entry: it catches a mutation left behind within the job. A run killed by the runner leaves nothing to check, and mutate.py's in-flight marker is read only by the next run on the same checkout -- never the case in CI, where every run starts clean.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
+      "key": "Seventy-six open caveats last checked on 2026-09-28 were not",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
+      "key": "The heuristic that surfaced candidates is nearly useless.",
+      "verdict": "moment",
+      "by": "a record of how the three were found, not a tool anybody should reuse: grepping a caveat's backticked identifiers finds `Value` in 352 files. The three came from reading a cluster directly.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
+      "key": "Nothing stops this recurring.",
+      "verdict": "open",
+      "checked": "2026-09-29"
     }
   ]
 }

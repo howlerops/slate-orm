@@ -716,6 +716,7 @@ fn execution_limits(settings: &config::LimitSettings) -> Started<ExecutionLimits
         (settings.max_distinct, "max_distinct", 1),
         (settings.max_sort_rows, "max_sort_rows", 2),
         (settings.max_window_rows, "max_window_rows", 3),
+        (settings.max_in_values, "max_in_values", 4),
     ] {
         let Some(value) = value else { continue };
         if value == 0 {
@@ -728,7 +729,8 @@ fn execution_limits(settings: &config::LimitSettings) -> Started<ExecutionLimits
             0 => limits.max_groups = value,
             1 => limits.max_distinct = value,
             2 => limits.max_sort_rows = value,
-            _ => limits.max_window_rows = value,
+            3 => limits.max_window_rows = value,
+            _ => limits.max_in_values = value,
         }
     }
     Ok(limits)

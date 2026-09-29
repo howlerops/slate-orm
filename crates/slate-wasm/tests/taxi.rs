@@ -971,3 +971,43 @@ fn a_subquery_drops_its_null_candidates() {
         "a null reached the candidate list"
     );
 }
+
+/// How many distinct values a subquery's `IN` list actually needs.
+///
+/// Written because `resolve_subqueries` used to render one value per *row*,
+/// and the comment there now quotes a number. Measured rather than asserted:
+/// `ExecutionLimits::max_in_values` refuses the undeduplicated list, so the
+/// gap between these two counts is the difference between a query the node
+/// runs and one it refuses — and a number in a comment that nothing computes
+/// is the staleness this repository keeps finding.
+#[test]
+fn the_passengers_subquery_has_far_fewer_values_than_rows() {
+    let rows = taxi::decode(&trip_bytes()).expect("decode");
+    let present: Vec<&slate_tuple::Value> = rows
+        .iter()
+        .map(|r| &r.values()[5])
+        .filter(|v| !matches!(v, slate_tuple::Value::Null))
+        .collect();
+    let distinct: std::collections::BTreeSet<String> =
+        present.iter().map(|v| format!("{v:?}")).collect();
+    println!(
+        "passengers: {} non-null rows, {} distinct values",
+        present.len(),
+        distinct.len()
+    );
+    // Loose bounds on purpose. The point is the *order of magnitude* between
+    // them, which is what makes deduplicating the list decisive; pinning
+    // either number would make re-cutting the fixture a test failure about
+    // arithmetic.
+    assert!(
+        present.len() > 50_000,
+        "the corpus shrank: {}",
+        present.len()
+    );
+    assert!(
+        distinct.len() < 100,
+        "passengers has {} distinct values, so deduplicating the subquery's \
+         list is no longer the difference it is documented as",
+        distinct.len()
+    );
+}

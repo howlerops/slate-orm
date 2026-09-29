@@ -1,0 +1,67 @@
+{
+  "at": "2026-09-29T07:13:16+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_round_trips.py -q"
+  ],
+  "commit": "8230231",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the oneof and the repeated field are conflated into one total",
+      "old": "    assert operation.ByteSize() - insert.ByteSize() == 2, \"the oneof's tag and length\"",
+      "new": "    assert operation.ByteSize() - insert.ByteSize() == 0, \"the oneof's tag and length\"",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the envelope is read as framing rather than as the atomicity enum",
+      "old": "    assert empty.ByteSize() == 2, \"the envelope is the atomicity enum, not framing\"",
+      "new": "    assert empty.ByteSize() >= 0, \"the envelope is the atomicity enum, not framing\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the slope is not checked against a second statement",
+      "old": "    assert two.ByteSize() - one.ByteSize() == insert.ByteSize() + 4",
+      "new": "    assert two.ByteSize() - one.ByteSize() == insert.ByteSize() + 2",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the relation load is sent apart rather than together",
+      "old": "    session.related(SHELVES, [u64(10), u64(11), u64(12)], through=\"shelf_library\", on=SHELVES)\n    together = counter.weight()",
+      "new": "    for one_parent in (10, 11, 12):\n        session.related(SHELVES, [u64(one_parent)], through=\"shelf_library\", on=SHELVES)\n    together = counter.weight()",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_loading_a_relation_for_three_parents_saves_bytes_as_well_as_calls"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the saving is asserted as merely non-worse",
+      "old": "    assert together * 2 < apart, (",
+      "new": "    assert together <= apart, (",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T07:52:43+00:00",
+  "file": "clients/go/slate/schema_test.go",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_renamed_column.py"
+  ],
+  "commit": "b2e8682",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the Go test declares the current spelling instead of the previous one",
+      "old": "{Name: \"category\", Type: slate.TypeString}, // the previous spelling",
+      "new": "{Name: \"kind\", Type: slate.TypeString}, // the previous spelling",
+      "verdict": "caught",
+      "caught_by": [
+        "check_renamed_column: go's renamed-column test no longer declares an old spelling: no `\\{Name: \"category\", Type: slate\\.TypeString\\}` between that test and the next one."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the catalog in the Go test stops calling category a previous name",
+      "old": "{ name = \"kind\", type = \"str\", previous_names = [\"category\"] },",
+      "new": "{ name = \"kind\", type = \"str\" },",
+      "verdict": "caught",
+      "caught_by": [
+        "check_renamed_column: go's renamed-column test declares a name the catalog no longer calls an old one: clients/go/slate/schema_test.go has no `name = \"kind\", type = \"str\", previous_names = \\[\"category\"\\]`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T02:30:58+00:00",
+  "file": "examples/explorer/conformance/conformance.py",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "9537025",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the money case asks for the count, so the pair stops differing",
+      "old": "     {\"groupBy\": \"author\", \"sort\": \"total\", \"direction\": \"desc\"}, \"app\"),",
+      "new": "     {\"groupBy\": \"author\", \"sort\": \"count\", \"direction\": \"desc\"}, \"app\"),",
+      "verdict": "caught",
+      "caught_by": [
+        "'authors by what their books are worth' and 'authors by how many books they have' returned the same 'groups', so whatever separates them was dropped by all three clients or ignored by the server"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

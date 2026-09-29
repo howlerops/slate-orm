@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:03:20+00:00",
+  "file": "docs/performance.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_table_provenance.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a measurement table loses its build line",
+      "old": "it. This is that run.\n\n```\nbuild: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1\n```",
+      "new": "it. This is that run.",
+      "verdict": "caught",
+      "caught_by": [
+        "check_table_provenance: docs/performance.md:2034 records a measurement with no build line in its section."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

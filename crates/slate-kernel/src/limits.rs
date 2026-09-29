@@ -6,7 +6,7 @@
 //! state proportional to the data rather than to the answer, and until now
 //! nothing else had one.
 //!
-//! Four things do:
+//! Five things do:
 //!
 //! - `GROUP BY` holds one entry per distinct key. Grouping a large table by a
 //!   unique column is a request-sized copy of that table.
@@ -21,6 +21,14 @@
 //!   the rows before it can know which ten. There is no bounded form to fall
 //!   back to, which is why this one has its own ceiling rather than borrowing
 //!   the sort's.
+//! - An `IN` list is checked against every row the scan reaches, so its cost
+//!   is the list's length times the rows scanned. Unlike the four above it
+//!   holds no state — the memory is the request's own bytes, which the
+//!   transport already bounds — so this ceiling is about *time*, and it is the
+//!   one limit here that refuses before any row is read rather than partway
+//!   through. Above [`IN_LOOKUP_THRESHOLD`](crate::expr::IN_LOOKUP_THRESHOLD)
+//!   the list becomes a hash lookup, which flattens the per-row cost but not
+//!   the cost of building the set.
 //!
 //! # Refused, not killed
 //!
@@ -66,9 +74,24 @@ pub const DEFAULT_SORT_LIMIT: usize = 5_000_000;
 /// bounds.
 pub const DEFAULT_WINDOW_LIMIT: usize = 5_000_000;
 
-/// Per-request ceilings on the operators that hold unbounded state.
+/// Values one `IN` list may carry.
 ///
-/// [`Default`] is the three constants in this module. Every field is a hard
+/// Ten thousand rather than a million, and the reason is that this ceiling is
+/// unlike the other four: they bound state the node accumulates while
+/// answering, where this bounds an input the caller sends. A caller who needs
+/// to match ten thousand keys is describing a join, and saying so gets a hash
+/// join with a build side the planner can cost — where an `IN` list of the
+/// same keys is a filter the planner can only apply.
+///
+/// The number is chosen against the *transport* rather than against memory: a
+/// list long enough to matter arrives inside a request the node has already
+/// accepted and decoded, so by the time this fires the bytes are spent. What
+/// it prevents is the scan.
+pub const DEFAULT_IN_LIST_LIMIT: usize = 10_000;
+
+/// Per-request ceilings on the operators whose cost the answer does not bound.
+///
+/// [`Default`] is the five constants in this module. Every field is a hard
 /// refusal rather than a hint: an operator that would exceed one stops and
 /// reports instead of continuing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +104,8 @@ pub struct ExecutionLimits {
     pub max_sort_rows: usize,
     /// Rows a window function may hold. See [`DEFAULT_WINDOW_LIMIT`].
     pub max_window_rows: usize,
+    /// Values one `IN` list may carry. See [`DEFAULT_IN_LIST_LIMIT`].
+    pub max_in_values: usize,
 }
 
 impl Default for ExecutionLimits {
@@ -101,6 +126,7 @@ impl ExecutionLimits {
             max_distinct: DEFAULT_DISTINCT_LIMIT,
             max_sort_rows: DEFAULT_SORT_LIMIT,
             max_window_rows: DEFAULT_WINDOW_LIMIT,
+            max_in_values: DEFAULT_IN_LIST_LIMIT,
         }
     }
 }
@@ -118,6 +144,7 @@ impl ExecutionLimits {
             max_distinct: usize::MAX,
             max_sort_rows: usize::MAX,
             max_window_rows: usize::MAX,
+            max_in_values: usize::MAX,
         }
     }
 }

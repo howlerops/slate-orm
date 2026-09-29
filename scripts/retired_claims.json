@@ -36,6 +36,12 @@
       "retired_by": "ledger/2026-09-28-a-having-brackets-the-way-a-where-does.md",
       "why": "It does now, through the same parser the WHERE uses. The reason given for the limit \u2014 that the group-condition lists had no nested form to lower \u2014 was true of the spec and never of the kernel, whose Grouping::having has always been an Expr tree.",
       "instead": "A HAVING brackets exactly as a WHERE does; a join's WHERE is the one clause that still takes AND only."
+    },
+    {
+      "phrase": "because a check cannot hold one",
+      "retired_by": "ledger/2026-09-19-the-regex-hole-that-was-not-there.md",
+      "why": "A check can hold a regular expression and always could; `~`, `~*`, `!~` and `!~*` have parsed since the last ClickBench query. That entry withdrew the claim in docs/validation.md's findings section and left it standing in the same file's 'What this note does not settle', which is the two-copies failure this list exists for -- here with both copies in one file.",
+      "instead": "A check can hold a regular expression; what is not built is evaluating one anywhere but the server."
     }
   ]
 }

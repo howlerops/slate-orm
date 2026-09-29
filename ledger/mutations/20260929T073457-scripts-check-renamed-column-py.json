@@ -1,0 +1,133 @@
+{
+  "at": "2026-09-29T07:34:57+00:00",
+  "file": "scripts/check_renamed_column.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_renamed_column.py"
+  ],
+  "commit": "49bde65",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "Cargo.toml drops out of MANIFESTS, so a Rust client is unclassifiable rather than missing a test",
+      "old": "MANIFESTS = (\"pyproject.toml\", \"go.mod\", \"package.json\", \"Cargo.toml\")",
+      "new": "MANIFESTS = (\"pyproject.toml\", \"go.mod\", \"package.json\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a fourth client with no test fails and names it: no 'clients/rust is a client and PROVES has no entry' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires rule fires when clients were found, not when none were",
+      "old": "    if not found:",
+      "new": "    if found:",
+      "verdict": "caught",
+      "caught_by": [
+        "three clients with a renamed-column test pass: exit 1, wanted 0",
+        "no clients at all fails: no 'no client directories found' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a directory with no manifest is skipped",
+      "old": "    for name in unmanifested:",
+      "new": "    for name in []:",
+      "verdict": "caught",
+      "caught_by": [
+        "a directory with no manifest fails rather than being skipped: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a client with no roster entry is not reported",
+      "old": "    for name in sorted(set(found) - set(PROVES)):",
+      "new": "    for name in sorted(set(PROVES) - set(PROVES)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a fourth client with no test fails and names it: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a roster entry for a client that is gone is not reported",
+      "old": "    for name in sorted(set(PROVES) - set(found)):",
+      "new": "    for name in sorted(set(found) - set(found)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a rostered client that is gone fails: no 'is not a client directory any more' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the first rule looks for the declaration rather than the test",
+      "old": "if why := missing(proof.where, proof.test):",
+      "new": "if why := missing(proof.where, proof.declares):",
+      "verdict": "caught",
+      "caught_by": [
+        "a renamed test fails: exit 0, wanted 1",
+        "a test declaring only the current spelling fails: no \"python's renamed-column test no longer declares an old spelling\" in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the second rule looks for the test rather than the declaration",
+      "old": "elif why := missing(proof.where, proof.declares):",
+      "new": "elif why := missing(proof.where, proof.test):",
+      "verdict": "caught",
+      "caught_by": [
+        "a test declaring only the current spelling fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the third rule re-checks the test instead of the catalog's rename",
+      "old": "elif why := missing(*proof.renamed):",
+      "new": "elif why := missing(proof.where, proof.test):",
+      "verdict": "caught",
+      "caught_by": [
+        "a catalog that no longer renames the column fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an absent file reads as a file whose pattern is present",
+      "old": "        return f\"{relative} does not exist\"",
+      "new": "        return None",
+      "verdict": "caught",
+      "caught_by": [
+        "a renamed-away test file fails and says the file is gone: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every directory under clients/ is treated as a dotfile and skipped",
+      "old": "        if not child.is_dir() or child.name.startswith(\".\"):",
+      "new": "        if not child.is_dir() or not child.name.startswith(\".\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "three clients with a renamed-column test pass: exit 1, wanted 0",
+        "a fourth client with no test fails and names it: no 'clients/rust is a client and PROVES has no entry' in",
+        "a directory with no manifest fails rather than being skipped: no 'declares none of' in",
+        "a renamed-away test file fails and says the file is gone: no 'clients/go/slate/schema_test.go does not exist' in",
+        "a renamed test fails: no 'typescript has no renamed-column test' in",
+        "a test declaring only the current spelling fails: no \"python's renamed-column test no longer declares an old spelling\" in",
+        "a catalog that no longer renames the column fails: no 'declares a name the catalog no longer calls an old one' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

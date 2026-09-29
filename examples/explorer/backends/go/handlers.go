@@ -462,8 +462,16 @@ func buildAggregate(body json.RawMessage) (slate.JoinQuery, slate.Grouping, erro
 	}
 
 	grouping := slate.Grouping{
-		GroupBy:    []slate.Column{key},
-		Aggregates: []slate.Aggregate{slate.Count()},
+		GroupBy: []slate.Column{key},
+		// `SUM` over a decimal, beside the count and on every grouping.
+		//
+		// It is the one aggregate that returns money, and until it was here
+		// the corpus compared no aggregate returning anything but a u64. A sum
+		// over a decimal is *exact* — the kernel adds units of the column's
+		// smallest unit and never a float — which is the claim worth comparing
+		// across three clients, and the one a client that reached for a float
+		// somewhere would break by a cent rather than visibly.
+		Aggregates: []slate.Aggregate{slate.Count(), slate.SumOf(slate.At(books, 7))},
 		Limit:      spec.Limit,
 	}
 	if spec.Having != nil {
@@ -474,9 +482,19 @@ func buildAggregate(body json.RawMessage) (slate.JoinQuery, slate.Grouping, erro
 	if spec.Direction == "desc" {
 		direction = slate.Desc
 	}
+	// `total` sorts by the decimal sum, which is Agg(1).
+	//
+	// It is what makes the sum load-bearing rather than a field beside the
+	// answer. Three clients agreeing is blind to all three dropping the second
+	// aggregate — the groups would still carry a count and still match — but a
+	// sort naming Agg(1) when there is no second aggregate is refused by the
+	// server, and the runner reports a case that is supposed to answer.
 	column := slate.Agg(0)
-	if spec.Sort == "key" {
+	switch spec.Sort {
+	case "key":
 		column = slate.Key(0)
+	case "total":
+		column = slate.Agg(1)
 	}
 	grouping.Sort = []slate.GroupSortKey{
 		{Column: column, Direction: direction},
@@ -509,6 +527,9 @@ func (s *server) aggregate(ctx context.Context, session *slate.Session, body jso
 		entry := map[string]any{"key": encodeRow(group.Key)}
 		if len(group.Values) > 0 {
 			entry["count"] = encode(group.Values[0])
+		}
+		if len(group.Values) > 1 {
+			entry["total"] = encode(group.Values[1])
 		}
 		out = append(out, entry)
 	}

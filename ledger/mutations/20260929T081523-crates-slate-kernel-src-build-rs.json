@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T08:15:23+00:00",
+  "file": "crates/slate-kernel/src/build.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_cost_prose.py"
+  ],
+  "commit": "96217fd",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a comment states a cost constant value the constant does not have",
+      "old": "`POINT_READ_COST` was recorded as 3.0, re-measured at 1.0 by #269",
+      "new": "`POINT_READ_COST` was recorded as 3.0, re-measured at 2.5 by #269",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-29T00:33:33+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "bash",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_round_trips.py -q"
+  ],
+  "commit": "92c3437",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the offset loop reads one page fewer than it claims",
+      "old": "    for page in range(PAGES):",
+      "new": "    for page in range(PAGES - 1):",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every offset page asks for the same window",
+      "old": "q = Query(DOCS).limit(PAGE_SIZE).offset(page * PAGE_SIZE)",
+      "new": "q = Query(DOCS).limit(PAGE_SIZE).offset(0)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

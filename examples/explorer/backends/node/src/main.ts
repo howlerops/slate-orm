@@ -30,6 +30,7 @@ import {
   count,
   Client,
   distance,
+  grpc,
   div,
   extract,
   eq,
@@ -249,8 +250,123 @@ function buildQuery(spec: QuerySpec): Query {
   };
 }
 
+/**
+ * Counts the calls a client makes, per RPC.
+ *
+ * One interceptor covers both a unary write and a server-streaming read here,
+ * because grpc-js runs `interceptors` on every call regardless of its shape —
+ * which is not true of the other two clients: Go needs a unary *and* a stream
+ * interceptor, and the Go adapter's sibling of this class shipped with only
+ * the first for a day.
+ */
+class Counting {
+  readonly calls = new Map<string, number>();
+
+  /** A bound arrow, so it can be handed straight to `interceptors`. */
+  readonly interceptor = (options: grpc.InterceptorOptions, nextCall: grpc.NextCall) => {
+    // `/slate.v1.Records/Insert` -> `Insert`. The RPC names are not the
+    // client's method names: a single insert is `Insert` and a keyset page is
+    // `Query`.
+    const method = options.method_definition.path.split("/").pop() ?? "?";
+    this.calls.set(method, (this.calls.get(method) ?? 0) + 1);
+    return new grpc.InterceptingCall(nextCall(options));
+  };
+
+  clear(): void {
+    this.calls.clear();
+  }
+}
+
+/**
+ * The decimal renderings all three clients must agree on.
+ *
+ * `[units, scale]`, and the scale is the argument rather than a property of the
+ * value: a decimal on the wire is a count of the column's smallest unit and the
+ * scale never travels. Each client therefore has a renderer of its own —
+ * `Units.to_string_with_scale`, `Units.StringWithScale`, `unitsToString` — and
+ * each had an edge-case table in its *own* suite, written independently. Three
+ * tables that agree with three authors is not three renderers that agree with
+ * each other, which is what this is.
+ *
+ * See the Python adapter's `RENDERED` for why each line is here; the three are
+ * the same list and the conformance runner is what holds them to it.
+ */
+const RENDERED: [bigint, number][] = [
+  [0n, 0],
+  [0n, 2],
+  [7n, 1],
+  [5n, 4],
+  [-1n, 2],
+  [-75n, 2],
+  [1250n, 0],
+  [1250n, 1],
+  [1250n, 2],
+  [-1250n, 3],
+  [9223372036854775807n, 2],
+  [-9223372036854775808n, 2],
+  // Above scale 4, which nothing in the demo declares and no row here reached
+  // until the caveat asking for it was taken up. 18 is the schema's MAX_SCALE:
+  // at that scale an i64 has one digit left of the point, which is why the cap
+  // is where it is.
+  [1250n, 6],
+  [-75n, 9],
+  [1250n, 18],
+  [9223372036854775807n, 18],
+  [-9223372036854775808n, 18],
+];
+
+/** The id range `/api/round-trips` owns, clear of every other one. */
+const ROUND_TRIP_FIRST = 9400n;
+
+/**
+ * How many rows the write workloads write.
+ *
+ * Four rather than two, so `4 != 1` says what happened where `2 != 1` could be
+ * an off-by-one anywhere. Not twenty, as the client suites use: this runs
+ * against a shared demo database on every conformance run, and what is being
+ * compared is the shape of the count, which four shows.
+ */
+const ROUND_TRIP_ROWS = 4;
+
+/**
+ * Three keyset pages of three, over the eleven books the fixture seeds.
+ *
+ * Nine of eleven, so the third page is full and the walk never meets the end.
+ * A short page would stop the loop early in a way that depends on how many
+ * rows the *other* endpoints happen to have left behind, and the three
+ * adapters run at different points in that sequence.
+ */
+const ROUND_TRIP_PAGES = 3;
+const ROUND_TRIP_PAGE_SIZE = 3;
+
+/** Three seeded books that have sales. */
+const ROUND_TRIP_PARENTS = [10n, 11n, 12n];
+
 class Adapter {
   readonly clients: Record<string, Client> = {};
+
+  /**
+   * A fourth client, `app`'s identity again, whose channel counts.
+   *
+   * Its own connection rather than an interceptor on `clients["app"]`: the
+   * demo frontend and the conformance runner share that one, so a counter on
+   * it would fold a browser's polling into the measurement. Nothing but
+   * `/api/round-trips` ever touches this one.
+   */
+  readonly counted: Client;
+  readonly counter = new Counting();
+
+  /**
+   * One measurement at a time.
+   *
+   * Node runs one callback at a time but `await` interleaves, so two
+   * overlapping requests here would each read the other's calls. The
+   * conformance runner is sequential, so this never contends; it is here
+   * because a count that is silently wrong under concurrency is worse than one
+   * that waits. A promise chain rather than a mutex library, because that is
+   * what a mutex is in one line of JavaScript.
+   */
+  private counting: Promise<unknown> = Promise.resolve();
 
   constructor(head: string) {
     for (const [name, identity] of Object.entries(IDENTITIES)) {
@@ -270,6 +386,24 @@ class Adapter {
         ...CATALOG_VIEWS,
       });
     }
+    this.counted = Client.connect(
+      head,
+      IDENTITIES["app"]!,
+      grpc.credentials.createInsecure(),
+      { interceptors: [this.counter.interceptor] },
+    ).declaring({ ...CATALOG, ...CATALOG_VIEWS });
+  }
+
+  /** Runs `work` with nothing else measuring; see `counting`. */
+  private async measuring<T>(work: () => Promise<T>): Promise<T> {
+    const mine = this.counting.then(work, work);
+    // `.then(() => {})` rather than the promise itself, so a failure in one
+    // measurement does not reject every later one.
+    this.counting = mine.then(
+      () => undefined,
+      () => undefined,
+    );
+    return mine;
   }
 
   async meta(): Promise<unknown> {
@@ -792,13 +926,29 @@ class Adapter {
         throw new Error(`no such grouping: ${body.groupBy}`);
     }
 
-    const column = body.sort === "key" ? groupKey(0) : agg(0);
+    // `total` sorts by the decimal sum, which is `agg(1)`.
+    //
+    // It is what makes the sum load-bearing rather than a field beside the
+    // answer. Three clients agreeing is blind to all three dropping the second
+    // aggregate — the groups would still carry a count and still match — but a
+    // sort naming `agg(1)` when there is no second aggregate is refused by the
+    // server, and the runner reports a case that is supposed to answer.
+    const column =
+      body.sort === "key" ? groupKey(0) : body.sort === "total" ? agg(1) : agg(0);
     const direction = body.direction === "desc" ? ("desc" as const) : ("asc" as const);
     return {
       join: { ...b.query(), compute },
       grouping: {
         groupBy: [key],
-        aggregates: [count()],
+        // `SUM` over a decimal, beside the count and on every grouping.
+        //
+        // It is the one aggregate that returns money, and until it was here
+        // the corpus compared no aggregate returning anything but a u64. A sum
+        // over a decimal is *exact* — the kernel adds units of the column's
+        // smallest unit and never a float — which is the claim worth comparing
+        // across three clients, and the one a client that reached for a float
+        // somewhere would break by a cent rather than visibly.
+        aggregates: [count(), sumOf(at(books, 7))],
         ...(body.having ? { having: groupGe(agg(0), uint(body.having.minCount)) } : {}),
         // A tie-break on the key, so equal counts do not come back in whatever
         // order the hash produced — which would differ between adapters.
@@ -819,6 +969,7 @@ class Adapter {
       groups: groups.map((group) => ({
         key: encodeRow(group.key),
         ...(group.values[0] ? { count: encode(group.values[0]) } : {}),
+        ...(group.values[1] ? { total: encode(group.values[1]) } : {}),
       })),
     };
   }
@@ -985,6 +1136,125 @@ class Adapter {
     let left = 0;
     for await (const _ of session.query({ table: "books", filter: mine })) left++;
     return { failed, outcomes, left };
+  }
+
+  /**
+   * Every client's decimal renderer, on one shared table.
+   *
+   * No server anywhere: three pure functions compared to each other, which is
+   * the one thing in this contract that needs no database — and the reason it
+   * is here rather than in three suites is that three suites cannot disagree
+   * with each other.
+   */
+  async renderDecimals(): Promise<unknown> {
+    return {
+      rendered: RENDERED.map(([units, scale]) => ({
+        // `units` as a string, by the contract's 64-bit rule: two of these do
+        // not survive a JSON number, and they are the two the table exists
+        // for.
+        units: units.toString(),
+        scale,
+        text: unitsToString(units, scale),
+      })),
+    };
+  }
+
+  /**
+   * Run a fixed workload and report how many requests the client sent.
+   *
+   * The one thing three SDKs can differ about that no comparison of *answers*
+   * can see. A client that looped where the other two batched returns
+   * identical rows and costs N times as much, so `/api/batch` and
+   * `/api/related` agreeing says nothing about it.
+   *
+   * Each client's own suite already counts its own round trips, against its
+   * own expectation. Three independent assertions are weaker than one
+   * comparison: they cannot catch two clients that are wrong the same way,
+   * which is the failure this whole runner exists for.
+   *
+   * The persona is ignored on purpose — this always runs as `app`, on the
+   * adapter's own counting connection. Row-level security changes which rows a
+   * read returns and not how many requests fetching them takes, so letting the
+   * header through would offer a knob that cannot move the answer.
+   */
+  async roundTrips(_session: Session, body: { workload?: string }): Promise<unknown> {
+    const session = this.counted.session();
+    const scrub = () =>
+      session.deleteWhere({ table: "books", filter: ge(0, uint(ROUND_TRIP_FIRST)) });
+
+    return this.measuring(async () => {
+      // Before, not only after: a run that died partway through leaves rows
+      // behind, and `singles` would then fail on an already-exists rather
+      // than counting anything.
+      await scrub();
+      this.counter.clear();
+      try {
+        await this.runRoundTrip(session, body.workload);
+        return {
+          // Sorted, and zeroes left out: a `Map`'s iteration order is
+          // insertion order here, which is the order the *client* happened to
+          // send in — the one thing in this contract three languages would
+          // spell three ways for free.
+          calls: [...this.counter.calls]
+            .map(([rpc, count]) => ({ rpc, count }))
+            .sort((a, b) => (a.rpc < b.rpc ? -1 : a.rpc > b.rpc ? 1 : 0)),
+        };
+      } finally {
+        // Outside the count, and in a `finally` so a workload that threw
+        // partway still leaves the range empty for the next adapter the
+        // runner asks.
+        this.counter.clear();
+        await scrub();
+      }
+    });
+  }
+
+  private async runRoundTrip(session: Session, workload: string | undefined): Promise<void> {
+    switch (workload) {
+      case "singles": {
+        // The control. Without it the batch case shows only that a batch
+        // works, and a client sending one request per row returns exactly the
+        // same rows.
+        for (let n = 0; n < ROUND_TRIP_ROWS; n += 1) {
+          await session.insert("books", bookRow(ROUND_TRIP_FIRST + BigInt(n), `Round Trip ${n}`));
+        }
+        return;
+      }
+      case "batch": {
+        await session.batch({
+          atomicity: "independent",
+          operations: Array.from({ length: ROUND_TRIP_ROWS }, (_unused, n) => ({
+            kind: "insert" as const,
+            table: "books",
+            rows: [bookRow(ROUND_TRIP_FIRST + BigInt(n), `Round Trip ${n}`)],
+          })),
+        });
+        return;
+      }
+      case "paging": {
+        let cursor: Value[] | undefined;
+        for (let n = 0; n < ROUND_TRIP_PAGES; n += 1) {
+          const page = await session.page({
+            table: "books",
+            limit: ROUND_TRIP_PAGE_SIZE,
+            ...(cursor ? { after: cursor } : {}),
+          });
+          cursor = page.cursor;
+        }
+        return;
+      }
+      case "related": {
+        const key = SalesForeignKeys["sale_book"]!;
+        await session.related(
+          answers(key, "children"),
+          { on: key.child, through: key.name, way: "children" },
+          ROUND_TRIP_PARENTS.map((id) => uint(id)),
+        );
+        return;
+      }
+      default:
+        throw new Error(`unknown workload: ${workload}`);
+    }
   }
 
   async transaction(session: Session, body: { commit?: boolean }): Promise<unknown> {
@@ -1535,6 +1805,8 @@ async function main(): Promise<void> {
     "/api/typed": (s) => adapter.typed(s),
     "/api/bad-batch": (s) => adapter.badBatch(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
+    "/api/round-trips": (s, b) => adapter.roundTrips(s, b),
+    "/api/render-decimals": () => adapter.renderDecimals(),
   };
 
   const server = createServer((request, response) => {

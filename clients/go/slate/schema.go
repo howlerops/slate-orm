@@ -41,7 +41,11 @@ type ColumnDef struct {
 	// a power of ten out, for ever, with nothing anywhere reporting it. The
 	// wire carries units and never the scale, so the fingerprint is the only
 	// place this can be caught.
-	Scale int
+	//
+	// A uint8, matching slate_schema's own type and [Units.StringWithScale]'s
+	// argument: a negative scale is not a thing the system has, and the
+	// renderer refuses one by being unable to hold it.
+	Scale uint8
 	// Element is what a [TypeArray] column's elements are. Empty and
 	// meaningless for every other type.
 	//
@@ -161,7 +165,7 @@ func (t TableDef) Fingerprint() uint64 {
 			h.text(string(column.Element))
 		}
 		if column.Type == TypeDecimal {
-			h.number(column.Scale)
+			h.number(int(column.Scale))
 		}
 	}
 	h.bytes([]byte("key"))

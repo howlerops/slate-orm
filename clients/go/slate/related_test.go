@@ -382,11 +382,24 @@ func dialRecording(
 			streamer grpc.Streamer,
 			opts ...grpc.CallOption,
 		) (grpc.ClientStream, error) {
-			// No request message: a stream is opened before anything is sent,
-			// so a caller wanting the body has to wrap SendMsg. Nothing needs
-			// it yet, and a nil is honest about what this saw.
-			seen(method, nil)
-			return streamer(ctx, desc, cc, method, opts...)
+			// Nothing is reported here, and that is a change. This used to
+			// call `seen(method, nil)` on the open, because grpc hands a
+			// stream interceptor the call and not the payload — an honest nil
+			// for a body it could not see. Reporting on the open *and* on the
+			// send would count every read twice, so the report moved to the
+			// send: a server-streaming RPC sends its one request immediately
+			// after opening, so the count is the same and the message is no
+			// longer nil. Go could count a read and not weigh one until this.
+			stream, err := streamer(ctx, desc, cc, method, opts...)
+			if err != nil {
+				return stream, err
+			}
+			// And the body arrives later, through SendMsg, which is why the
+			// wrapper exists. Without it Go could count a read and never weigh
+			// one: the comment that used to stand here said "nothing needs it
+			// yet", and `ledger/2026-09-29-bytes-do-not-need-a-network.md`
+			// needed it the moment bytes were asked for in all three clients.
+			return &sendingStream{ClientStream: stream, method: method, seen: seen}, nil
 		}),
 	)
 	if err != nil {
@@ -394,6 +407,26 @@ func dialRecording(
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	return client
+}
+
+// sendingStream reports each message a client stream sends.
+//
+// grpc-go hands a stream interceptor the call and not the payload, so a
+// `Query` — the shape every read takes — is invisible to the interceptor
+// itself. Embedding `grpc.ClientStream` and overriding the one method keeps
+// every other part of the stream exactly what grpc built, which matters:
+// a hand-written forwarder would have to track the interface as it grows.
+type sendingStream struct {
+	grpc.ClientStream
+	method string
+	seen   func(method string, request proto.Message)
+}
+
+func (s *sendingStream) SendMsg(m any) error {
+	if message, ok := m.(proto.Message); ok {
+		s.seen(s.method, message)
+	}
+	return s.ClientStream.SendMsg(m)
 }
 
 // Whether a request message has a field set, by name.
@@ -448,11 +481,26 @@ func TestRelatedCarriesTheFreshnessFloor(t *testing.T) {
 		t.Errorf("the request carried no freshness floor: %v", related[0])
 	}
 
-	// And a session that does not want monotonic reads sends none, so the
-	// assertion above is about the watermark rather than about a field that
-	// is always populated.
+	// A session that does not want monotonic reads still reads its own writes,
+	// so it *also* carries a floor once it has written.
+	//
+	// This asserted the opposite until 2026-09-29, when comparing the three
+	// clients found that Python did it this way and Go and TypeScript did not:
+	// gating the floor on the flag dropped read-your-writes along with
+	// monotonic reads, and a caller who wrote and read back could miss their
+	// own write with no error anywhere. The flag is named for monotonic reads
+	// and now decides only that. See
+	// ledger/2026-09-29-read-your-writes-is-not-monotonic-reads.md.
+	//
+	// The write still comes first, and is still the point: without it the
+	// session has no watermark and the assertion would hold for a reason that
+	// has nothing to do with the flag. That hole was here for a fortnight.
 	related = nil
 	loose := client.SessionWithoutMonotonicReads()
+	if _, err := loose.Insert(ctx, "libraries",
+		[]slate.Value{slate.Uint(2), slate.String("annexe")}); err != nil {
+		t.Fatalf("seeding the loose session: %v", err)
+	}
 	if _, err := loose.Related(ctx, "shelves",
 		slate.Relation{On: "shelves", Through: "shelf_library", Way: slate.Children},
 		[]slate.Value{slate.Uint(1)}); err != nil {
@@ -461,8 +509,34 @@ func TestRelatedCarriesTheFreshnessFloor(t *testing.T) {
 	if len(related) != 1 {
 		t.Fatalf("want one Related request, got %d", len(related))
 	}
-	if hasField(t, related[0], "freshness") {
-		t.Errorf("a non-monotonic session should send no floor: %v", related[0])
+	if !hasField(t, related[0], "freshness") {
+		t.Errorf("a non-monotonic session that wrote still reads its own "+
+			"writes, so it carries a floor: %v", related[0])
+	}
+
+	// And the half that gives the flag its meaning: a loose session that has
+	// only *read* still sends no floor, because a read's `served_by` is not
+	// folded into its watermark. Two reads, not one — with a single read there
+	// is nothing for the first to have folded in, so the assertion would hold
+	// against a client that ignored the flag entirely.
+	//
+	// Written because a mutation found it missing: removing the `!s.monotonic`
+	// guard from `observeServedBy` survived the whole file.
+	related = nil
+	reader := client.SessionWithoutMonotonicReads()
+	for range 2 {
+		if _, err := reader.Related(ctx, "shelves",
+			slate.Relation{On: "shelves", Through: "shelf_library", Way: slate.Children},
+			[]slate.Value{slate.Uint(1)}); err != nil {
+			t.Fatalf("related: %v", err)
+		}
+	}
+	if len(related) != 2 {
+		t.Fatalf("want two Related requests, got %d", len(related))
+	}
+	if hasField(t, related[1], "freshness") {
+		t.Errorf("a read must not advance a non-monotonic session's "+
+			"watermark, so the second read carries no floor: %v", related[1])
 	}
 }
 

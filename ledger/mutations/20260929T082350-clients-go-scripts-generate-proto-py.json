@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T08:23:50+00:00",
+  "file": "clients/go/scripts/generate_proto.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_toolchain_pins.py"
+  ],
+  "commit": "96217fd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "one of the two pins is dropped",
+      "old": "PROTOC_GEN_GO_GRPC = \"google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2\"",
+      "new": "PROTOC_GEN_GO_GRPC = \"google.golang.org/grpc/cmd/protoc-gen-go-grpc\"",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "The rule is about the file, not the count. One pin left is still a pinned `go install`, the file still sets GOTOOLCHAIN, and the answer is unchanged -- correctly. What would be a finding is the file losing every pin, which `a tree with no pinned go install at all is reported` covers over a fixture; against the real tree that would mean deleting both constants, a mutation of two places at once that mutate.py does not express."
+    }
+  ],
+  "restored_clean": true
+}

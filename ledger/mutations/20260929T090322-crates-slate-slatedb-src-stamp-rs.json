@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:03:22+00:00",
+  "file": "crates/slate-slatedb/src/stamp.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_build_stamp.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a feature drops out of the stamp",
+      "old": "    (\"cache\", cfg!(feature = \"cache\")),\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "check_build_stamp: `cache` is a feature of slate-slatedb and the stamp does not report it. Add it to FEATURES in stamp.rs \u2014 a build difference the stamp omits is the defect #278 is about."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

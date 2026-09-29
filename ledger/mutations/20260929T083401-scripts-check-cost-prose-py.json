@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T08:34:01+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_guard_scope.py"
+  ],
+  "commit": "b91b411",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a guard claims a tree it does not read",
+      "old": "**It reads `crates/` and `docs/`.**",
+      "new": "**It reads `crates/`, `docs/` and `site/`.**",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

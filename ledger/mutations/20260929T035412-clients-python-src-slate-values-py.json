@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T03:54:12+00:00",
+  "file": "clients/python/src/slate/values.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_decimal.py -q --no-header -p no:cacheprovider"
+  ],
+  "commit": "3174583",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a negative scale is accepted again",
+      "old": "        if scale < 0:\n            raise ValueError(f\"a scale is not negative, got {scale}\")",
+      "new": "        if False:\n            raise ValueError(f\"a scale is not negative, got {scale}\")",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_decimal.py::test_a_negative_scale_is_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the padding width stops following the scale above four",
+      "old": "        return f\"{'-' if int(self) < 0 else ''}{whole}.{part:0{scale}d}\"",
+      "new": "        return f\"{'-' if int(self) < 0 else ''}{whole}.{part:0{min(scale, 4)}d}\"",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_decimal.py::test_rendering_against_a_scale[1250-18-0.000000000000001250]"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

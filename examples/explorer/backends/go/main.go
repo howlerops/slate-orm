@@ -10,7 +10,11 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"sync"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/howlerops/slate-orm/clients/go/slate"
 
@@ -36,6 +40,15 @@ var identities = map[string]slate.Identity{
 type server struct {
 	address string
 	clients map[string]*slate.Client
+
+	// A fourth client, `app`'s identity again, whose channel counts. Its own
+	// connection rather than an interceptor on `clients["app"]`: the demo
+	// frontend and the conformance runner share that one, so a counter on it
+	// would fold a browser's polling into the measurement. Nothing but
+	// `/api/round-trips` ever touches this one.
+	counted    *slate.Client
+	counter    *counting
+	countingMu sync.Mutex
 }
 
 // declared is the tables and the views in one map, which is what `Declaring`
@@ -60,7 +73,7 @@ func main() {
 	seed := flag.Bool("seed", false, "seed the demo data and exit")
 	flag.Parse()
 
-	s := &server{address: *head, clients: map[string]*slate.Client{}}
+	s := &server{address: *head, clients: map[string]*slate.Client{}, counter: newCounting()}
 	for name, identity := range identities {
 		client, err := slate.Dial(*head, identity)
 		if err != nil {
@@ -73,10 +86,23 @@ func main() {
 		// hand-typed one would be.
 		s.clients[name] = client.Declaring(declared())
 	}
+	// `Dial` only supplies the insecure transport when it is handed no options
+	// at all, so a caller adding an interceptor has to bring the credentials
+	// back with it.
+	counted, err := slate.Dial(*head, identities["app"],
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithChainUnaryInterceptor(s.counter.unary),
+		grpc.WithChainStreamInterceptor(s.counter.stream),
+	)
+	if err != nil {
+		log.Fatalf("dialling %s to count: %v", *head, err)
+	}
+	s.counted = counted.Declaring(declared())
 	defer func() {
 		for _, c := range s.clients {
 			_ = c.Close()
 		}
+		_ = s.counted.Close()
 	}()
 
 	if *seed {
@@ -112,6 +138,8 @@ func main() {
 	mux.HandleFunc("/api/typed", s.handle(s.typed))
 	mux.HandleFunc("/api/bad-batch", s.handle(s.badBatch))
 	mux.HandleFunc("/api/transaction", s.handle(s.transaction))
+	mux.HandleFunc("/api/round-trips", s.handle(s.roundTrips))
+	mux.HandleFunc("/api/render-decimals", s.handle(s.renderDecimals))
 
 	fmt.Printf("LISTENING %s\n", *listen)
 	if err := http.ListenAndServe(*listen, cors(mux)); err != nil {

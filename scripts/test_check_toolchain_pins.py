@@ -69,7 +69,7 @@ CASES: list[tuple[str, dict[str, str], str]] = [
         # that never named the variable inherited the change.
         "a pinned workflow and an installer that inherits is reported",
         {".github/workflows/ci.yml": PINNED, "scripts/gen.py": INHERITS},
-        "never mentions `GOTOOLCHAIN`",
+        "never sets `GOTOOLCHAIN`",
     ),
     (
         # `local` is a decision too. The rule is about inheriting, not about
@@ -81,6 +81,69 @@ CASES: list[tuple[str, dict[str, str], str]] = [
             "scripts/gen.py": INHERITS.replace(
                 "subprocess.run(", 'os.environ["GOTOOLCHAIN"] = "local"\nsubprocess.run('
             ),
+        },
+        "",
+    ),
+    (
+        # The mutation that found the real defect. `generate_proto.py` explains
+        # its `GOTOOLCHAIN=auto` in twenty lines of comment above the
+        # assignment, so deleting the assignment left the name in the file
+        # eight times and the guard green. A mention is not a setting.
+        "GOTOOLCHAIN named only in a comment is not a decision",
+        {
+            ".github/workflows/ci.yml": PINNED,
+            "scripts/gen.py": INHERITS.replace(
+                "subprocess.run(",
+                "# We want GOTOOLCHAIN=auto here because the plugin is pinned\n"
+                "# and declares a floor above the workflow's Go.\n"
+                "subprocess.run(",
+            ),
+        },
+        "never sets `GOTOOLCHAIN`",
+    ),
+    (
+        # The other half of the same finding: the pin and the invocation are
+        # apart. `generate_proto.py` keeps its two versions in constants fifty
+        # lines above `subprocess.run(["go", "install", package])`, so a
+        # pattern wanting both in one match never saw the only real installer
+        # in the repository — and the guard's roster was itself and this file.
+        "a pin held in a constant far from the `go install` is still a pin",
+        {
+            ".github/workflows/ci.yml": PINNED,
+            "scripts/gen.py": (
+                'import subprocess\nPKG = "example.com/cmd/x@v1.2.3"\n\n\n'.join([""] * 8)
+                + 'subprocess.run(["go", "install", PKG])\n'
+            ),
+        },
+        "never sets `GOTOOLCHAIN`",
+    ),
+    (
+        # Comment-stripping alone would have caught the real defect, because
+        # `generate_proto.py`'s mentions are all `#` lines. It would not catch
+        # this: a docstring survives the strip, and "we leave GOTOOLCHAIN
+        # alone" is the opposite of a decision. The two protections are not
+        # redundant, and the mutation restoring the bare-name pattern survived
+        # every other case here until this one was written.
+        "GOTOOLCHAIN named only in a docstring is not a decision",
+        {
+            ".github/workflows/ci.yml": PINNED,
+            "scripts/gen.py": (
+                '"""Install the generators. We leave GOTOOLCHAIN alone."""\n' + INHERITS
+            ),
+        },
+        "never sets `GOTOOLCHAIN`",
+    ),
+    (
+        # This guard and its own test carry the pattern's documentation and
+        # its fixture, so they look like installers and are skipped by name.
+        # Without the skip, a roster of exactly those two reads as a guard
+        # doing its job — which is what it did, for two days.
+        "the guard and its own test are not counted as installers",
+        {
+            ".github/workflows/ci.yml": PINNED,
+            "scripts/gen.py": DECIDES,
+            "scripts/check_toolchain_pins.py": INHERITS,
+            "scripts/test_check_toolchain_pins.py": INHERITS,
         },
         "",
     ),

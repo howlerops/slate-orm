@@ -27,11 +27,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 #: fire on a fixture that is about something else — and, for the two of them
 #: that count claims and paths, so that a case about a *contradiction* is not
 #: also a case about an empty set.
-SPARE = (
-    '"""It reads `docs/`."""\n'
-    'ROOT = 1\n'
-    'DOCS = ROOT / "docs"\n'
-)
+SPARE = '"""It reads `docs/`."""\nROOT = 1\nDOCS = ROOT / "docs"\n'
 
 
 def run(guards: dict[str, str], spare: bool = True) -> list[str]:
@@ -50,6 +46,28 @@ def run(guards: dict[str, str], spare: bool = True) -> list[str]:
 #: name, the guards to write, the text the report must carry, and whether to
 #: include the spare. An empty expectation means nothing is reported.
 CASES: list[tuple[str, dict[str, str], str, bool]] = [
+    (
+        # The other direction, added when a real-tree mutation found it
+        # missing: both guards making a scope claim understated it by one
+        # tree, and only claimed-but-not-read was checked. A claim that
+        # understates reads as exhaustive.
+        "a guard that reads a tree its scope claim omits is reported",
+        {
+            "check_a.py": '"""It reads `docs/`."""\n'
+            'ROOT = 1\nDOCS = ROOT / "docs"\nSITE = ROOT / "site"\n'
+        },
+        "`site/` is not among them",
+        True,
+    ),
+    (
+        # And the exemption that keeps the rule from becoming a different one:
+        # twenty-five of the twenty-eight guards say nothing about scope, and
+        # saying nothing is not saying the wrong thing.
+        "a guard with no scope claim at all reads what it likes",
+        {"check_a.py": 'ROOT = 1\nDOCS = ROOT / "docs"\nSITE = ROOT / "site"\n'},
+        "",
+        True,
+    ),
     (
         "a guard that says a tree is out of scope and does not read it is clean",
         {
@@ -77,10 +95,7 @@ CASES: list[tuple[str, dict[str, str], str, bool]] = [
     ),
     (
         "the other phrasings are read the same way",
-        {
-            "check_a.py": '"""`docs/` is not read by this."""\nROOT = 1\n'
-            'DOCS = ROOT / "docs"\n'
-        },
+        {"check_a.py": '"""`docs/` is not read by this."""\nROOT = 1\nDOCS = ROOT / "docs"\n'},
         "says `docs/` is out of scope",
         True,
     ),
@@ -148,8 +163,10 @@ CASES: list[tuple[str, dict[str, str], str, bool]] = [
     ),
     (
         "no scope claim anywhere is reported, not passed over",
-        {"check_a.py": '"""A guard that says nothing about scope."""\n'
-         'ROOT = 1\nDOCS = ROOT / "docs"\n'},
+        {
+            "check_a.py": '"""A guard that says nothing about scope."""\n'
+            'ROOT = 1\nDOCS = ROOT / "docs"\n'
+        },
         "no guard's docstring makes a scope claim",
         False,
     ),

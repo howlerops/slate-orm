@@ -368,7 +368,7 @@ actions = ["everything"]
 //
 // Pinned against the Python client's output, as the DOCS value above is.
 func TestADecimalsScaleIsPartOfTheFingerprint(t *testing.T) {
-	priced := func(scale int) slate.TableDef {
+	priced := func(scale uint8) slate.TableDef {
 		return slate.TableDef{
 			Name: "prices",
 			Columns: []slate.ColumnDef{

@@ -196,7 +196,12 @@ CASES: list[tuple[str, list[str], list[str], list[str], int, str]] = [
         [],
         [],
         0,
-        "1 of 13 adapter endpoints",
+        # Derived, because it is a consequence of the roster's length rather
+        # than a decision: the fixture serves `REACHED` plus everything
+        # `NOT_IN_THE_UI` names. Typed out it said 13 and went stale the
+        # first time a rostered endpoint got a panel, which is a red suite
+        # reporting arithmetic rather than the thing this case is about.
+        f"1 of {len(check_demo_surface.NOT_IN_THE_UI) + 1} adapter endpoints",
     ),
     (
         "a new endpoint in neither the UI nor the roster is reported by name",

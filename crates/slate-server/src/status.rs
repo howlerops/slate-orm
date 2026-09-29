@@ -270,6 +270,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::RunningDistinctCount => "RUNNING_DISTINCT_COUNT",
         KernelError::WindowOffsetZero { .. } => "WINDOW_OFFSET_ZERO",
         KernelError::TooManyGroups { .. } => "TOO_MANY_GROUPS",
+        KernelError::InListTooLarge { .. } => "IN_LIST_TOO_LARGE",
         KernelError::TooManyDistinctValues { .. } => "TOO_MANY_DISTINCT_VALUES",
         KernelError::DuplicateAssignment { .. } => "DUPLICATE_ASSIGNMENT",
         KernelError::NoSuchColumn { .. } => "NO_SUCH_COLUMN",
@@ -394,11 +395,20 @@ pub fn code_for(error: &KernelError) -> Code {
         // the others can be narrowed with a `LIMIT`, and a window cannot be,
         // because it is computed before the limit applies. Its message says
         // so, so a caller does not retry with a limit and get the same answer.
+        //
+        // `InListTooLarge` is the seventh and sits differently from all six:
+        // it is about the *request* rather than about what answering it costs,
+        // so `InvalidArgument` is arguable. `ResourceExhausted` all the same,
+        // because the remedy is the one this code means — send less — and
+        // because a caller retrying an `InvalidArgument` unchanged is making a
+        // mistake where a caller retrying this against a node configured with
+        // a higher ceiling is not.
         KernelError::JoinBuildTooLarge { .. }
         | KernelError::SortTooLarge { .. }
         | KernelError::WindowTooLarge { .. }
         | KernelError::TooManyGroups { .. }
         | KernelError::TooManyDistinctValues { .. }
+        | KernelError::InListTooLarge { .. }
         | KernelError::PredicateWriteTooLarge { .. } => Code::ResourceExhausted,
 
         // The caller's own request, malformed against this schema.

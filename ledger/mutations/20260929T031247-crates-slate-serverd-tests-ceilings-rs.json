@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T03:12:47+00:00",
+  "file": "crates/slate-serverd/tests/ceilings.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "ceilings",
+    "--no-fail-fast"
+  ],
+  "commit": "91119e0",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "only one stream is opened, so nothing is held at once",
+      "old": "const OPEN_AT_ONCE: usize = 10;",
+      "new": "const OPEN_AT_ONCE: usize = 1;",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the node is started without the concurrency limit",
+      "old": "        \"[limits]\\nmax_concurrent_requests = 1\\n\\n[observability]\\nmetrics_address = \\\"127.0.0.1:0\\\"\",",
+      "new": "        \"[observability]\\nmetrics_address = \\\"127.0.0.1:0\\\"\",",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

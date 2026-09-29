@@ -44,6 +44,24 @@ ENTRY = """# An entry
 """
 
 
+#: The ledger's "answered later" shape: the closure struck through, the original
+#: bullet left standing underneath. Both produce the same key, and only the
+#: standing one reaches the tracker — which is how a caveat closed in September
+#: was still recorded `open` in this repository months later.
+STRUCK = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed** by `b.md`, which cost one
+  fixture table rather than the rewrite estimated below.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
 def tree(root: Path, files: dict[str, str]) -> None:
     for name, body in files.items():
         path = root / name
@@ -886,6 +904,76 @@ def main() -> int:
         else:
             print("ok    --residual lists what each narrowed caveat owes")
             RESULTS.append(True)
+
+    # The pair the strike rule exists for. `open` on a struck-and-standing
+    # claim is the failure; `closed` on the same tree is not.
+    case(
+        "a claim that also stands struck through cannot be open",
+        {
+            "ledger/a.md": STRUCK,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "open",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 2, "untriaged": 0},
+        1,
+    )
+
+    case(
+        "the same pair recorded closed is fine",
+        {
+            "ledger/a.md": STRUCK,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "b.md, the entry the strike names",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # And the other direction: an `open` caveat in an entry with *no* strike
+    # must not be flagged. Written because a rule that fired on every open
+    # caveat would pass the two cases above and be useless.
+    case(
+        "an open claim with nothing struck is not flagged",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "untriaged": 1},
+        0,
+    )
 
     print(f"\n{sum(RESULTS)} passed, {len(RESULTS) - sum(RESULTS)} failed")
     return 0 if all(RESULTS) else 1

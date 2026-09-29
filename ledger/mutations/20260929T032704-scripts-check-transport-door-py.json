@@ -1,0 +1,90 @@
+{
+  "at": "2026-09-29T03:27:04+00:00",
+  "file": "scripts/check_transport_door.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_transport_door.py"
+  ],
+  "commit": "1095ca6",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the roster is read from DOORS rather than from the filesystem",
+      "old": "for name in sorted(set(clients) - set(DOORS)):",
+      "new": "for name in sorted(set(DOORS) - set(DOORS)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a fourth client with no door fails and names it: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a directory with no manifest is skipped instead of reported",
+      "old": "    for name in unmanifested:",
+      "new": "    for name in [] if unmanifested else unmanifested:",
+      "verdict": "caught",
+      "caught_by": [
+        "a directory with no manifest fails rather than being skipped: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the door's declaration is not checked",
+      "old": "        if why := missing(door.entry, door.opens):",
+      "new": "        if False and (why := missing(door.entry, door.opens)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a removed door fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "nothing has to walk through the door",
+      "old": "        if why := missing(door.walks, door.through):",
+      "new": "        if False and (why := missing(door.walks, door.through)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a door nothing walks through fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the grpc-js re-export is not required",
+      "old": "    if \"typescript\" in clients and (why := missing(*REEXPORT)):",
+      "new": "    if False and (why := missing(*REEXPORT)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a dropped grpc-js re-export fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty clients/ reads as clean",
+      "old": "    if not clients:",
+      "new": "    if clients and not clients:",
+      "verdict": "caught",
+      "caught_by": [
+        "no clients at all fails: no 'no client directories found' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing file counts as a match",
+      "old": "        return f\"{relative} does not exist\"",
+      "new": "        return None",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

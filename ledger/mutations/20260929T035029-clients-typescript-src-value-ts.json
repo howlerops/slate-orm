@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-29T03:50:29+00:00",
+  "file": "clients/typescript/src/value.ts",
+  "dialect": "node",
+  "command": [
+    "npx",
+    "tsx",
+    "--test",
+    "test/decimal.test.ts"
+  ],
+  "commit": "3174583",
+  "python": "3.11.15",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

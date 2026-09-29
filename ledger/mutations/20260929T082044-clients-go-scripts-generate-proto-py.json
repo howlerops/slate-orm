@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T08:20:44+00:00",
+  "file": "clients/go/scripts/generate_proto.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_toolchain_pins.py"
+  ],
+  "commit": "96217fd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the generator stops setting GOTOOLCHAIN and inherits the action default",
+      "old": "    env = {**os.environ, \"GOFLAGS\": \"-mod=mod\", \"GOTOOLCHAIN\": \"auto\"}",
+      "new": "    env = {**os.environ, \"GOFLAGS\": \"-mod=mod\"}",
+      "verdict": "caught",
+      "caught_by": [
+        "check_toolchain_pins: clients/go/scripts/generate_proto.py runs a pinned `go install` (...protoc-gen-go-grpc@v1.6.2, google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2, google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12, protoc-gen-go-grpc@v1.6.2) and never sets `GOTOOLCHAIN`, while .github/workflows/ci.yml pins `go-version`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

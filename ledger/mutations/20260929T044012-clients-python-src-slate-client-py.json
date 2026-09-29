@@ -1,0 +1,51 @@
+{
+  "at": "2026-09-29T04:40:12+00:00",
+  "file": "clients/python/src/slate/client.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_round_trips.py -q --no-header -p no:cacheprovider"
+  ],
+  "commit": "fa670cc",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the floor is never sent",
+      "old": "        implied = self._watermark.freshness()\n        return None if implied is None else implied.to_proto()",
+      "new": "        implied = self._watermark.freshness()\n        return None if implied is not None else implied",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_a_read_after_a_write_carries_the_freshness_floor",
+        "tests/test_round_trips.py::test_a_non_monotonic_session_still_carries_it_here_and_not_in_the_other_two"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a write stops advancing the watermark",
+      "old": "    def _observe(self, sequence: int | None) -> None:\n        self._watermark.observe(sequence)",
+      "new": "    def _observe(self, sequence: int | None) -> None:\n        self._watermark.observe(None)",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_a_read_after_a_write_carries_the_freshness_floor",
+        "tests/test_round_trips.py::test_a_non_monotonic_session_still_carries_it_here_and_not_in_the_other_two"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the floor is gated on monotonic_reads, as Go and TypeScript gate it",
+      "old": "        implied = self._watermark.freshness()\n        return None if implied is None else implied.to_proto()",
+      "new": "        implied = self._watermark.freshness() if self._monotonic_reads else None\n        return None if implied is None else implied.to_proto()",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_a_non_monotonic_session_still_carries_it_here_and_not_in_the_other_two"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

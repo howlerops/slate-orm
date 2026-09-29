@@ -423,18 +423,23 @@ pub(crate) struct LimitSettings {
     /// limit exists to prevent.
     #[serde(default)]
     pub(crate) max_returned_rows: Option<usize>,
-    /// How many requests may be in flight at once **on one connection**.
+    /// How many requests may be admitted at once, **across the whole node**.
     ///
-    /// Not node-wide, though the name reads that way: it becomes tonic's
-    /// `concurrency_limit_per_connection`, so a caller who opens a second
-    /// socket gets a second allowance. A node-wide bound needs a semaphore in
-    /// the service and this is not it. The name is kept because renaming a
-    /// shipped TOML key breaks every file that sets it, and because the
-    /// per-connection bound is still the one worth having against a single
-    /// client hammering one channel.
+    /// It was per connection, which made the name a lie: it became tonic's
+    /// `concurrency_limit_per_connection`, so a caller who opened a second
+    /// socket got a second allowance and the setting bounded politeness rather
+    /// than load. It is now `tower::limit::GlobalConcurrencyLimitLayer`, one
+    /// semaphore for the process, layered outside the per-connection stack.
     ///
-    /// Unset means unbounded, which is what shipped: a caller could open as
-    /// many concurrent requests as they had sockets.
+    /// **What it bounds is admission, not streaming.** A permit is released
+    /// when the response future resolves, and for a server-streaming RPC that
+    /// is before any row is read. So this caps how many requests are being
+    /// authorized, planned and started at once — the expensive part, and the
+    /// part a flood of cheap-looking requests turns into work — and not how
+    /// many response streams are open. A bound on open streams is a different
+    /// mechanism and does not exist.
+    ///
+    /// Unset means unbounded, which is what shipped.
     #[serde(default)]
     pub(crate) max_concurrent_requests: Option<usize>,
     /// How long one request may **wait** before it is cancelled — unreliably.
@@ -474,6 +479,16 @@ pub(crate) struct LimitSettings {
     /// the other.
     #[serde(default)]
     pub(crate) max_window_rows: Option<usize>,
+    /// Values one `IN` list may carry.
+    ///
+    /// Unlike the four above, this bounds the *request* rather than what
+    /// answering it costs the node, and it is the one ceiling that refuses
+    /// before a row is read. A caller matching more keys than this is
+    /// describing a join; raising it is reasonable for a node whose callers
+    /// really do send long key lists, and the error names the number so they
+    /// can ask.
+    #[serde(default)]
+    pub(crate) max_in_values: Option<usize>,
 }
 
 /// What the planner is told about the data.

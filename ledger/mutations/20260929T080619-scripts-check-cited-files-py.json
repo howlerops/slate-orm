@@ -1,0 +1,103 @@
+{
+  "at": "2026-09-29T08:06:19+00:00",
+  "file": "scripts/check_cited_files.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_files.py"
+  ],
+  "commit": "d15bdfb",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "only the exact path resolves, so a crate-relative citation is a finding",
+      "old": "        suffixes.update(\"/\".join(parts[at:]) for at in range(len(parts)))",
+      "new": "        suffixes.add(path)",
+      "verdict": "caught",
+      "caught_by": [
+        "a page whose citations all resolve passes: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the filesystem is read instead of the index, so an unstaged file counts",
+      "old": "    files = subprocess.run(\n        [\"git\", \"ls-files\"], cwd=ROOT, capture_output=True, text=True, check=True\n    ).stdout.split()",
+      "new": "    files = [p.relative_to(ROOT).as_posix() for p in ROOT.rglob(\"*\") if p.is_file()]",
+      "verdict": "caught",
+      "caught_by": [
+        "a cited file on disk but not in the index fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unresolved path is not reported",
+      "old": "        if path not in here:",
+      "new": "        if path not in here and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a cited file that is gone fails: exit 0, wanted 1",
+        "a crate-relative citation whose file is gone fails: exit 0, wanted 1",
+        "a cited file on disk but not in the index fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an EXTERNAL entry nothing cites is not reported",
+      "old": "        if path not in seen:",
+      "new": "        if path not in seen and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "an EXTERNAL entry nothing cites any more fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an EXTERNAL entry that started resolving here is not reported",
+      "old": "        elif path in here:",
+      "new": "        elif path in here and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "an EXTERNAL entry that now resolves here fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires rule fires when citations were found",
+      "old": "    if not seen:",
+      "new": "    if seen:",
+      "verdict": "caught",
+      "caught_by": [
+        "a page whose citations all resolve passes: exit 1, wanted 0",
+        "a cited file that is gone fails: no '`crates/thing/src/lib.rs`, which is not a file here' in",
+        "a crate-relative citation whose file is gone fails: no '`src/helper.rs`, which is not a file here' in",
+        "a cited file on disk but not in the index fails: no '`crates/thing/src/lib.rs`, which is not a file here' in",
+        "an EXTERNAL entry nothing cites any more fails: no 'nothing under docs/ cites it any more' in",
+        "an EXTERNAL entry that now resolves here fails: no \"as another project's and it now resolves here\" in",
+        "a page citing no file at all fails: no 'no file paths cited' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every cited path is treated as another project's",
+      "old": "        if path in EXTERNAL:",
+      "new": "        if path not in EXTERNAL:",
+      "verdict": "caught",
+      "caught_by": [
+        "a page whose citations all resolve passes: exit 1, wanted 0",
+        "a cited file that is gone fails: no '`crates/thing/src/lib.rs`, which is not a file here' in",
+        "a crate-relative citation whose file is gone fails: no '`src/helper.rs`, which is not a file here' in",
+        "a cited file on disk but not in the index fails: no '`crates/thing/src/lib.rs`, which is not a file here' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

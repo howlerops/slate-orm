@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:03:04+00:00",
+  "file": "crates/slate-kernel/Cargo.toml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_wasm_runtime.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a library in the wasm closure asks for an async runtime",
+      "old": "tokio = { version = \"1\", default-features = false, features = [\"time\"] }",
+      "new": "tokio = { version = \"1\", features = [\"rt-multi-thread\"] }",
+      "verdict": "caught",
+      "caught_by": [
+        "check_wasm_runtime: crates/slate-kernel/Cargo.toml: slate-kernel is in slate-wasm's dependency closure and takes tokio's default features."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -339,24 +339,234 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "crates/slate-kernel/tests/soft_delete.rs",
  ),
 
- # --- the grouped round-trip claims, all measured 2026-09-28 ----------------
- #
- # `WITNESSED` holds one name per closure, and both closures below are of a
- # caveat that grouped several claims — four in one case, two in the other.
- # So each names the *first* of its group and the rest ride on it, which is a
- # real weakness of the roster and is stated rather than papered over: a
- # revert that deleted only `clients/typescript/test/roundTrip.test.ts` would
- # leave `many-to-many-two-reads` present and this guard quiet. What saves it
- # here is that the other three are each witnessed in their own right by the
- # closures of the caveats they came from — `ts-round-trips`,
- # `ts-channel-options` and `go-paging-count`, all above — so the roster does
- # cover them, just not through this row.
- "many-to-many-two-reads": (
-     "a_many_to_many_is_two_reads_whatever_the_parent_count",
-     "crates/slate-orm/tests/read_counts.rs",
+ # --- the census closures, 2026-09-29 ----------------------------------------
+ "offset-costs-the-same": (
+     "test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor",
+     "clients/python/tests/test_round_trips.py",
  ),
- "py-round-trips": ("UnaryStreamClientInterceptor", "clients/python/tests/test_round_trips.py"),
-}
+
+ # --- the fifth ceiling and the node-wide limit, 2026-09-29 -------------------
+ "in-list-ceiling": ("max_in_values", "crates/slate-kernel/src/limits.rs"),
+ "node-wide-concurrency": (
+     "GlobalConcurrencyLimitLayer",
+     "crates/slate-serverd/src/serve.rs",
+ ),
+
+ # --- the demo panels the endpoints already served, 2026-09-29 ---------------
+ "demo-search-panel": ("Full-text search", "examples/explorer/web/src/panels.tsx"),
+ "demo-conditional-panel": (
+     "Conditional writes",
+     "examples/explorer/web/src/panels.tsx",
+ ),
+ "contains-conformance": (
+     "a search for terms in different rows",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- round trips compared across the three SDKs, 2026-09-29 -----------------
+ "round-trips-compared": (
+     "four rows in a batch cost one request",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "round-trips-endpoint": (
+     "func (s *server) roundTrips",
+     "examples/explorer/backends/go/roundtrips.go",
+ ),
+
+ # --- the corpus compares more precisely, 2026-09-29 --------------------------
+ "expected-access": (
+     "EXPECTED_ACCESS",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "must-differ-names-the-field": (
+     "def must_differ_findings",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- a decimal aggregate in the corpus, 2026-09-29 ---------------------------
+ "decimal-aggregate-case": (
+     "authors by what their books are worth",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "decimal-aggregate-sum": (
+     "slate.SumOf(slate.At(books, 7))",
+     "examples/explorer/backends/go/handlers.go",
+ ),
+ "decimal-renderers-shared-table": (
+     "twelve decimals rendered",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- the two demo controls, 2026-09-29 --------------------------------------
+ "demo-include-deleted": (
+     "the retired-rows flag is a privilege, not a filter",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+ "demo-money-measure": (
+     "the chart can be drawn in money instead of rows",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+
+ # --- the limit measured rather than read, 2026-09-29 -------------------------
+ "open-streams-unbounded": (
+     "open_streams_are_not_bounded_by_the_concurrency_limit",
+     "crates/slate-serverd/tests/ceilings.rs",
+ ),
+
+ # --- a door for the fourth client, 2026-09-29 --------------------------------
+ "transport-door": (
+     "a fourth client with no door fails and names it",
+     "scripts/test_check_transport_door.py",
+ ),
+
+ # --- a rename test for the fourth client, 2026-09-29 -------------------------
+ # The needle is the *fixture* case, not the guard's own report: the guard
+ # would keep printing three clients with its rule gutted, and did — the first
+ # draft searched the whole file and stayed green with the real declaration cut
+ # out of the real test.
+ "renamed-column-roster": (
+     "a fourth client with no test fails and names it",
+     "scripts/test_check_renamed_column.py",
+ ),
+
+ # --- the dialect mutate.py was missing, 2026-09-29 ---------------------------
+ # The needle is the suppression, not the runner's existence: a mutate_guard.py
+ # that passed a guard's exit code straight through would still be here, and
+ # would score every syntax-breaking mutation as caught.
+ "guard-dialect": (
+     "a guard that raises produces no result line at all",
+     "scripts/test_mutate_guard.py",
+ ),
+
+ # --- the mutations run again, 2026-09-29 -------------------------------------
+ # The needle is the completeness rule's headline case, not the runner: a
+ # run_mutations.py with an empty roster would run cleanly and prove nothing,
+ # which is the shape three of these caveats were about.
+ "mutations-roster": (
+     "a guard with neither fails — the headline case",
+     "scripts/test_check_mutations_roster.py",
+ ),
+
+ # --- a verdict that was stale, 2026-09-29 ------------------------------------
+ # The needle is the conformance case, not a decoder call: three adapters each
+ # decoding three tables is only a closure because something compares them.
+ "typed-rows-compared": (
+     "two rows through the generated decoders",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- a convention inferred from one entry, 2026-09-29 -----------------------
+ # The needle is the corrected count, in the docstring of the rule the wrong
+ # reason was attached to: what closed the caveat is the measurement, and the
+ # measurement is what must not quietly go away.
+ "the-pair-is-three-entries": (
+     "Three of fifty-one, counted",
+     "scripts/caveats.py",
+ ),
+
+ # --- the framing cost decoded, 2026-09-29 -----------------------------------
+ "four-n-plus-two-decoded": (
+     "test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope",
+     "clients/python/tests/test_round_trips.py",
+ ),
+
+ # --- the same framing cost in three clients, 2026-09-29 ---------------------
+ "go-weighs-a-read": (
+     "type sendingStream struct",
+     "clients/go/slate/related_test.go",
+ ),
+
+ # --- two caveats that were already answered, 2026-09-29 ---------------------
+ "bar-geometry-in-a-browser": (
+     "a bar has no width",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+ # The ordering, not the message: the wording was already right on every path
+ # that can produce it, and what makes that true is that every name resolves
+ # here before a converter sees it.
+ "view-named-before-converting": (
+     "fn authorize_join_inputs",
+     "crates/slate-server/src/service.rs",
+ ),
+
+ # --- a caveat closed by a line through it, 2026-09-29 -----------------------
+ "strike-is-not-open": (
+     "also stands struck through in that section",
+     "scripts/caveats.py",
+ ),
+
+ # --- the message that caused the regex detour, 2026-09-29 -------------------
+ "regex-spelling-hint": (
+     "a_word_where_a_comparison_belongs_names_the_spelling_that_exists",
+     "crates/slate-serverd/src/lang/pred.rs",
+ ),
+ # The needle is the *replacement* wording, not the retired phrase. It cannot
+ # be the phrase: `check_retired_claims.py` reads every file outside `ledger/`
+ # and would refuse this one for stating it. Two guards, one of which forbids
+ # what the other needs to grep for — found by writing the obvious needle and
+ # watching the retired-claims step go red on this file.
+ "check-can-hold-a-regex-once": (
+     "A check can hold a regular expression; what is not built",
+     "scripts/retired_claims.json",
+ ),
+
+ # --- the generated declaration nobody imports, 2026-09-29 --------------------
+ "generated-is-used": (
+     "imported but {where} no longer matches",
+     "scripts/check_generated_is_used.py",
+ ),
+
+ # --- the decimal renderers above scale four, 2026-09-29 ----------------------
+ "decimal-at-max-scale": (
+     "rendering_is_exact_at_the_schema_s_maximum_scale",
+     "crates/slate-orm/tests/money.rs",
+ ),
+ "negative-scale-refused": (
+     "a scale that is not a non-negative integer is refused",
+     "clients/typescript/test/decimal.test.ts",
+ ),
+
+ # --- a library that named a thread pool, 2026-09-29 --------------------------
+ "wasm-runtime-guard": (
+     "RUNTIME_ON_PURPOSE",
+     "scripts/check_wasm_runtime.py",
+ ),
+
+ # --- the two "I looked and it is fine" claims, 2026-09-29 --------------------
+ "python-rename-declared": (
+     "test_a_renamed_column_is_accepted_under_its_previous_name",
+     "clients/python/tests/test_fixture.py",
+ ),
+ "python-wheel-imports": (
+     "test_the_installed_package_imports",
+     "clients/python/tests/test_packaging.py",
+ ),
+
+ # --- the freshness floor read off the wire, 2026-09-29 -----------------------
+ "typescript-freshness-floor": (
+     "a session that has written sends a freshness floor, monotonic or not",
+     "clients/typescript/test/related.test.ts",
+ ),
+ "python-freshness-floor": (
+     "test_a_non_monotonic_session_still_reads_its_own_writes",
+     "clients/python/tests/test_round_trips.py",
+ ),
+ # The Go side, because Go is where the behaviour changed and where the
+ # two-read case that gives the flag its remaining meaning lives.
+ "read-your-writes-restored": (
+     "a read must not advance a non-monotonic session's",
+     "clients/go/slate/related_test.go",
+ ),
+ "ui-tab-order": (
+     "the UI's tabs are in the catalog's order",
+     "examples/explorer/web/test/api.test.ts",
+ ),
+ # The derivation itself, not a test: the caveat was that the list was
+ # hand-maintained, and what closes it is that it is not.
+ "ui-tables-derived": (
+     "export const TABLES: Record<string, string[]> = shown(CATALOG_TABLES);",
+     "examples/explorer/web/src/api.ts",
+ ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
 #:
@@ -408,34 +618,36 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
-    # The same-day census, 2026-09-29. Six of these say "the rest of the open
-    # caveats are unread", which is answered by every open verdict now
-    # carrying a `checked` date from one of the two census passes — a state of
-    # `docs/caveat-status.json`, which is the file this guard already parses.
-    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
-     'It does not re-read the other 113 open caveats against the t'):
-        'closed by the two census passes, which between them read every open caveat against the tree. The artifact is a `checked` date on every open verdict in `docs/caveat-status.json`; a witness pointing at the file this guard parses would be circular',
-    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
-     'It does not re-read the rest of the open caveats.'):
-        'closed by the two census passes. Same artifact as the row above: the reading leaves a date per verdict and nothing else, because a caveat that survives a reading changes no file',
-    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
-     'It reads eleven of 116, and changes four.'):
-        'closed by the two census passes reading the other 105. Same artifact: a `checked` date per open verdict',
-    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
-     'It does not examine the other ninety-one.'):
-        'closed by the two census passes reading the other ninety-one. Same artifact: a `checked` date per open verdict',
-    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
-     'It leaves forty-eight of the ninety-nine unread'):
-        'closed by the second census pass reading exactly those forty-eight. Same artifact: a `checked` date per open verdict',
-    ('2026-09-28-a-random-twelve-found-nothing.md',
-     'It reads twelve, so the interval is wide.'):
-        'closed by widening the sample to all ninety-nine, which is a count of caveats read and leaves no file of its own. The interval it produces is prose in the census entry',
     ('2026-09-28-a-random-twelve-found-nothing.md',
      'It says nothing about the `deliberate` verdicts.'):
-        'closed by drawing the first sample from the `deliberate` population and reading it. Fifteen verdicts read, one found reversed; the reading is the artifact and the one reversal is a single field in the tracker, which a witness pointing at the tracker could not distinguish from any other edit',
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
     ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
      'It still says nothing about the 890 `deliberate` verdicts.'):
-        'closed by drawing the first sample from the `deliberate` population and reading it. Fifteen verdicts read, one found reversed; the reading is the artifact and the one reversal is a single field in the tracker, which a witness pointing at the tracker could not distinguish from any other edit',
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-first-sample-of-the-deliberate-verdicts.md',
+     'One in fifteen is not a rate.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-census-finished-and-three-more-were-already-answered.md',
+     'The census is of `open` only.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
     ('2026-09-14-the-testserver-joins-the-workspace.md',
      '`scripts/build_testserver.sh` is now unnecessary — it existe'):
         'closed by deleting `scripts/build_testserver.sh`. `git grep build_testserver` now finds only this entry\'s own sentence, and the entry records the deletion inline',
@@ -548,6 +760,147 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-19-the-fifth-table-list.md',
+     "Nothing checks that the *order* of tables matches, only the "): 'ui-tab-order',
+    ('2026-09-19-the-fifth-table-list.md',
+     'The constant is still hand-maintained, and the next table to'):
+        'ui-tables-derived',
+    ('2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md',
+     'It does not resolve the divergence.'): 'read-your-writes-restored',
+    # The witness is the divergence test rather than the plain one: the caveat
+    # asked for an assertion in this client, and what the assertion found is
+    # the thing worth keeping alive.
+    ('2026-09-29-a-control-that-controlled-nothing-in-two-clients.md',
+     'The Python client still has no such assertion.'): 'python-freshness-floor',
+    ('2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md',
+     'No freshness-floor assertion on the TypeScript side. The Go '):
+        'typescript-freshness-floor',
+    ('2026-09-14-withdrawing-the-rename-caveat.md',
+     'The Python client has no equivalent test. Its fingerprint is'):
+        'python-rename-declared',
+    # Closed by a file that already existed. The witness is the test that does
+    # the thing the caveat asked for — install the built wheel and import it —
+    # rather than the file, because three of its four tests would still pass
+    # with that one deleted.
+    ('2026-09-13-the-typescript-package-was-not-importable.md',
+     'The Go and Python clients are not checked this way. Go has n'):
+        'python-wheel-imports',
+    ('2026-09-14-the-kernel-on-wasm.md',
+     'Nothing else in the workspace is checked for the same proble'):
+        'wasm-runtime-guard',
+    ('2026-09-29-a-caveat-closed-by-a-line-through-it.md',
+     'Nothing stops the pair being created wrongly in the first pl'):
+        'the-pair-is-three-entries',
+    ('2026-09-29-bytes-do-not-need-a-network.md',
+     'Only the Python client weighs.'): 'go-weighs-a-read',
+    ('2026-09-29-bytes-do-not-need-a-network.md',
+     'It does not explain the `4n + 2` from the wire format.'):
+        'four-n-plus-two-decoded',
+    ('2026-09-14-frontend-tests-and-configurable-ports.md',
+     'The bar chart is asserted on count and threshold, not on geo'):
+        'bar-geometry-in-a-browser',
+    ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
+     "It leaves the refusal's wording wrong"):
+        'view-named-before-converting',
+    ('2026-09-19-the-count-a-refusal-did-not-write.md',
+     'The plain (non-conditional) delete arm\'s "failed having appl'):
+        'strike-is-not-open',
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not improve the error message that caused the mistak'):
+        'regex-spelling-hint',
+    # The witness is the retirement entry rather than the corrected prose: the
+    # fix is a paragraph, and prose can be rewritten into a new wrong shape
+    # without touching the words a needle could hold. What must not come back
+    # is the claim, and that is what the list holds.
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not audit the rest of the note for the same class of'):
+        'check-can-hold-a-regex-once',
+    ('2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md',
+     '`--check` proves the file matches the catalog, not that anyb'):
+        'generated-is-used',
+    ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
+     'Scale above 4 is untested.'): 'decimal-at-max-scale',
+    # The TypeScript test rather than Go's type: a refusal Go makes
+    # unrepresentable leaves nothing to grep for, and this one is the run-time
+    # half that a `git grep` can actually see.
+    ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
+     'The negative-scale divergence is recorded, not resolved.'):
+        'negative-scale-refused',
+    # One guard closes both readings of the same gap: the door the third
+    # client was missing, and the door a fourth would be.
+    ('2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md',
+     'Nothing checks that a new client transport keeps this door.'): 'transport-door',
+    ('2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md',
+     'Nothing still checks that a fourth client arrives with a tra'): 'transport-door',
+    ('2026-09-29-the-python-client-had-no-renamed-column-to-declare.md',
+     'Nothing stops the fourth client arriving without this test.'): 'renamed-column-roster',
+    ('2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md',
+     'The three real-tree mutations were hand-run.'): 'guard-dialect',
+    ('2026-09-29-the-dialect-mutate-py-was-missing.md',
+     'Nothing makes the real-tree mutations run again.'): 'mutations-roster',
+    ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
+     'Nothing re-runs any of them.'): 'mutations-roster',
+    ('2026-09-29-a-guard-whose-roster-was-itself.md',
+     'Nothing re-runs any real-tree mutation, and this entry adds '): 'mutations-roster',
+    ('2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md',
+     'Eight guards still have no mutation.'): 'mutations-roster',
+    ('2026-09-20-the-third-decoder-test.md',
+     'No live-row case for `authors`, `sales` or `editions` in any'): 'typed-rows-compared',
+    # One test closes two readings: that the permit is released before a row
+    # is read, and that open streams are therefore bounded by nothing.
+    ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',
+     'It bounds admission, not open streams.'): 'open-streams-unbounded',
+    ('2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md',
+     'The streaming observation is read, not measured.'): 'open-streams-unbounded',
+    # The e2e check rather than the panel: a control that renders and sends
+    # nothing is still a control, and the check is what says it reaches the
+    # database. Both were mutation-tested through it.
+    ('2026-09-19-asking-for-the-rows-that-are-gone.md',
+     'The demo UI has no control for it \u2014 the identity switcher sh'):
+        'demo-include-deleted',
+    ('2026-09-29-the-panels-the-endpoints-were-already-serving.md',
+     'No `includeDeleted` control.'): 'demo-include-deleted',
+    ('2026-09-29-the-one-aggregate-that-returns-money.md',
+     "The demo's UI does not show it."): 'demo-money-measure',
+    # One shared table rather than three written independently, which is the
+    # distinction the caveat drew: three tables agreeing with three authors is
+    # not three renderers agreeing with each other.
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     'The corpus compares renderers at one scale.'):
+        'decimal-renderers-shared-table',
+    # The same sentence, written again forty minutes before the endpoint that
+    # answers it existed, and closed by the same witness.
+    ('2026-09-29-the-one-aggregate-that-returns-money.md', 'One scale, still.'):
+        'decimal-renderers-shared-table',
+    # Two entries, four days apart, saying the same thing: the one aggregate
+    # that returns money is compared by no client case. One names the case
+    # that sorts by it, one the adapter that asks for it — because a case
+    # comparing a field nobody computes compares three absences.
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     '`price` is not in any aggregate case.'): 'decimal-aggregate-case',
+    ('2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md',
+     'No `sum(price)` anywhere in the corpus.'): 'decimal-aggregate-sum',
+    # A roster for the plan text itself, which the pair check cannot see: it
+    # compares two plans to each other, so a server renaming both keeps every
+    # pair differing.
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     '`access` is compared only for equality between two cases.'):
+        'expected-access',
+    # The needle is the function rather than `MUST_DIFFER`, because the roster
+    # would still be there with the third element deleted; the check that
+    # reads it is what moved.
+    ('2026-09-19-which-guard-covers-which-field.md',
+     '`MUST_DIFFER` still compares whole answers. Two cases that d'):
+        'must-differ-names-the-field',
+    # Two entries asked, in two wordings, for the comparison the conformance
+    # runner now makes. One names the *case*, one the endpoint that serves it,
+    # because a case with no endpoint behind it is a case comparing three
+    # copies of a 404.
+    ('2026-09-28-the-go-client-was-already-counting.md',
+     'It does not check that the three agree.'): 'round-trips-compared',
+    ('2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md',
+     'No conformance case compares the three counts against each o'):
+        'round-trips-endpoint',
     # A `deliberate` whose decision the next day's work reversed, found by the
     # first random sample ever drawn from that verdict.
     ('2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md',
@@ -1688,38 +2041,65 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-four-say-absent-one-says-present.md',
      'The predicate paths were probed at one shape.'):
         'retired-row-only-predicate',
-
-    # The same-day census, 2026-09-29. Six of its ten closures are about the
-    # tracker's own state and are `=stamped`; these four name code.
-    ('2026-09-28-the-invisible-backlog-part-two.md',
-     'The four unmeasured round-trip claims are grouped here and n'):
-        'many-to-many-two-reads',
-    ('2026-09-28-two-reads-counted-rather-than-argued.md',
-     'It leaves the other two unmeasured claims where they were.'):
-        'py-round-trips',
-    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
-     'It does not re-read the other 113 open caveats against the t'):
-        '=stamped',
-    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
-     'It does not re-read the rest of the open caveats.'):
-        '=stamped',
-    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
-     'It reads eleven of 116, and changes four.'):
-        '=stamped',
-    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
-     'It does not examine the other ninety-one.'):
-        '=stamped',
-    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
-     'It leaves forty-eight of the ninety-nine unread'):
-        '=stamped',
-    ('2026-09-28-a-random-twelve-found-nothing.md',
-     'It reads twelve, so the interval is wide.'):
-        '=stamped',
+    ('2026-09-21-contains-in-the-sql-front-end.md',
+     "No search box in the demo's web UI."):
+        'demo-search-panel',
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     "The demo's UI does not show the conditional update."):
+        'demo-conditional-panel',
+    ('2026-09-18-deleting-a-row-somebody-else-just-edited.md',
+     "The demo's UI does not show it."):
+        'demo-conditional-panel',
+    ('2026-09-21-contains-on-the-wire.md',
+     'No conformance case.'):
+        'contains-conformance',
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     'No case covers a search that matches nothing *through the in'):
+        'contains-conformance',
     ('2026-09-28-a-random-twelve-found-nothing.md',
      'It says nothing about the `deliberate` verdicts.'):
         '=read',
     ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
      'It still says nothing about the 890 `deliberate` verdicts.'):
+        '=read',
+    ('2026-09-28-the-first-sample-of-the-deliberate-verdicts.md',
+     'One in fifteen is not a rate.'):
+        '=read',
+    ('2026-09-28-the-census-finished-and-three-more-were-already-answered.md',
+     'The census is of `open` only.'):
+        '=read',
+    ('2026-09-28-the-invisible-backlog-part-two.md',
+     'The four unmeasured round-trip claims are grouped here and n'):
+        'offset-costs-the-same',
+    ('2026-09-28-two-reads-counted-rather-than-argued.md',
+     'It leaves the other two unmeasured claims where they were.'):
+        'ts-round-trips',
+    ('2026-09-13-in-list-per-row-cost.md',
+     'It does not cap the list. A caller can still send a very lar'):
+        'in-list-ceiling',
+    ('2026-09-13-per-request-ceilings.md',
+     'Nothing here bounds the *number* of values in an `IN` list, '):
+        'in-list-ceiling',
+    ('2026-09-13-per-request-ceilings.md',
+     "`max_concurrent_requests` maps to tonic's per-connection lim"):
+        'node-wide-concurrency',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        '=read',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        '=read',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        '=read',
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        '=read',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        '=read',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
         '=read',
 }
 

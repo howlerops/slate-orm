@@ -67,6 +67,42 @@ async fn seeded() -> RecordStore<MemoryStore> {
     store
 }
 
+/// The list the test below lifts the ceiling for is refused without lifting it.
+///
+/// Written because the opt-out above is the shape that goes stale: a later
+/// session lowers `DEFAULT_IN_LIST_LIMIT`, or raises it past 50,000, and the
+/// test that opts out keeps passing either way while saying nothing. This
+/// fails if 50,000 stops being over the shipped ceiling.
+#[tokio::test]
+async fn a_list_this_large_is_refused_by_default() {
+    let store = seeded().await;
+    let txn = store.begin().await.unwrap();
+    let values: Vec<Value> = (0..50_000)
+        .map(|i| Value::I64(1_000_000 + i as i64))
+        .collect();
+    let error = txn
+        .count(
+            &app(),
+            &table(),
+            &Query::all().filter(Expr::In {
+                column: Ordinal(1),
+                values,
+            }),
+        )
+        .await
+        .expect_err("50,000 values is past the shipped ceiling");
+    assert!(
+        matches!(
+            error,
+            KernelError::InListTooLarge {
+                limit: slate_kernel::DEFAULT_IN_LIST_LIMIT,
+                actual: 50_000
+            }
+        ),
+        "expected the shipped ceiling to refuse this, got {error:?}"
+    );
+}
+
 /// Was: a large `IN` list cost O(list) per scanned row, so the caller chose
 /// the multiplier. The list is now arranged for lookup once per plan, so a
 /// row costs a binary search.
@@ -75,7 +111,16 @@ async fn seeded() -> RecordStore<MemoryStore> {
 /// access path; what changed is what happens when it stays in the residual.
 #[tokio::test]
 async fn a_large_in_list_no_longer_costs_the_list_length_per_row() {
-    let store = seeded().await;
+    // With the ceiling lifted, because 50,000 is now past
+    // `DEFAULT_IN_LIST_LIMIT` and a default store refuses it — which is the
+    // ceiling working. This test is about what the *executor* costs when a
+    // list that large does reach it, so it is the one place that has to opt
+    // out, and `a_list_this_large_is_refused_by_default` below is what keeps
+    // the opt-out from quietly becoming the shipped behaviour.
+    let store = seeded().await.with_limits(slate_kernel::ExecutionLimits {
+        max_in_values: usize::MAX,
+        ..slate_kernel::ExecutionLimits::default()
+    });
     let txn = store.begin().await.unwrap();
 
     let run = |n: usize| {
@@ -300,7 +345,7 @@ fn a_repeated_value_is_not_counted_twice_in_the_estimate() {
 /// than about allocating a gigabyte.
 mod limits {
     use super::*;
-    use slate_kernel::{Aggregate, ExecutionLimits, Grouping, KernelError, SortKey};
+    use slate_kernel::{Aggregate, ExecutionLimits, Grouping, KernelError, ScanOrder, SortKey};
 
     async fn store_limited_to(limits: ExecutionLimits) -> RecordStore<MemoryStore> {
         let catalog = Catalog::from_tables([table()]).expect("catalog");
@@ -318,6 +363,112 @@ mod limits {
         }
         txn.commit().await.unwrap();
         store
+    }
+
+    #[tokio::test]
+    async fn an_in_list_past_the_ceiling_is_refused_before_a_row_is_read() {
+        // The fifth ceiling, and the only one that can refuse up front: the
+        // list arrives whole in the request, where a group count or a sort's
+        // row count is discovered partway through an answer.
+        let limits = ExecutionLimits {
+            max_in_values: 10,
+            ..ExecutionLimits::default()
+        };
+        let store = store_limited_to(limits).await;
+        let txn = store.begin().await.unwrap();
+
+        let eleven: Vec<Value> = (0..11u64).map(Value::U64).collect();
+        let error = txn
+            .query(
+                &app(),
+                &table(),
+                Expr::In {
+                    column: Ordinal(0),
+                    values: eleven,
+                },
+                ScanOrder::Ascending,
+            )
+            .await
+            .expect_err("an IN list past the ceiling must be refused");
+
+        assert!(
+            matches!(
+                error,
+                KernelError::InListTooLarge {
+                    limit: 10,
+                    actual: 11
+                }
+            ),
+            "expected InListTooLarge naming both numbers, got {error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_in_list_at_the_ceiling_is_served() {
+        // The control. Without it "refuses an IN list" is satisfied by a
+        // ceiling of zero, which refuses every `IN` and would pass the test
+        // above — the `>` against `>=` mistake, which is one character.
+        let limits = ExecutionLimits {
+            max_in_values: 10,
+            ..ExecutionLimits::default()
+        };
+        let store = store_limited_to(limits).await;
+        let txn = store.begin().await.unwrap();
+
+        let ten: Vec<Value> = (0..10u64).map(Value::U64).collect();
+        // Bound, because the cursor borrows it: `&table()` would drop the
+        // temporary at the end of the statement the cursor outlives.
+        let docs = table();
+        let mut cursor = txn
+            .query(
+                &app(),
+                &docs,
+                Expr::In {
+                    column: Ordinal(0),
+                    values: ten,
+                },
+                ScanOrder::Ascending,
+            )
+            .await
+            .expect("a list exactly at the ceiling is inside it");
+        let mut seen = 0;
+        while cursor.next().await.expect("a row").is_some() {
+            seen += 1;
+        }
+        assert_eq!(seen, 10, "the ten rows the list names");
+    }
+
+    #[tokio::test]
+    async fn a_predicate_write_is_bounded_by_the_same_ceiling() {
+        // `delete_where` runs its predicate through the same `execute`, which
+        // is why the ceiling is checked there rather than on the read path
+        // only. Asserted rather than read off the call graph: "they share a
+        // function" is exactly the kind of claim this repository has been
+        // wrong about.
+        let limits = ExecutionLimits {
+            max_in_values: 10,
+            ..ExecutionLimits::default()
+        };
+        let store = store_limited_to(limits).await;
+        let txn = store.begin().await.unwrap();
+
+        let eleven: Vec<Value> = (0..11u64).map(Value::U64).collect();
+        let error = txn
+            .delete_where(
+                &SecurityContext::superuser(),
+                &table(),
+                Expr::In {
+                    column: Ordinal(0),
+                    values: eleven,
+                },
+                None,
+            )
+            .await
+            .expect_err("a predicate write past the ceiling must be refused");
+        assert!(
+            matches!(error, KernelError::InListTooLarge { limit: 10, .. }),
+            "expected InListTooLarge from delete_where, got {error:?}"
+        );
     }
 
     #[tokio::test]
@@ -540,10 +691,26 @@ fn the_default_limits_are_not_unbounded() {
         "the shipped defaults refuse nothing; finding 7 is reopened for every \
          deployment that does not set its own"
     );
+    // Every field, and the roster is the point. It listed three of four for as
+    // long as `max_window_rows` existed, so a window ceiling shipped as
+    // `usize::MAX` would have passed this — the same shape of staleness the
+    // module doc's "four things do" had when there were five. A destructuring
+    // `let` would catch an added field at compile time and is the better
+    // design; it is not used here because the roster has to name the field for
+    // the failure message, and a name typed twice is what this is for.
+    let ExecutionLimits {
+        max_groups,
+        max_distinct,
+        max_sort_rows,
+        max_window_rows,
+        max_in_values,
+    } = defaults;
     for (name, value) in [
-        ("max_groups", defaults.max_groups),
-        ("max_distinct", defaults.max_distinct),
-        ("max_sort_rows", defaults.max_sort_rows),
+        ("max_groups", max_groups),
+        ("max_distinct", max_distinct),
+        ("max_sort_rows", max_sort_rows),
+        ("max_window_rows", max_window_rows),
+        ("max_in_values", max_in_values),
     ] {
         assert!(value < usize::MAX, "{name} is unbounded by default");
         assert!(value > 0, "{name} is zero, which refuses every query");

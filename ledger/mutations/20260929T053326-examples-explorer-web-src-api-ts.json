@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T05:33:26+00:00",
+  "file": "examples/explorer/web/src/api.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer/web && npm test"
+  ],
+  "commit": "8d932b9",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the UI sorts its tabs instead of following the catalog",
+      "old": "  Object.fromEntries(Object.entries(all).filter(([name]) => !(name in NOT_IN_THE_UI)));",
+      "new": "  Object.fromEntries(Object.entries(all).filter(([name]) => !(name in NOT_IN_THE_UI)).sort());",
+      "verdict": "caught",
+      "caught_by": [
+        "the UI's tabs are in the catalog's order, not some order of their own"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a table's columns are reordered",
+      "old": "export const TABLES: Record<string, string[]> = shown(CATALOG_TABLES);",
+      "new": "export const TABLES: Record<string, string[]> = Object.fromEntries(Object.entries(shown(CATALOG_TABLES)).map(([n, c]) => [n, [...c].reverse()]));",
+      "verdict": "caught",
+      "caught_by": [
+        "the UI shows every table the catalog has, minus the ones it names"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

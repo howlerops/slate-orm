@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-29T08:23:30+00:00",
+  "file": "clients/go/scripts/generate_proto.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_toolchain_pins.py"
+  ],
+  "commit": "96217fd",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the generator stops setting GOTOOLCHAIN and inherits the action default",
+      "old": "    env = {**os.environ, \"GOFLAGS\": \"-mod=mod\", \"GOTOOLCHAIN\": \"auto\"}",
+      "new": "    env = {**os.environ, \"GOFLAGS\": \"-mod=mod\"}",
+      "verdict": "caught",
+      "caught_by": [
+        "check_toolchain_pins: clients/go/scripts/generate_proto.py runs a pinned `go install` (google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2, google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12) and never sets `GOTOOLCHAIN`, while .github/workflows/ci.yml pins `go-version`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the protoc-gen-go-grpc pin is dropped, so nothing in the file is pinned",
+      "old": "PROTOC_GEN_GO_GRPC = \"google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2\"",
+      "new": "PROTOC_GEN_GO_GRPC = \"google.golang.org/grpc/cmd/protoc-gen-go-grpc\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

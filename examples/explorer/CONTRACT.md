@@ -212,7 +212,7 @@ could never catch it, because all three would be equally wrong.
 
 ```json
 {"groupBy": "<name>", "having": null | {"minCount": 2},
- "sort": "count"|"key", "direction": "asc"|"desc", "limit": 20}
+ "sort": "count"|"key"|"total", "direction": "asc"|"desc", "limit": 20}
 ```
 
 A grouped join, which is what the chart draws.
@@ -256,7 +256,21 @@ on *negative* epoch seconds; some are in daylight saving and some are not, so
 
 An unknown name is refused, which is a case of its own below.
 
-→ `{"groups": [{"key": [tagged...], "count": {"u64":"3"}}, ...]}`
+→ `{"groups": [{"key": [tagged...], "count": {"u64":"3"},
+    "total": {"decimal":"4250"}}, ...]}`
+
+`total` is `SUM(books.price)` for the group, and it is on every grouping rather
+than behind a flag. It is the only aggregate in this contract that returns
+anything but a `u64`, and a sum over a decimal is **exact** — the kernel adds
+counts of the column's smallest unit and never a float — so a client that
+reached for a float anywhere on that path is wrong by a cent rather than
+visibly. Twelve groupings compare it, and it is in the aggregate list
+`/api/explain-aggregate` plans too, which is why `decodes` there includes the
+price column.
+
+The sort and the `having` still read the **count**: `Agg(0)` in all three
+adapters. A sum in either would be a different case rather than the same one
+with a field added.
 
 ### `POST /api/nearest`
 
@@ -364,6 +378,95 @@ being compared: a page with no limit (a page with no size is the whole table),
 a projection that drops a primary-key column (the cursor is that key, so there
 would be nothing to build one from), and a sort into an order the key does not
 give (the page boundary would not be where the cursor says).
+
+### `POST /api/render-decimals`
+
+No body. Renders a **fixed table** of `(units, scale)` pairs through the
+client's own decimal renderer.
+
+```json
+{ "rendered": [ { "units": "-75", "scale": 2, "text": "-0.75" }, … ] }
+```
+
+The three renderers — `Units.to_string_with_scale`, `Units.StringWithScale`,
+`unitsToString` — are the only part of the decimal story that is *not* the
+server's. A decimal on the wire is a count of the column's smallest unit and
+the scale never travels, so each client formats against a scale it holds
+locally, and `/api/conditional-update` compares that at exactly one value and
+one scale because that is what `books.price` declares.
+
+Seventeen rows, each for something that can only go wrong somewhere else:
+scale 0 (no point at all, and the branch where the two halves diverge), a value
+smaller than one whole unit (where the zero padding is the answer and dropping
+it turns `0.05` into `0.5`), a *negative* smaller than one whole unit
+(`-0.75`, where the sign has to survive a whole part that rounds to zero),
+scales 1, 3 and 4 so "pad to two" does not pass, and both i64 extremes, where
+negating the magnitude overflows in two of the three languages.
+
+The last five are scales 6, 9 and 18, added because nothing reached above 4 and
+a caveat asked whether the three still agreed up there. 18 is `slate_schema`'s
+`MAX_SCALE`, where an `i64` has one digit left of the point — which is why the
+cap is where it is, and why no row goes higher: a scale of 19 cannot come from
+a column.
+
+**No negative scale, and that is not an omission.** A scale is a `u8` in the
+schema and in two of the four renderers, so a negative one cannot be written
+down in Go at all and would not compile into this table. The other two refuse
+at run time — Python raises `ValueError`, TypeScript throws `RangeError` — and
+a refusal is not a rendering, so it belongs in each client's own suite rather
+than in a table of texts to compare.
+
+Fixed rather than taken from the body, for the reason `/api/nearest` gives: a
+table from the caller would let one adapter be asked a question the other two
+were not. `units` is a string by the 64-bit rule above — four of the seventeen
+do not survive a JSON number, and they are the rows the table exists for.
+
+### `POST /api/round-trips`
+
+```json
+{ "workload": "singles" | "batch" | "paging" | "related" }
+```
+
+Runs a fixed workload and reports **how many gRPC calls the client sent**, per
+RPC, sorted by name.
+
+```json
+{ "calls": [ { "rpc": "Insert", "count": 4 } ] }
+```
+
+The one thing three SDKs can differ about that no comparison of answers can
+see. Four singles and a batch of four write the same four rows; a relation
+loaded for three parents returns the same three groups whether the client sent
+one request or three. A client that looped where the other two batched is right
+about every row and costs N times as much, and every other case in this
+contract passes it.
+
+Counted at each client's own channel — a Python `grpc` interceptor, Go's
+`WithChainUnaryInterceptor` *and* `WithChainStreamInterceptor`, grpc-js's
+`interceptors` — not from the server's `/metrics`. A server-side count answers
+"how many requests arrived", which is the same number only if the client sent
+what it thinks it sent, and the claim is about the client. Each client's own
+suite already counts itself; three independent assertions cannot catch two
+clients wrong the same way, which is what this runner is for.
+
+- `singles` writes four rows one at a time. The control: without it the batch
+  case shows only that a batch works.
+- `batch` writes the same four as one batch.
+- `paging` walks three keyset pages of three over `books` — nine of the eleven
+  seeded, so the last page is full and the walk never meets the end.
+- `related` loads `sales` for three book keys in one call.
+
+The **RPC names are not the client method names**: a single insert is `Insert`
+and a keyset page is `Query`. Counts are plain JSON numbers rather than strings
+because they are counts of requests, not database values — the 64-bit rule
+above is about what a primary key survives.
+
+Each adapter counts on a **fourth client** of its own, `app`'s identity again,
+so a browser polling the demo cannot land in a measurement. `X-Demo-Identity`
+is therefore ignored here: row-level security changes which rows a read returns
+and not how many requests fetching them takes, so honouring it would offer a
+knob that cannot move the answer. The write workloads own ids 9400–9403 and
+scrub the range before and after, outside the count.
 
 ### `POST /api/transaction`
 

@@ -336,6 +336,13 @@ jobs:
       - run: python3 scripts/test_check_secret_types.py
       - run: python3 scripts/check_cited_docs.py
       - run: python3 scripts/test_check_cited_docs.py
+      # The same failure one level up from check_cited_tests.py, which
+      # matches identifiers: a docs page naming a *file* that has been
+      # renamed away points a reader at nothing, and nothing compiles a
+      # document. A citation may be written relative to a crate, so a path
+      # resolves when it is the tail of a tracked one.
+      - run: python3 scripts/check_cited_files.py
+      - run: python3 scripts/test_check_cited_files.py
       # A handler must authorise before it touches a table's shape.
       # Security finding 8 was fixed twice — the second time because
       # the first covered the handlers it was written about and the
@@ -373,6 +380,47 @@ jobs:
       # a schema the server does not have, and no type system sees it.
       - run: python3 scripts/check_proto_copies.py
       - run: python3 scripts/test_check_proto_copies.py
+      # A client with no way to pass interceptors, TLS or keepalive through
+      # to its channel is one a caller cannot instrument or secure. The
+      # TypeScript client shipped that way for months, and the roster here is
+      # read off `clients/` so a fourth arriving without a door is seen.
+      - run: python3 scripts/check_transport_door.py
+      - run: python3 scripts/test_check_transport_door.py
+      # A library crate that names an async runtime makes a decision
+      # belonging to whoever embeds it. slate-kernel did, used none of it, and
+      # only a wasm build noticed. The closure this checks is computed from
+      # the manifests; the exemptions outside it are a person's call.
+      - run: python3 scripts/check_wasm_runtime.py
+      - run: python3 scripts/test_check_wasm_runtime.py
+      # `codegen.py --check` proves a generated declaration matches the
+      # catalog, never that anybody imports it or puts it on a request. An
+      # adapter that stopped declaring would keep passing --check and send
+      # every request with no schema claim on it.
+      - run: python3 scripts/check_generated_is_used.py
+      - run: python3 scripts/test_check_generated_is_used.py
+      # A client accepts a renamed column's previous name by doing
+      # nothing at all — the server enumerates every spelling the catalog
+      # accepts — so the property is lost the moment a client gets in the
+      # way, with no test to say so. Two entries recorded Go and
+      # TypeScript as lacking it before anybody ran it. The roster is read
+      # off `clients/`, so a fourth arriving without the test is seen.
+      - run: python3 scripts/check_renamed_column.py
+      - run: python3 scripts/test_check_renamed_column.py
+      # scripts/mutate.py can read five test runners and no guard, so a
+      # mutation aimed at the real tree and judged by a guard had to be run
+      # by hand, without the restore-in-a-finally or the reported-suite
+      # count. mutate_guard.py is that missing dialect, and refuses to call
+      # a guard that died a guard that refused.
+      - run: python3 scripts/test_mutate_guard.py
+      # Three guards were green for reasons unrelated to what they check,
+      # and every one was found by mutating the real tree rather than a
+      # fixture. scripts/mutations.json holds one mutation per guard, or a
+      # sentence saying why there is none; this checks the roster is
+      # complete and its anchors still occur exactly once. Running the
+      # mutations is scripts/run_mutations.py, which breaks the tree and is
+      # deliberately not here.
+      - run: python3 scripts/check_mutations_roster.py
+      - run: python3 scripts/test_check_mutations_roster.py
 
   quickstarts:
     name: the landing page's code

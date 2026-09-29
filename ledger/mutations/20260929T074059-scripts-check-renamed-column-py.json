@@ -1,0 +1,39 @@
+{
+  "at": "2026-09-29T07:40:59+00:00",
+  "file": "scripts/check_renamed_column.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_renamed_column.py"
+  ],
+  "commit": "49bde65",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a boundary may start anywhere on a line, not only at column zero",
+      "old": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "new": "BOUNDARY = re.compile(r\"(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "verdict": "caught",
+      "caught_by": [
+        "a helper defined inside a test does not end its body: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "re.M is dropped, so only the file's first line can hold a boundary",
+      "old": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "new": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration only in some other go test fails: exit 0, wanted 1",
+        "a declaration only in some other python test fails: exit 0, wanted 1",
+        "a declaration only in some other typescript test fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

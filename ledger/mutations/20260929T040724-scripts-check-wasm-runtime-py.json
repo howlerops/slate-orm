@@ -1,0 +1,101 @@
+{
+  "at": "2026-09-29T04:07:24+00:00",
+  "file": "scripts/check_wasm_runtime.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_wasm_runtime.py"
+  ],
+  "commit": "0648395",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": [
+    {
+      "name": "inheriting the workspace default is not reported",
+      "old": "        if inherits:",
+      "new": "        if False and inherits:",
+      "verdict": "caught",
+      "caught_by": [
+        "a closure crate inheriting workspace defaults fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a feature wasm refuses is not reported",
+      "old": "        for feature in sorted(set(features) - ON_WASM):",
+      "new": "        for feature in sorted(set(features) & ON_WASM & frozenset()):",
+      "verdict": "caught",
+      "caught_by": [
+        "a closure crate asking for rt-multi-thread fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a library outside the closure needs no entry",
+      "old": "        if name not in RUNTIME_ON_PURPOSE:",
+      "new": "        if name not in RUNTIME_ON_PURPOSE and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "an unlisted library taking a runtime fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a binary is treated as a library",
+      "old": "        if not is_library(manifest, crates[name]) or tokio_features(manifest) is None:",
+      "new": "        if tokio_features(manifest) is None:",
+      "verdict": "caught",
+      "caught_by": [
+        "the real shape passes: exit 1, wanted 0",
+        "an unlisted binary taking a runtime passes: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an exemption for a departed crate is not reported",
+      "old": "        if name not in crates:",
+      "new": "        if name not in crates and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "an exemption for a crate that is gone fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an exemption for a crate now in the closure is not reported",
+      "old": "        elif name in reached:",
+      "new": "        elif name in reached and False:",
+      "verdict": "caught",
+      "caught_by": [
+        "an exemption for a crate now in the closure fails: no \"now in slate-wasm's closure\" in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a closure of one reads as fine",
+      "old": "    if len(reached) < 2:",
+      "new": "    if len(reached) < 0:",
+      "verdict": "caught",
+      "caught_by": [
+        "a wasm crate reaching nothing fails: no 'reaches no other workspace crate' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing wasm crate reads as fine",
+      "old": "    if WASM_CRATE not in crates:",
+      "new": "    if WASM_CRATE not in crates and False:",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ]
+}

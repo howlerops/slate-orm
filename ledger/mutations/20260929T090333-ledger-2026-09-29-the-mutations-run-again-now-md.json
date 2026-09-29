@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:03:33+00:00",
+  "file": "ledger/2026-09-29-the-mutations-run-again-now.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_mutation_claims.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an entry cites a mutation record that does not exist",
+      "old": "- `ledger/mutations/20260929T084515-clients-python-tests-test-fixture-py.json`",
+      "new": "- `ledger/mutations/20260929T084515-clients-python-tests-test-fixtures-py.json`",
+      "verdict": "caught",
+      "caught_by": [
+        "check_mutation_claims: ledger/2026-09-29-the-mutations-run-again-now.md cites ledger/mutations/20260929T084515-clients-python-tests-test-fixtures-py.json, which is not there."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

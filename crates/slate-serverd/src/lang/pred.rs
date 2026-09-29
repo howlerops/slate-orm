@@ -473,8 +473,9 @@ impl Parser<'_> {
             at,
             match self.peek() {
                 Some(token) => format!(
-                    "expected a comparison after the column, found {}",
-                    token.kind.describe()
+                    "expected a comparison after the column, found {}.{}",
+                    token.kind.describe(),
+                    hint(&token.kind)
                 ),
                 None => "expected a comparison after the column".to_owned(),
             },
@@ -841,6 +842,41 @@ pub(crate) fn list_columns(names: &[String]) -> String {
     }
 }
 
+/// Word spellings of a regular-expression test that this grammar does not have.
+///
+/// `ledger/2026-09-19-the-regex-hole-that-was-not-there.md` is entirely about
+/// one of these. A session wrote `title matches '^.{1,80}$'`, read
+/// ``expected a comparison after the column, found `matches` `` as "there is no
+/// regex here", and published a design note whose headline finding was that
+/// the rule language could not express a length bound. It could; `~` had
+/// parsed since the last ClickBench query. The message was accurate and the
+/// reader was wrong, which is the failure a hint exists for.
+///
+/// Spellings rather than an alias, which that entry rejected and this does not
+/// revisit: two ways to write one operator is a grammar with a synonym in it.
+/// A message that names the one spelling costs a reader nothing to learn.
+const REACHED_FOR: &[&str] = &["matches", "match", "regex", "regexp", "rlike", "similar"];
+
+/// What to add after "found `x`", or nothing.
+///
+/// Only a *word* earns a hint. A stray `(` or a number is a different mistake
+/// and a suggestion about regular expressions would be noise in the middle of
+/// it.
+fn hint(kind: &Kind) -> String {
+    let Kind::Word(word) = kind else {
+        return String::new();
+    };
+    let lower = word.to_ascii_lowercase();
+    if REACHED_FOR.contains(&lower.as_str()) {
+        return " A regular expression is spelt `~` here, as in Postgres \
+                 — `~*` ignores case, and `!~` and `!~*` negate."
+            .to_owned();
+    }
+    " The word-spelled tests are `LIKE`, `ILIKE`, `IN` and `IS NULL`; every \
+      other operator is punctuation."
+        .to_owned()
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -1072,6 +1108,39 @@ mod tests {
         let error = parse_constant("nope = 1").unwrap_err();
         assert!(error.message.contains("`kind`"), "{}", error.message);
         assert!(error.message.contains("`size`"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_word_where_a_comparison_belongs_names_the_spelling_that_exists() {
+        // The exact input from `the-regex-hole-that-was-not-there`, whose
+        // whole cost was a message that named what it found and not what it
+        // wanted. `~` is the answer and the error now says so.
+        let error = parse_constant("kind matches '^a'").unwrap_err();
+        assert!(error.message.contains("`matches`"), "{}", error.message);
+        assert!(error.message.contains("`~`"), "{}", error.message);
+        // Case does not change the guess: a configuration file may shout.
+        let shouted = parse_constant("kind MATCHES '^a'").unwrap_err();
+        assert!(shouted.message.contains("`~`"), "{}", shouted.message);
+    }
+
+    #[test]
+    fn a_word_that_is_not_a_regex_guess_names_the_word_operators() {
+        // The generic arm, and the assertion that it is a *different* answer:
+        // a hint that said "did you mean `~`?" to every unknown word would be
+        // wrong most of the time, and a test asserting only that some hint
+        // appeared could not tell the two apart.
+        let error = parse_constant("kind between 1 and 2").unwrap_err();
+        assert!(error.message.contains("`LIKE`"), "{}", error.message);
+        assert!(!error.message.contains("`~`"), "{}", error.message);
+    }
+
+    #[test]
+    fn punctuation_where_a_comparison_belongs_gets_no_hint() {
+        // A stray bracket is a different mistake, and advice about operator
+        // spellings in the middle of it is noise.
+        let error = parse_constant("kind ) 1").unwrap_err();
+        assert!(error.message.contains("`)`"), "{}", error.message);
+        assert!(!error.message.contains("`LIKE`"), "{}", error.message);
     }
 
     #[test]

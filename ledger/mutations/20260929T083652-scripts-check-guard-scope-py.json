@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-29T08:36:52+00:00",
+  "file": "scripts/check_guard_scope.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_guard_scope.py"
+  ],
+  "commit": "b91b411",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a claim that understates its scope is not reported",
+      "old": "        for tree in sorted(read - wanted) if wanted else ():",
+      "new": "        for tree in sorted(()) if wanted else ():",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that reads a tree its scope claim omits is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a guard with no scope claim is held to one anyway",
+      "old": "        for tree in sorted(read - wanted) if wanted else ():",
+      "new": "        for tree in sorted(read - wanted):",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree named without a slash is prose, not a scope claim",
+        "every guard here describes its own scope correctly"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a claim naming a tree the code does not read is not reported",
+      "old": "        for tree in sorted(wanted - read):",
+      "new": "        for tree in sorted(()):",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard claiming to read a tree it has no path into is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
