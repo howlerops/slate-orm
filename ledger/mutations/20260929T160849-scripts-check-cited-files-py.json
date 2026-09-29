@@ -1,0 +1,82 @@
+{
+  "at": "2026-09-29T16:08:49+00:00",
+  "file": "scripts/check_cited_files.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_files.py"
+  ],
+  "commit": "95ae30b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an exact tracked path no longer beats its own suffix",
+      "old": "    for path in files:\n        suffixes[path] = [path]\n    return suffixes",
+      "new": "    return suffixes",
+      "verdict": "caught",
+      "caught_by": [
+        "an exact path that is also the tail of another file passes: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "two copies are never read as differing",
+      "old": "    return len(bytes_at) > 1",
+      "new": "    return False",
+      "verdict": "caught",
+      "caught_by": [
+        "a relative citation matching two files that differ fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "two copies are always read as differing",
+      "old": "    return len(bytes_at) > 1",
+      "new": "    return True",
+      "verdict": "caught",
+      "caught_by": [
+        "a relative citation matching two identical copies passes: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a <code> path stops being a citation",
+      "old": "|<code>({PATH})</code>",
+      "new": "|<codex>({PATH})</codex>",
+      "verdict": "caught",
+      "caught_by": [
+        "a broken citation in a site HTML page fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the scope narrows back to docs/",
+      "old": "SCOPE: tuple[str, ...] = (\"docs\", \"site\", \"README.md\", \"CLAUDE.md\")",
+      "new": "SCOPE: tuple[str, ...] = (\"docs\",)",
+      "verdict": "caught",
+      "caught_by": [
+        "a broken citation in a README outside docs/ fails: exit 0, wanted 1",
+        "a broken citation in a site HTML page fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "HTML pages stop being read",
+      "old": "PAGES = (\"*.md\", \"*.html\")",
+      "new": "PAGES = (\"*.md\",)",
+      "verdict": "caught",
+      "caught_by": [
+        "a broken citation in a site HTML page fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

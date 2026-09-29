@@ -11698,14 +11698,16 @@
     {
       "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
       "key": "The suffix rule accepts a citation that resolves to the wron",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/check_cited_files.py: a suffix matching several tracked files is a finding unless those files hold identical bytes, and an exact tracked path resolves to itself rather than to a deeper file it is the tail of. Three fixture cases in scripts/test_check_cited_files.py cover the arms, and each survives mutation -- see ledger/mutations/20260929T160849-scripts-check-cited-files-py.json.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
       "key": "Only `docs/` is in scope.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/check_cited_files.py: SCOPE is docs, site, README.md and CLAUDE.md, reading Markdown and HTML, and it found a stale path on the first page added -- site/README.md named the SQL front end under crates/slate-wasm, which moved into the slate-sql crate in 6f2d3db. Real-tree mutations of README.md and site/docs/limits.html are both caught: ledger/mutations/20260929T160917-readme-md.json and ledger/mutations/20260929T161108-site-docs-limits-html.json. ledger/ stays out by principle, as this entry and check_cited_tests.py both set out.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
@@ -12084,6 +12086,47 @@
       "verdict": "open",
       "checked": "2026-09-29",
       "by": "nothing yet. scripts/test_mutate.py checks that mutate_guard.py's DIALECT names a dialect that exists, not that its output is readable by that dialect. The two come apart if the adapter's summary line changes, and what would catch it is a mutation run against a guard."
+    },
+    {
+      "entry": "2026-09-29-the-path-in-a-command-was-the-one-nobody-checked.md",
+      "key": "Fenced code blocks are still unread.",
+      "verdict": "deliberate",
+      "by": "this entry: counted rather than guessed -- the fenced blocks in scope hold 10 distinct paths, all tracked, and 5 that no inline citation also names. Reading them would cover five more paths and find nothing today, against the risk of reporting a placeholder path in a worked example as a missing file, which is the false-positive trade this guard already declined once. The number is recorded so the next person can weigh it rather than re-measure.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-path-in-a-command-was-the-one-nobody-checked.md",
+      "key": "`ledger/` is still out of scope, and that is a principle, no",
+      "verdict": "deliberate",
+      "by": "this entry, and scripts/check_cited_tests.py's docstring at length: an entry is a dated record, a path that has since moved is provenance rather than a broken link, and correcting one would be rewriting history to make a check pass.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-path-in-a-command-was-the-one-nobody-checked.md",
+      "key": "A path inside a longer word is skipped.",
+      "verdict": "deliberate",
+      "by": "this entry: counted at 3 words in scope that contain a path without being one, all three of the form file.rs::Symbol, which this change now handles as a place within a file. The rule therefore skips nothing in the tree as it stands. Matching a substring instead would record the whole word, so a path passed as a --out= flag argument would be reported as a file that is not there -- which is the kind of false positive check_cited_tests.py measured at 87% and rejected.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-path-in-a-command-was-the-one-nobody-checked.md",
+      "key": "The identical-copies rule compares bytes, not meaning.",
+      "verdict": "deliberate",
+      "by": "this entry: the two real instances are vendored copies of one upstream file, where byte identity is exactly the property that makes the citation unambiguous. A byte comparison needs no maintenance and fails on its own when the premise stops holding; the alternative weighed was a second hand-maintained roster beside EXTERNAL, which EXTERNAL's own docstring argues goes stale.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-path-in-a-command-was-the-one-nobody-checked.md",
+      "key": "Nothing checks a line number.",
+      "verdict": "deliberate",
+      "by": "this entry: a line number is not checkable from a path -- nothing here knows what line 629 was meant to hold -- while the file half is both checkable and the half that breaks a reader. scripts/check_cited_files.py makes no claim about the line, and its AT_PLACE comment says so.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-path-in-a-command-was-the-one-nobody-checked.md",
+      "key": "The site's link checker and this one still do not know about",
+      "verdict": "open",
+      "checked": "2026-09-29"
     }
   ]
 }

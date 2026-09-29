@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T16:09:23+00:00",
+  "file": "CLAUDE.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_cited_files.py"
+  ],
+  "commit": "95ae30b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "CLAUDE.md names a reclaim script that is not there",
+      "old": "`python3 scripts/reclaim.py` (`--dry-run` looks first)",
+      "new": "`python3 scripts/reclaimer.py` (`--dry-run` looks first)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

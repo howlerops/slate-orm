@@ -1,0 +1,46 @@
+{
+  "at": "2026-09-29T16:11:15+00:00",
+  "file": "scripts/check_cited_files.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_files.py"
+  ],
+  "commit": "95ae30b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a span is read whole again, not word by word",
+      "old": "            for word in (span.group(1) or span.group(2)).split():",
+      "new": "            for word in [(span.group(1) or span.group(2))]:",
+      "verdict": "caught",
+      "caught_by": [
+        "a broken path inside a command inside a span fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a cwd-relative invocation is read as a path",
+      "old": "    r\"(?!\\.{1,2}/)[A-Za-z0-9_.\\-]+(?:/[A-Za-z0-9_.\\-]+)+\"",
+      "new": "    r\"[A-Za-z0-9_.\\-]+(?:/[A-Za-z0-9_.\\-]+)+\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a cwd-relative ./ invocation is not read as a citation: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a word is matched loosely rather than whole",
+      "old": "                if CITED.fullmatch(word):",
+      "new": "                if CITED.search(word):",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

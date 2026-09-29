@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-29T16:12:16+00:00",
+  "file": "scripts/check_cited_files.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_files.py"
+  ],
+  "commit": "95ae30b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a word is matched loosely rather than whole",
+      "old": "                if CITED.fullmatch(path):",
+      "new": "                if CITED.search(path):",
+      "verdict": "caught",
+      "caught_by": [
+        "a path inside a longer word is not read as a citation: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a file:line location keeps its line number",
+      "old": "                path = located.group(1) if located else word",
+      "new": "                path = word",
+      "verdict": "caught",
+      "caught_by": [
+        "a file:line location whose file is gone fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

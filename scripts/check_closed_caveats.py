@@ -116,6 +116,18 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "wasm-chain": ("chain", "crates/slate-wasm/tests"),
  "python-packaging": (None, "clients/python/tests/test_packaging.py"),
  "runner-teardown": ("kill", "examples/explorer/run.sh"),
+ # --- the citation guard widened past docs/, 2026-09-29
+ #
+ # Both needles were checked with `git grep -F` against the staged tree before
+ # these rows were written. The second is a fixture *case name* rather than a
+ # line of the rule, because the rule it witnesses is three lines of `main()`
+ # that any rewording would move: a named case that fails when the rule goes is
+ # the thing that actually has to survive.
+ "cited-files-scope": ("README.md", "scripts/check_cited_files.py"),
+ "cited-files-ambiguous-suffix": (
+     "a relative citation matching two files that differ fails",
+     "scripts/test_check_cited_files.py",
+ ),
  # --- the 2026-09-14/15/16 backlog, triaged 2026-09-28
  'wasm-in-ci': ('wasm', '.github/workflows/ci.yml'),
  'wasm-writes': ('insert', 'crates/slate-wasm/src/lib.rs'),
@@ -2191,6 +2203,11 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md',
      '`RUN_DIR` duplicates an expression from `run.sh`.'):
         'runner-prints-its-logs',
+    ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
+     'The suffix rule accepts a citation that resolves to the wron'):
+        'cited-files-ambiguous-suffix',
+    ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
+     'Only `docs/` is in scope.'): 'cited-files-scope',
 }
 
 
