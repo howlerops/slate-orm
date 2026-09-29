@@ -361,6 +361,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "contains-conformance": (
      "a search for terms in different rows",
      "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- round trips compared across the three SDKs, 2026-09-29 -----------------
+ "round-trips-compared": (
+     "four rows in a batch cost one request",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "round-trips-endpoint": (
+     "func (s *server) roundTrips",
+     "examples/explorer/backends/go/roundtrips.go",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -555,6 +565,15 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # Two entries asked, in two wordings, for the comparison the conformance
+    # runner now makes. One names the *case*, one the endpoint that serves it,
+    # because a case with no endpoint behind it is a case comparing three
+    # copies of a 404.
+    ('2026-09-28-the-go-client-was-already-counting.md',
+     'It does not check that the three agree.'): 'round-trips-compared',
+    ('2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md',
+     'No conformance case compares the three counts against each o'):
+        'round-trips-endpoint',
     # A `deliberate` whose decision the next day's work reversed, found by the
     # first random sample ever drawn from that verdict.
     ('2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md',

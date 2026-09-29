@@ -182,3 +182,26 @@ export {
   type Schemas,
   type TableDef,
 } from "./schema.js";
+
+/**
+ * The grpc-js this client is built against, re-exported.
+ *
+ * `Client.connect`'s third and fourth arguments are `grpc.ChannelCredentials`
+ * and `grpc.ChannelOptions`, so a caller who wants TLS, a keepalive or an
+ * interceptor needs grpc-js — and needs *this* copy of it. Depending on
+ * `@grpc/grpc-js` from the calling package installs a second one, and two
+ * instances of a library whose objects cross the boundary is a class of bug
+ * nobody wants to debug from a demo adapter.
+ *
+ * Found by needing it: the explorer's Node adapter counts its own round trips
+ * with an interceptor, and had no supported way to obtain one. The same shape
+ * as the `options` argument itself, which
+ * `ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`
+ * records adding for the same reason — a door the other two clients already
+ * had. Python's `Client` takes `channel=` and the caller brings their own
+ * `grpc`, which is the same package either way because there is one Python
+ * environment; Go's `Dial` takes `...grpc.DialOption` and the module graph
+ * keeps one `google.golang.org/grpc`. Only npm makes this a hazard, so only
+ * this client needs the re-export.
+ */
+export * as grpc from "@grpc/grpc-js";

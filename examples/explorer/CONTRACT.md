@@ -365,6 +365,53 @@ a projection that drops a primary-key column (the cursor is that key, so there
 would be nothing to build one from), and a sort into an order the key does not
 give (the page boundary would not be where the cursor says).
 
+### `POST /api/round-trips`
+
+```json
+{ "workload": "singles" | "batch" | "paging" | "related" }
+```
+
+Runs a fixed workload and reports **how many gRPC calls the client sent**, per
+RPC, sorted by name.
+
+```json
+{ "calls": [ { "rpc": "Insert", "count": 4 } ] }
+```
+
+The one thing three SDKs can differ about that no comparison of answers can
+see. Four singles and a batch of four write the same four rows; a relation
+loaded for three parents returns the same three groups whether the client sent
+one request or three. A client that looped where the other two batched is right
+about every row and costs N times as much, and every other case in this
+contract passes it.
+
+Counted at each client's own channel — a Python `grpc` interceptor, Go's
+`WithChainUnaryInterceptor` *and* `WithChainStreamInterceptor`, grpc-js's
+`interceptors` — not from the server's `/metrics`. A server-side count answers
+"how many requests arrived", which is the same number only if the client sent
+what it thinks it sent, and the claim is about the client. Each client's own
+suite already counts itself; three independent assertions cannot catch two
+clients wrong the same way, which is what this runner is for.
+
+- `singles` writes four rows one at a time. The control: without it the batch
+  case shows only that a batch works.
+- `batch` writes the same four as one batch.
+- `paging` walks three keyset pages of three over `books` — nine of the eleven
+  seeded, so the last page is full and the walk never meets the end.
+- `related` loads `sales` for three book keys in one call.
+
+The **RPC names are not the client method names**: a single insert is `Insert`
+and a keyset page is `Query`. Counts are plain JSON numbers rather than strings
+because they are counts of requests, not database values — the 64-bit rule
+above is about what a primary key survives.
+
+Each adapter counts on a **fourth client** of its own, `app`'s identity again,
+so a browser polling the demo cannot land in a measurement. `X-Demo-Identity`
+is therefore ignored here: row-level security changes which rows a read returns
+and not how many requests fetching them takes, so honouring it would offer a
+knob that cannot move the answer. The write workloads own ids 9400–9403 and
+scrub the range before and after, outside the count.
+
 ### `POST /api/transaction`
 
 ```json

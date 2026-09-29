@@ -30,6 +30,7 @@ import {
   count,
   Client,
   distance,
+  grpc,
   div,
   extract,
   eq,
@@ -249,8 +250,85 @@ function buildQuery(spec: QuerySpec): Query {
   };
 }
 
+/**
+ * Counts the calls a client makes, per RPC.
+ *
+ * One interceptor covers both a unary write and a server-streaming read here,
+ * because grpc-js runs `interceptors` on every call regardless of its shape —
+ * which is not true of the other two clients: Go needs a unary *and* a stream
+ * interceptor, and the Go adapter's sibling of this class shipped with only
+ * the first for a day.
+ */
+class Counting {
+  readonly calls = new Map<string, number>();
+
+  /** A bound arrow, so it can be handed straight to `interceptors`. */
+  readonly interceptor = (options: grpc.InterceptorOptions, nextCall: grpc.NextCall) => {
+    // `/slate.v1.Records/Insert` -> `Insert`. The RPC names are not the
+    // client's method names: a single insert is `Insert` and a keyset page is
+    // `Query`.
+    const method = options.method_definition.path.split("/").pop() ?? "?";
+    this.calls.set(method, (this.calls.get(method) ?? 0) + 1);
+    return new grpc.InterceptingCall(nextCall(options));
+  };
+
+  clear(): void {
+    this.calls.clear();
+  }
+}
+
+/** The id range `/api/round-trips` owns, clear of every other one. */
+const ROUND_TRIP_FIRST = 9400n;
+
+/**
+ * How many rows the write workloads write.
+ *
+ * Four rather than two, so `4 != 1` says what happened where `2 != 1` could be
+ * an off-by-one anywhere. Not twenty, as the client suites use: this runs
+ * against a shared demo database on every conformance run, and what is being
+ * compared is the shape of the count, which four shows.
+ */
+const ROUND_TRIP_ROWS = 4;
+
+/**
+ * Three keyset pages of three, over the eleven books the fixture seeds.
+ *
+ * Nine of eleven, so the third page is full and the walk never meets the end.
+ * A short page would stop the loop early in a way that depends on how many
+ * rows the *other* endpoints happen to have left behind, and the three
+ * adapters run at different points in that sequence.
+ */
+const ROUND_TRIP_PAGES = 3;
+const ROUND_TRIP_PAGE_SIZE = 3;
+
+/** Three seeded books that have sales. */
+const ROUND_TRIP_PARENTS = [10n, 11n, 12n];
+
 class Adapter {
   readonly clients: Record<string, Client> = {};
+
+  /**
+   * A fourth client, `app`'s identity again, whose channel counts.
+   *
+   * Its own connection rather than an interceptor on `clients["app"]`: the
+   * demo frontend and the conformance runner share that one, so a counter on
+   * it would fold a browser's polling into the measurement. Nothing but
+   * `/api/round-trips` ever touches this one.
+   */
+  readonly counted: Client;
+  readonly counter = new Counting();
+
+  /**
+   * One measurement at a time.
+   *
+   * Node runs one callback at a time but `await` interleaves, so two
+   * overlapping requests here would each read the other's calls. The
+   * conformance runner is sequential, so this never contends; it is here
+   * because a count that is silently wrong under concurrency is worse than one
+   * that waits. A promise chain rather than a mutex library, because that is
+   * what a mutex is in one line of JavaScript.
+   */
+  private counting: Promise<unknown> = Promise.resolve();
 
   constructor(head: string) {
     for (const [name, identity] of Object.entries(IDENTITIES)) {
@@ -270,6 +348,24 @@ class Adapter {
         ...CATALOG_VIEWS,
       });
     }
+    this.counted = Client.connect(
+      head,
+      IDENTITIES["app"]!,
+      grpc.credentials.createInsecure(),
+      { interceptors: [this.counter.interceptor] },
+    ).declaring({ ...CATALOG, ...CATALOG_VIEWS });
+  }
+
+  /** Runs `work` with nothing else measuring; see `counting`. */
+  private async measuring<T>(work: () => Promise<T>): Promise<T> {
+    const mine = this.counting.then(work, work);
+    // `.then(() => {})` rather than the promise itself, so a failure in one
+    // measurement does not reject every later one.
+    this.counting = mine.then(
+      () => undefined,
+      () => undefined,
+    );
+    return mine;
   }
 
   async meta(): Promise<unknown> {
@@ -987,6 +1083,104 @@ class Adapter {
     return { failed, outcomes, left };
   }
 
+  /**
+   * Run a fixed workload and report how many requests the client sent.
+   *
+   * The one thing three SDKs can differ about that no comparison of *answers*
+   * can see. A client that looped where the other two batched returns
+   * identical rows and costs N times as much, so `/api/batch` and
+   * `/api/related` agreeing says nothing about it.
+   *
+   * Each client's own suite already counts its own round trips, against its
+   * own expectation. Three independent assertions are weaker than one
+   * comparison: they cannot catch two clients that are wrong the same way,
+   * which is the failure this whole runner exists for.
+   *
+   * The persona is ignored on purpose — this always runs as `app`, on the
+   * adapter's own counting connection. Row-level security changes which rows a
+   * read returns and not how many requests fetching them takes, so letting the
+   * header through would offer a knob that cannot move the answer.
+   */
+  async roundTrips(_session: Session, body: { workload?: string }): Promise<unknown> {
+    const session = this.counted.session();
+    const scrub = () =>
+      session.deleteWhere({ table: "books", filter: ge(0, uint(ROUND_TRIP_FIRST)) });
+
+    return this.measuring(async () => {
+      // Before, not only after: a run that died partway through leaves rows
+      // behind, and `singles` would then fail on an already-exists rather
+      // than counting anything.
+      await scrub();
+      this.counter.clear();
+      try {
+        await this.runRoundTrip(session, body.workload);
+        return {
+          // Sorted, and zeroes left out: a `Map`'s iteration order is
+          // insertion order here, which is the order the *client* happened to
+          // send in — the one thing in this contract three languages would
+          // spell three ways for free.
+          calls: [...this.counter.calls]
+            .map(([rpc, count]) => ({ rpc, count }))
+            .sort((a, b) => (a.rpc < b.rpc ? -1 : a.rpc > b.rpc ? 1 : 0)),
+        };
+      } finally {
+        // Outside the count, and in a `finally` so a workload that threw
+        // partway still leaves the range empty for the next adapter the
+        // runner asks.
+        this.counter.clear();
+        await scrub();
+      }
+    });
+  }
+
+  private async runRoundTrip(session: Session, workload: string | undefined): Promise<void> {
+    switch (workload) {
+      case "singles": {
+        // The control. Without it the batch case shows only that a batch
+        // works, and a client sending one request per row returns exactly the
+        // same rows.
+        for (let n = 0; n < ROUND_TRIP_ROWS; n += 1) {
+          await session.insert("books", bookRow(ROUND_TRIP_FIRST + BigInt(n), `Round Trip ${n}`));
+        }
+        return;
+      }
+      case "batch": {
+        await session.batch({
+          atomicity: "independent",
+          operations: Array.from({ length: ROUND_TRIP_ROWS }, (_unused, n) => ({
+            kind: "insert" as const,
+            table: "books",
+            rows: [bookRow(ROUND_TRIP_FIRST + BigInt(n), `Round Trip ${n}`)],
+          })),
+        });
+        return;
+      }
+      case "paging": {
+        let cursor: Value[] | undefined;
+        for (let n = 0; n < ROUND_TRIP_PAGES; n += 1) {
+          const page = await session.page({
+            table: "books",
+            limit: ROUND_TRIP_PAGE_SIZE,
+            ...(cursor ? { after: cursor } : {}),
+          });
+          cursor = page.cursor;
+        }
+        return;
+      }
+      case "related": {
+        const key = SalesForeignKeys["sale_book"]!;
+        await session.related(
+          answers(key, "children"),
+          { on: key.child, through: key.name, way: "children" },
+          ROUND_TRIP_PARENTS.map((id) => uint(id)),
+        );
+        return;
+      }
+      default:
+        throw new Error(`unknown workload: ${workload}`);
+    }
+  }
+
   async transaction(session: Session, body: { commit?: boolean }): Promise<unknown> {
     const probe = 9001n;
     try {
@@ -1535,6 +1729,7 @@ async function main(): Promise<void> {
     "/api/typed": (s) => adapter.typed(s),
     "/api/bad-batch": (s) => adapter.badBatch(s),
     "/api/transaction": (s, b) => adapter.transaction(s, b),
+    "/api/round-trips": (s, b) => adapter.roundTrips(s, b),
   };
 
   const server = createServer((request, response) => {

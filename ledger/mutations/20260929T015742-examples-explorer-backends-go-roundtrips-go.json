@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-29T01:57:42+00:00",
+  "file": "examples/explorer/backends/go/roundtrips.go",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "2896ea3",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the go adapter loops where the other two batch",
+      "old": "\t\tb := slate.NewBatch(slate.Independent)\n\t\tfor n := range roundTripRows {\n\t\t\tb.Insert(\"books\", book(roundTripFirst+uint64(n), fmt.Sprintf(\"Round Trip %d\", n)))\n\t\t}\n\t\t_, err := session.Batch(ctx, b)\n\t\treturn err",
+      "new": "\t\tfor n := range roundTripRows {\n\t\t\ttitle := fmt.Sprintf(\"Round Trip %d\", n)\n\t\t\tif _, err := session.Insert(ctx, \"books\", book(roundTripFirst+uint64(n), title)); err != nil {\n\t\t\t\treturn err\n\t\t\t}\n\t\t}\n\t\treturn nil",
+      "verdict": "caught",
+      "caught_by": [
+        "four rows in a batch cost one request (app): the adapters disagree",
+        "the must-differ pair ('four singles cost four requests', 'four rows in a batch cost one request') is not comparable: 'four rows in a batch cost one request' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -12,6 +12,7 @@ to install before they can see anything work.
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import json
 import sys
@@ -20,6 +21,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import grpc
 from slate import (
     Agg,
     Atomicity,
@@ -194,12 +196,61 @@ def build_query(spec: dict[str, Any]) -> Query:
     return query
 
 
+class Counting(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor):
+    """Counts the calls a client makes, per RPC, and forwards them untouched.
+
+    Both interfaces, because a read is server-streaming and a write is unary.
+    Registering only the first counts writes and reports zero for every query,
+    which reads as "queries are free" rather than as a hole in the instrument
+    — and is exactly the bug the Go adapter's sibling of this class had for a
+    day (`ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`).
+    """
+
+    def __init__(self) -> None:
+        self.calls: collections.Counter[str] = collections.Counter()
+
+    def _count(self, method: str) -> None:
+        # `/slate.v1.Records/Insert` -> `Insert`. The RPC names are not the
+        # client's method names: a single insert is `Insert` and a keyset page
+        # is `Query`.
+        self.calls[method.rsplit("/", 1)[-1]] += 1
+
+    def intercept_unary_unary(self, continuation: Any, client_call_details: Any, request: Any) -> Any:
+        # Named `client_call_details` because the base class is: `grpc` passes
+        # it by keyword, so a shorter name is a Liskov violation rather than a
+        # style choice.
+        self._count(client_call_details.method)
+        return continuation(client_call_details, request)
+
+    def intercept_unary_stream(self, continuation: Any, client_call_details: Any, request: Any) -> Any:
+        self._count(client_call_details.method)
+        return continuation(client_call_details, request)
+
+
 class Adapter:
     def __init__(self, head: str) -> None:
         self.head = head
         self.clients = {
             name: Client(head, identity=identity) for name, identity in IDENTITIES.items()
         }
+        # A fourth client, `app`'s identity again, whose channel counts. Its
+        # own connection rather than an interceptor on `self.clients["app"]`:
+        # the demo frontend and the conformance runner share that one, so a
+        # counter on it would fold a browser's polling into the measurement.
+        # Nothing but `/api/round-trips` ever touches this one.
+        self.counter = Counting()
+        self.counted = Client(
+            head,
+            channel=grpc.intercept_channel(grpc.insecure_channel(head), self.counter),
+            identity=IDENTITIES["app"],
+        )
+        # One measurement at a time. The counter is process-wide state and
+        # `ThreadingHTTPServer` serves concurrent requests, so two overlapping
+        # calls here would each read the other's calls. The conformance runner
+        # is sequential, so this never contends; it is here because a count
+        # that is silently wrong under concurrency is worse than one that
+        # waits.
+        self.counting_lock = threading.Lock()
 
     def meta(self, session, _body):
         return {
@@ -1277,6 +1328,107 @@ class Adapter:
             Units(1000),
         ]
 
+    #: The id range the round-trip handler owns, clear of every other one.
+    ROUND_TRIP_FIRST = 9400
+
+    #: How many rows the write workloads write.
+    #:
+    #: Four rather than two, so `4 != 1` says what happened where `2 != 1`
+    #: could be an off-by-one anywhere. Not twenty, as the per-client suites
+    #: use: this runs against a shared demo database on every conformance run,
+    #: and the point here is the *shape* of the count, which four shows.
+    ROUND_TRIP_ROWS = 4
+
+    #: Three keyset pages of three, over the eleven books the fixture seeds.
+    #:
+    #: Nine of eleven, so the third page is full and the loop never meets the
+    #: end — a short page would end the walk early in a way that depends on how
+    #: many rows the *other* endpoints happen to have left behind, and the
+    #: three adapters run at different points in that sequence.
+    ROUND_TRIP_PAGES = 3
+    ROUND_TRIP_PAGE_SIZE = 3
+
+    #: Three seeded books that have sales, for the relation workload.
+    ROUND_TRIP_PARENTS = (10, 11, 12)
+
+    def round_trips(self, _session, body):
+        """Run a fixed workload and report how many requests the client sent.
+
+        The one thing three SDKs can differ about that no comparison of
+        *answers* can see. A client that looped where the other two batched
+        returns identical rows and costs N times as much, so `/api/batch` and
+        `/api/related` agreeing says nothing about it.
+
+        Each client's own suite already counts its own round trips, against its
+        own expectation. Three independent assertions are weaker than one
+        comparison: they cannot catch two clients that are wrong the same way,
+        which is the failure this whole runner exists for.
+
+        The persona is ignored on purpose — this always runs as `app`, on the
+        adapter's own counting connection. Row-level security changes which
+        rows a read returns and not how many requests fetching them takes, so
+        letting the header through would offer a knob that cannot move the
+        answer.
+        """
+        workload = body.get("workload")
+        first = self.ROUND_TRIP_FIRST
+        session = self.counted.session()
+
+        def scrub():
+            w = DeleteWhere(BOOKS)
+            session.delete_where(w.where(w.c.id.ge(u64(first))))
+
+        with self.counting_lock:
+            # Before, not only after: a run that died partway through leaves
+            # rows behind, and `singles` would then fail on an already-exists
+            # rather than counting anything.
+            scrub()
+            self.counter.calls.clear()
+            try:
+                if workload == "singles":
+                    # The control. Without it the batch case shows only that a
+                    # batch works, and a client sending one request per row
+                    # returns exactly the same rows.
+                    for n in range(self.ROUND_TRIP_ROWS):
+                        session.insert(BOOKS, [self._book(first + n, f"Round Trip {n}")])
+                elif workload == "batch":
+                    b = Batch(Atomicity.INDEPENDENT)
+                    for n in range(self.ROUND_TRIP_ROWS):
+                        b.insert(BOOKS, [self._book(first + n, f"Round Trip {n}")])
+                    session.batch(b)
+                elif workload == "paging":
+                    cursor = None
+                    for _ in range(self.ROUND_TRIP_PAGES):
+                        q = Query(BOOKS)
+                        q.limit(self.ROUND_TRIP_PAGE_SIZE)
+                        if cursor is not None:
+                            q.after(cursor)
+                        page = session.page(q)
+                        cursor = page.cursor
+                elif workload == "related":
+                    key = SALES_FOREIGN_KEYS["sale_book"]
+                    session.related(
+                        _answers(key, parents=False),
+                        [u64(k) for k in self.ROUND_TRIP_PARENTS],
+                        through=key["name"],
+                        on=BY_NAME[key["child"]],
+                        children=True,
+                    )
+                else:
+                    raise ValueError(f"unknown workload {workload!r}")
+                calls = dict(self.counter.calls)
+            finally:
+                # Outside the count, and in a `finally` so a workload that
+                # raised partway through still leaves the range empty for the
+                # next adapter the runner asks.
+                self.counter.calls.clear()
+                scrub()
+
+        # Sorted, and zeroes left out: a list in a dict's iteration order is
+        # the one thing in this contract three languages would spell three
+        # ways for free.
+        return {"calls": [{"rpc": rpc, "count": calls[rpc]} for rpc in sorted(calls)]}
+
     def transaction(self, session, body):
         """The one thing a single request cannot show: a write visible only to
         its own transaction until it commits."""
@@ -1338,6 +1490,7 @@ ROUTES = {
     "/api/typed": "typed",
     "/api/bad-batch": "bad_batch",
     "/api/transaction": "transaction",
+    "/api/round-trips": "round_trips",
 }
 
 

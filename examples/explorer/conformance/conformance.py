@@ -726,6 +726,32 @@ CASES: list[tuple[str, str, Any, str]] = [
     # operation would otherwise look right. Nothing is written, so the case
     # leaves the database as it found it.
     ("a batch where two rows are refused differently", "/api/bad-batch", {}, "app"),
+
+    # How many gRPC calls a fixed workload costs, compared across the three.
+    #
+    # The one class of disagreement no comparison of *answers* can reach. Four
+    # singles and a batch of four write the same four rows, and a relation
+    # loaded for three parents returns the same three groups whether the client
+    # sent one request or three. A client that looped where the other two
+    # batched is right about every row and costs N times as much, so every
+    # other case in this file passes it.
+    #
+    # Each client already counts its own round trips in its own suite — Python
+    # in `test_round_trips.py`, Go in `related_test.go` and
+    # `round_trip_test.go`, TypeScript in `roundTrip.test.ts`. Three
+    # independent assertions cannot catch two clients wrong the same way, which
+    # is what this whole file exists for. That gap was recorded in two entries
+    # on 2026-09-28 and this closes it.
+    #
+    # The counts, not the rows: the adapters return `[{"rpc": ..., "count": n}]`
+    # and nothing else, because the rows are already compared by `/api/batch`
+    # and `/api/related` and repeating them here would make a disagreement
+    # ambiguous between the two things.
+    ("four singles cost four requests", "/api/round-trips", {"workload": "singles"}, "app"),
+    ("four rows in a batch cost one request", "/api/round-trips", {"workload": "batch"}, "app"),
+    ("three keyset pages cost three requests", "/api/round-trips", {"workload": "paging"}, "app"),
+    ("a relation for three parents costs one request", "/api/round-trips",
+     {"workload": "related"}, "app"),
 ]
 
 
@@ -852,6 +878,21 @@ MUST_DIFFER: list[tuple[str, str]] = [
     # ignored the hint would be invisible here without this pair.
     ("a search for terms in different rows by index",
      "a search for terms in different rows by scan"),
+
+    # The round-trip workloads, which have the weakness in its sharpest form:
+    # an adapter that ignored `workload` runs one of them four times and agrees
+    # with two others doing the same, on four identical answers. Nothing
+    # refuses an unknown workload from a *client* — the adapter raises, so the
+    # three would agree on an error shape instead — and there is no row to
+    # compare, because the answer is a list of counts.
+    #
+    # `singles` against `batch` is the pair the whole endpoint is for: four
+    # `Insert` calls against one `Batch`. The other two are there so a
+    # `workload` dropped in favour of a *default* is caught as well as one
+    # dropped in favour of the first branch.
+    ("four singles cost four requests", "four rows in a batch cost one request"),
+    ("three keyset pages cost three requests", "a relation for three parents costs one request"),
+    ("four singles cost four requests", "three keyset pages cost three requests"),
 ]
 
 #: What `MUST_DIFFER` is for, and what it is *not* needed for.

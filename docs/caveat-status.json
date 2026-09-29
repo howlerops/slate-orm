@@ -10731,9 +10731,9 @@
     {
       "entry": "2026-09-28-the-go-client-was-already-counting.md",
       "key": "It does not check that the three agree.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. Each client is measured against its own expectation; the conformance runner compares answers rather than request counts, which is the distinction dialRecording's comment draws about why counting was needed."
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: four `/api/round-trips` cases compare the three clients' request counts against each other, and three MUST_DIFFER pairs stop an adapter that ignores the workload agreeing with two others doing the same.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
@@ -10752,9 +10752,9 @@
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
       "key": "No conformance case compares the three counts against each o",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. examples/explorer/run.sh --conformance compares the three SDKs' answers; none of its cases looks at how many requests an SDK sent, and each client's count lives in its own suite."
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: four `/api/round-trips` cases, served by a counting client in each of the three adapters. Measured: 4 `Insert` for four singles, 1 `Batch` for the same four, 3 `Query` for three keyset pages, 1 `Related` for three parents \u2014 identical in all three.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md",
