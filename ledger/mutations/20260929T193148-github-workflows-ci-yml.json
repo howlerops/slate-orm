@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-29T19:31:48+00:00",
+  "file": ".github/workflows/ci.yml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "5f27822",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a guard is dropped from CI and stays in check.sh",
+      "old": "      - run: python3 scripts/check_mutation_claims.py\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "every check.sh step runs in a workflow or is in ONLY_LOCAL"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the client's typecheck is dropped from CI",
+      "old": "      - run: npx --no-install tsc -p tsconfig.json --noEmit\n        working-directory: clients/typescript\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "every check.sh step runs in a workflow or is in ONLY_LOCAL"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the go client's gofmt wrapper is dropped from CI",
+      "old": "      - run: test -z \"$(gofmt -l .)\" || { echo \"gofmt would rewrite:\"; gofmt -l .; exit 1; }\n        working-directory: clients/go\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "every check.sh step runs in a workflow or is in ONLY_LOCAL"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

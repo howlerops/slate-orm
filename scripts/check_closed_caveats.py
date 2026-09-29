@@ -685,6 +685,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "env-every-workflow": ("for path in workflows():", "scripts/test_check_sh.py"),
  "job-count-checked": ("def job_count_matches", "scripts/test_check_sh.py"),
  "runner-prints-its-logs": ('echo "logs $run"', "examples/explorer/run.sh"),
+
+ # Two closures on 2026-09-29, from reading the check.sh/ci.yml roster in the
+ # direction nothing read it. The first needle is the roster that did not
+ # exist; the second is the step itself, because "it has never run in CI" is
+ # closed by the line that runs it and by nothing else.
+ "check-sh-both-directions": ("ONLY_LOCAL", "scripts/test_check_sh.py"),
+ "teardown-runs-in-ci": (
+     "python3 scripts/test_run_teardown.py",
+     ".github/workflows/ci.yml",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -879,6 +889,11 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
+     'Nothing checks that `check.sh` and `ci.yml` cover the same g'):
+        'check-sh-both-directions',
+    ('2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md',
+     'It has never run in CI.'): 'teardown-runs-in-ci',
     ('2026-09-19-the-fifth-table-list.md',
      "Nothing checks that the *order* of tables matches, only the "): 'ui-tab-order',
     ('2026-09-19-the-fifth-table-list.md',

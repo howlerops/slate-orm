@@ -12023,9 +12023,8 @@
     {
       "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
       "key": "It has never run in CI.",
-      "verdict": "open",
-      "checked": "2026-09-29",
-      "by": "nothing yet, and this is the trap CLAUDE.md names: a check that never fires is a check nobody has debugged. It has been seen to pass and to fail here; CI's demo job is where it runs next, on a different kernel and a different Go."
+      "verdict": "closed",
+      "by": "it has now: `- run: python3 scripts/test_run_teardown.py` is the last step of ci.yml's demo job, unconditional, and run 501's 'three SDKs, one database' reports that step as success."
     },
     {
       "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
@@ -12286,8 +12285,8 @@
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
       "key": "Nothing checks that `check.sh` and `ci.yml` cover the same g",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/test_check_sh.py reads both directions now: ONLY_LOCAL is the roster of steps check.sh runs that no workflow does, and it is empty because the fourteen that were in it -- nine repository guards and five toolchain checks -- are in ci.yml as of this change. ledger/2026-09-29-fourteen-checks-that-ran-only-here.md"
     },
     {
       "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
@@ -12459,6 +12458,35 @@
       "verdict": "open",
       "by": "the sweep is fifteen lines in a scratch directory, run twice today and committed nowhere. The next duplicate pair arrives unnoticed. Same gap as 'Nothing stops the next duplicate' in ledger/2026-09-29-two-rows-for-one-gap.md, from the mechanical end rather than the judgement end -- that one argues no guard can decide two claims are one gap, and this one is only about running the shortlist.",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-fourteen-checks-that-ran-only-here.md",
+      "key": "It does not prove the fourteen were passing.",
+      "verdict": "open",
+      "by": "the next CI run is what says. Nine of the fourteen have never run on CI's kernel, Python or Go, and CLAUDE.md records four separate instances of a check green here and red there \u2014 the clippy, rustfmt, ruff and ty toolchain gaps. Until a run reports on them this is an untested claim about fourteen checks.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-fourteen-checks-that-ran-only-here.md",
+      "key": "`ONLY_LOCAL` being empty is a fact about today.",
+      "verdict": "narrowed",
+      "by": "the half that can be exercised is: SPELLED_IN_CI has two entries and its stale-roster rule runs against them, and the third mutation in this entry's table deletes a CI spelling that mapping covers.",
+      "residual": "ONLY_LOCAL itself has no entries, so the branch that reads a reason out of it is a rule with no data and nothing has run it.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-fourteen-checks-that-ran-only-here.md",
+      "key": "Nothing checks the third direction.",
+      "verdict": "open",
+      "by": "a guard in scripts/ that is in neither check.sh nor a workflow is invisible to both rules, which compare two lists to each other and never to the directory. That is how a guard written and never wired would hide. check_mutations_roster.py is the closest thing to a rule about it and is not that rule.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-fourteen-checks-that-ran-only-here.md",
+      "key": "The `gofmt` wrapper is duplicated.",
+      "verdict": "deliberate",
+      "by": "this entry: check.sh has a shell function and ci.yml has a one-liner because `gofmt -l` exits zero whatever it finds, so both places have to read its output and neither can be the other's byte-for-byte copy. SPELLED_IN_CI records that the two correspond, which is what a tool can hold; that they still agree is prose against prose. Extracting a shared script would be a third file in the loop to keep true, for a duplication of one line.",
+      "reviewed": "2026-09-29"
     }
   ]
 }

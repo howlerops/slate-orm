@@ -125,6 +125,72 @@ ELSEWHERE = {
     ),
 }
 
+#: Steps `check.sh` runs that no workflow does, and why that is right.
+#:
+#: The mirror of [`ELSEWHERE`], and the half that did not exist. This guard
+#: read one direction — every workflow step is in the script — and the comment
+#: in `main` said the other way round was "allowed and is the point of having
+#: it". That is true of a *few* steps and was being used to excuse fourteen:
+#: nine repository guards and five toolchain checks ran only when somebody
+#: remembered `check.sh`. `check_versions.py` was the one anybody noticed, by
+#: reading a run's step list by hand, and noticing the rest needed this rule.
+#:
+#: So the allowance is a roster rather than a blanket, for the reason
+#: `ELSEWHERE` is one: a list you are forced to edit is a list that stays true.
+#: Empty today, deliberately — everything `check.sh` runs now runs in CI too,
+#: and the next step that should not has to say why here.
+ONLY_LOCAL: dict[tuple[str, str], str] = {}
+
+#: `check.sh` commands a workflow spells differently, and the spelling it uses.
+#:
+#: One shape only: `gofmt -l` prints what it would rewrite and exits zero
+#: either way, so both places wrap it and the wrappers cannot be byte-identical
+#: — the script has a shell function and the workflow has a one-liner. Matching
+#: on a substring instead would let `go vet ./...` satisfy a rule about
+#: `go vet ./... --some-flag`, which is the false-positive shape this
+#: repository keeps rejecting, so the pair is written out.
+SPELLED_IN_CI: dict[tuple[str, str], str] = {
+    ("clients/go", "gofmt -l ."): (
+        'test -z "$(gofmt -l .)" || { echo "gofmt would rewrite:"; gofmt -l .; exit 1; }'
+    ),
+    ("examples/explorer/backends/go", "gofmt -l ."): (
+        'test -z "$(gofmt -l .)" || { echo "gofmt would rewrite:"; gofmt -l .; exit 1; }'
+    ),
+}
+
+
+def unrun_locally(
+    steps: list[tuple[str, str]], covered: set[tuple[str, str]]
+) -> tuple[list[str], list[str]]:
+    """Complaints about `check.sh` steps no workflow runs, and stale rosters."""
+    in_ci = set(steps)
+    said: list[str] = []
+    for where in sorted(covered):
+        if where in in_ci or where in ONLY_LOCAL:
+            continue
+        spelled = SPELLED_IN_CI.get(where)
+        if spelled is not None and (where[0], spelled) in in_ci:
+            continue
+        directory, command = where
+        said.append(
+            f"check.sh runs it and no workflow does: (in {directory}) {command}"
+            " — add it to a workflow, or to ONLY_LOCAL with a reason"
+        )
+
+    # The other half, same as `ELSEWHERE`'s: a roster entry naming a step the
+    # script has dropped is a reader believing in a check that is gone.
+    stale = [
+        f"ONLY_LOCAL names a step check.sh does not run: (in {d}) {c}"
+        for d, c in sorted(ONLY_LOCAL)
+        if (d, c) not in covered
+    ] + [
+        f"SPELLED_IN_CI names a step check.sh does not run: (in {d}) {c}"
+        for d, c in sorted(SPELLED_IN_CI)
+        if (d, c) not in covered
+    ]
+    return said, stale
+
+
 #: Multi-line `run: |` blocks, by the `name:` above them.
 #:
 #: None of them is a static check: two are shell assertions about artefacts and
@@ -475,13 +541,21 @@ def main() -> int:
         blind.append(f"the parser found {len(blocks)} named blocks; it is not parsing")
 
     covered = script_checks()
-    # The script runs some checks CI does not — `gofmt -l`, two `tsc --noEmit`
-    # runs, `go vet` on the demo's adapter — which is allowed and is the point
-    # of having it. Only the other direction is a failure.
+    # Both directions now. This comment used to say the script running checks
+    # CI does not was "allowed and is the point of having it", and named the
+    # four it meant. It was excusing fourteen: the four it named, plus nine
+    # repository guards, plus one more `tsc`. See `ONLY_LOCAL`.
+    only_local, stale_local = unrun_locally(steps, covered)
+    # The same pair read the other way: a workflow spelling that `SPELLED_IN_CI`
+    # already ties to a `check.sh` step is covered, and reporting it here would
+    # be the one mapping contradicting itself.
+    spelled = {(where[0], ci) for where, ci in SPELLED_IN_CI.items()}
     missing = [
         (directory, command)
         for directory, command in steps
-        if (directory, command) not in covered and command not in ELSEWHERE
+        if (directory, command) not in covered
+        and (directory, command) not in spelled
+        and command not in ELSEWHERE
     ]
     unknown_blocks = [name for name in blocks if name not in ELSEWHERE_BLOCKS]
     env_complaints = environment_matches()
@@ -525,9 +599,17 @@ def main() -> int:
             job_count_matches(),
         ),
         (
+            "every check.sh step runs in a workflow or is in ONLY_LOCAL",
+            only_local,
+        ),
+        (
             "no ELSEWHERE entry names a step the workflows have dropped",
             [f"ELSEWHERE names a step no workflow has: {c}" for c in stale_elsewhere]
             + [f"ELSEWHERE_BLOCKS names a block no workflow has: {n}" for n in stale_blocks],
+        ),
+        (
+            "no ONLY_LOCAL or SPELLED_IN_CI entry names a step check.sh has dropped",
+            stale_local,
         ),
     ]
 

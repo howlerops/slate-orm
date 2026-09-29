@@ -130,6 +130,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: go vet ./...
         working-directory: clients/go
+      # `gofmt -l` prints the files it would rewrite and exits zero either
+      # way, so the status says nothing and the output is the check. Same
+      # wrapper as `go_fmt` in `scripts/check.sh`, which had been the only
+      # place any Go formatting was checked at all — `fmt` covers Rust and
+      # nothing covered this.
+      - run: test -z "$(gofmt -l .)" || { echo "gofmt would rewrite:"; gofmt -l .; exit 1; }
+        working-directory: clients/go
       - run: go test ./...
         working-directory: clients/go
         env:
@@ -198,6 +205,11 @@ jobs:
           path: bin
       - run: chmod +x bin/slate-serverd
       - run: npm ci
+        working-directory: clients/typescript
+      # The client's own typecheck, which `check.sh` ran and no job did. `npm
+      # test` compiles what the tests import and nothing else, so a type error
+      # in an unexercised export shipped green.
+      - run: npx --no-install tsc -p tsconfig.json --noEmit
         working-directory: clients/typescript
       - run: npm test
         working-directory: clients/typescript
@@ -428,6 +440,25 @@ jobs:
       # to a registry that will not let it be reused.
       - run: python3 scripts/check_versions.py
       - run: python3 scripts/test_check_versions.py
+      # Nine steps that `check.sh` had been running and no workflow did, found
+      # by reading the roster in the other direction:
+      # `scripts/test_check_sh.py` held every CI step to the script and nothing
+      # held the script to CI. `check_versions.py` above was the first of them
+      # noticed, by hand, off run 496's step list; these are the rest. Every
+      # one had been firing only when somebody remembered the script, which is
+      # the failure CLAUDE.md names — a check that never fires is a check
+      # nobody has debugged. `check_mutation_claims.py` is the sharpest case:
+      # it caught a real defect the day this was found, and it caught it
+      # locally, because CI was not running it.
+      - run: python3 scripts/check_client_identity.py
+      - run: python3 scripts/test_check_client_identity.py
+      - run: python3 scripts/check_mutation_claims.py
+      - run: python3 scripts/test_check_mutation_claims.py
+      - run: python3 scripts/check_retired_claims.py
+      - run: python3 scripts/test_check_retired_claims.py
+      - run: python3 scripts/check_write_paths.py
+      - run: python3 scripts/test_check_write_paths.py
+      - run: python3 scripts/test_free_ports.py
 
   quickstarts:
     name: the landing page's code
@@ -659,6 +690,16 @@ jobs:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
       - run: go test ./schema/
         working-directory: examples/explorer/backends/go
+      # The demo's own adapters, which `check.sh` checked and no job did. The
+      # Go one is vetted and formatted in `clients/go` and was neither here;
+      # the node adapter is typechecked nowhere else, because `npm test` below
+      # compiles only what its tests reach.
+      - run: go vet ./...
+        working-directory: examples/explorer/backends/go
+      - run: test -z "$(gofmt -l .)" || { echo "gofmt would rewrite:"; gofmt -l .; exit 1; }
+        working-directory: examples/explorer/backends/go
+      - run: npx --no-install tsc -p tsconfig.json --noEmit
+        working-directory: examples/explorer/backends/node
       # The node adapter resolves `@slate-orm/client` to a symlink into
       # `clients/typescript` and imports its *built* `dist/`, which `npm ci`
       # does not produce — `run.sh` builds it explicitly for exactly this
