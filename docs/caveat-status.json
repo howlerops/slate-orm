@@ -12827,6 +12827,114 @@
       "verdict": "deliberate",
       "by": "ledger/2026-09-28-the-first-two-days-of-the-invisible-backlog.md: the tracker records whether a claim is still true, which is a different question from whether it is worth acting on, and giving each row an owner would make docs/caveat-status.json a backlog that several agents would all edit.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-empty-room-has-furniture-now.md",
+      "key": "It is text, not types.",
+      "verdict": "deliberate",
+      "by": "a return type spelled through an alias or an `impl Trait` is not matched, and the alternatives were costed in the entry: a proc macro over the impl block means slate-schema grows a build dependency to hold a repository convention, and a hand-listed doc-test is the roster again with worse tooling. Text over one crate is what was chosen, knowing this",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-empty-room-has-furniture-now.md",
+      "key": "Splitting on the first `->` is a guess.",
+      "verdict": "deliberate",
+      "by": "neither the first nor the last arrow is right in every case; the first errs toward reporting a method that hands out nothing, which costs a roster entry, where the last errs toward missing one, which costs the rule. Chosen for the direction it fails in",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-empty-room-has-furniture-now.md",
+      "key": "Nothing checks that the roster's *reasons* are true.",
+      "verdict": "deliberate",
+      "by": "every roster in scripts/check_handlers.py has this weakness and it is why each entry carries prose a reader can check rather than a bare name. A rule that verified a reason would be reading intent out of a body, which is the thing rosters exist to avoid",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-hole-rule-ten-could-only-write-down.md",
+      "key": "The pattern is still a spelling.",
+      "verdict": "narrowed",
+      "by": "BY_NAME matches find/any/position over a closure comparing name(); a map keyed by name or a match on name() passes unseen. This is the residual of the tables() hole after rule 8 widened to every workspace crate, measured at six matches with none walking tables(). See ledger/2026-09-29-the-hole-rule-ten-could-only-write-down.md",
+      "checked": "2026-09-29",
+      "residual": "a name lookup spelled some other way: a HashMap<&str, &TableDef> built once and indexed, a match on name(), or a closure whose parameter is destructured"
+    },
+    {
+      "entry": "2026-09-29-the-hole-rule-ten-could-only-write-down.md",
+      "key": "`Catalog::insert`'s own lookup is invisible to it",
+      "verdict": "deliberate",
+      "by": "it is spelled .find(|t| t.id() == table.id() || t.name() == table.name()) and BY_NAME wants name() immediately after the closure parameter. It is the duplicate refusal rather than a resolver, so nothing is unguarded; widening the pattern to reach it would match every disjunction and is not worth the false positives",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-hole-rule-ten-could-only-write-down.md",
+      "key": "Tests, benches and examples are not read.",
+      "verdict": "deliberate",
+      "by": "unscanned() makes the same choice for the same reason, so the two halves of check_handlers.py agree about what a crate is. A fixture that builds a catalog by hand reaches no tenant, and rostering every one of them would be a large roster nobody reads",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-hole-rule-ten-could-only-write-down.md",
+      "key": "It says nothing about what the rostered lookups do.",
+      "verdict": "deliberate",
+      "by": "the same weakness as every other roster in the file, recorded there too: an entry's prose is read once and a rewrite could falsify it while the key stayed. Checking it means reading intent out of a body",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-indentation-was-the-wrong-thing-to-trust.md",
+      "key": "Indentation is not nesting.",
+      "verdict": "deliberate",
+      "by": "brace counting was costed in the entry and rejected: string literals, char literals and comments containing braces all have to be handled or the count drifts, and a drifted count fails silently. Indentation fails toward reporting and cargo fmt does not produce the shape that breaks it",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-indentation-was-the-wrong-thing-to-trust.md",
+      "key": "The `#[cfg(test)]` case is now a roster entry, not an exclus",
+      "verdict": "deliberate",
+      "by": "that is the intended behaviour: a test module adding a public Catalog accessor gets a line saying so, which is the roster idiom the other nine rules use. Recorded because it is a tax nobody has paid yet, not because it is wrong",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-indentation-was-the-wrong-thing-to-trust.md",
+      "key": "Nothing in this change touches the `tables()` hole",
+      "verdict": "narrowed",
+      "by": "true of that change and narrowed the same day: rule 8 now reads every workspace crate's src/, so the line that walks tables() comparing name() fails wherever it is written. See ledger/2026-09-29-the-hole-rule-ten-could-only-write-down.md",
+      "checked": "2026-09-29",
+      "residual": "a lookup BY_NAME cannot see: a map keyed by name, or a comparison spelled some other way"
+    },
+    {
+      "entry": "2026-09-29-the-orphan-rule-makes-the-tree-the-whole-surface.md",
+      "key": "A trait implemented for `Catalog` is still invisible",
+      "verdict": "narrowed",
+      "by": "the trait method still does not appear on Catalog and rule 10 still cannot see it, but its body has to compare a name to resolve one, and rule 8 now reads every workspace crate's src/. See ledger/2026-09-29-the-hole-rule-ten-could-only-write-down.md",
+      "checked": "2026-09-29",
+      "residual": "a trait method that resolves a name without a find/any/position closure comparing name() - the same residual as the pattern itself"
+    },
+    {
+      "entry": "2026-09-29-the-orphan-rule-makes-the-tree-the-whole-surface.md",
+      "key": "The eight-file count is today's.",
+      "verdict": "moment",
+      "by": "",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-limits-read-the-day-they-were-written.md",
+      "key": "A verdict is a reading, and eight of these are mine about my",
+      "verdict": "deliberate",
+      "by": "the alternative is a second reader, and there is one agent on this branch. The session's own audit of 264 deliberate verdicts put the false rate at 4 in 264 - 1.5%, Clopper-Pearson 0.4% to 3.8% - which is the honest prior for these twelve and is recorded rather than claimed away",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-limits-read-the-day-they-were-written.md",
+      "key": "`moment` and `deliberate` are not audited by anything.",
+      "verdict": "open",
+      "by": "closed and narrowed each have a mechanical check - a witness in the tree, a residual a reader can compare - and the other two rest on prose nothing re-reads. A moment row goes stale by definition and nothing dates it out. Reading them is the only method that works and 264 of 1034 deliberate verdicts have been read; moment has had none",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-twelve-limits-read-the-day-they-were-written.md",
+      "key": "It measures one afternoon.",
+      "verdict": "moment",
+      "by": "",
+      "reviewed": "2026-09-29"
     }
   ]
 }
