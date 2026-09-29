@@ -77,10 +77,12 @@ The first is the caveat's own scenario and the new test is named in its
 failure list, which is what says the test covers the thing rather than the
 thing happening to be covered.
 
-**A fourth mutation survived and was not a change**, which is worth recording
-because it removed a line. The first draft read
-`.any(|one| !one.keyword && one.spelling == two)`; deleting the `!one.keyword`
-filter left every suite green. It cannot fire: this branch of `lex` is reached
+**A mutation survived and was not a change**, which is worth recording
+because it removed a line. Its run is
+`ledger/mutations/20260929T230917-crates-slate-sql-src-sql-rs.json`, against
+the first draft. The draft read
+`.any(|one| !one.keyword && one.spelling == two)`, and deleting the
+`!one.keyword` filter left every suite green. It cannot fire: this branch of `lex` is reached
 only when the character is punctuation — a word was consumed by the alphabetic
 arm far above — and a keyword spelling is matched by `eat` as a whole word, so
 it is alphabetic by construction and `two`, exactly two characters, can never
