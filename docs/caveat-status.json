@@ -7749,9 +7749,9 @@
     {
       "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
       "key": "The bar chart is asserted on count and threshold, not on geo",
-      "verdict": "open",
-      "by": "still true: a CSS change rendering every bar at zero width passes. Asserting geometry means asserting rendered pixel widths, which nothing here does.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "e2e/explorer.mjs has read getBoundingClientRect().width off every `.chart .row .fill` since 09c543d, 2026-09-14 -- refusing a zero width, refusing identical bars for different counts, and checking the widest bar is the largest count. The 2026-09-28 re-read looked at the unit suite in test/ and not at e2e/; see ledger/2026-09-29-two-caveats-that-were-already-answered.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-14-frontend-tests-and-configurable-ports.md",
@@ -10235,9 +10235,9 @@
     {
       "entry": "2026-09-21-refusing-a-view-everywhere-else-is-free.md",
       "key": "It leaves the refusal's wording wrong",
-      "verdict": "open",
-      "by": "\"no table named `recent_books`\" about a view that does exist, now that views do.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "closed as a side effect of the finding-8 fix. authorize_join_inputs resolves every input name through authorized_table -> table -> no_such_table before any converter runs, so convert.rs's `no table named` branch is unreachable for a declared view; check_handlers.py rule 3 requires that ordering of every such call site. Demonstrated rather than read: two mutations reverting those resolutions both survived the views suite. See ledger/2026-09-29-two-caveats-that-were-already-answered.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-slate-sql-gets-its-own-tests.md",
@@ -11466,6 +11466,27 @@
       "verdict": "moment",
       "by": "a statement about the sample at the time of writing, not a claim about anything. It is here so the one-in-three is not later read as a measured rate.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
+      "key": "It does not explain how one re-read missed both.",
+      "verdict": "moment",
+      "by": "an observation about that day's pass, not a claim about anything checkable. The entry deliberately offers no rate: two is not a sample.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
+      "key": "It adds no rule that would have caught either.",
+      "verdict": "open",
+      "by": "true and the sharper half. check_closed_caveats.py witnesses a *closed* caveat against the tree; nothing witnesses an open one against the thing it says is absent. A rule that did would have caught the bar chart the day the e2e assertion landed.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
+      "key": "It leaves the entry's other caveat open.",
+      "verdict": "open",
+      "by": "true, and it is now that entry's only open one: nothing fails if a future Catalog grows a second name-to-TableDef lookup a view could satisfy. check_handlers.py rule 1 covers the handlers, not the catalog.",
+      "checked": "2026-09-29"
     }
   ]
 }

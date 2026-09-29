@@ -419,6 +419,19 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- two caveats that were already answered, 2026-09-29 ---------------------
+ "bar-geometry-in-a-browser": (
+     "a bar has no width",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+ # The ordering, not the message: the wording was already right on every path
+ # that can produce it, and what makes that true is that every name resolves
+ # here before a converter sees it.
+ "view-named-before-converting": (
+     "fn authorize_join_inputs",
+     "crates/slate-server/src/service.rs",
+ ),
+
  # --- a caveat closed by a line through it, 2026-09-29 -----------------------
  "strike-is-not-open": (
      "also stands struck through in that section",
@@ -718,6 +731,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-the-kernel-on-wasm.md',
      'Nothing else in the workspace is checked for the same proble'):
         'wasm-runtime-guard',
+    ('2026-09-14-frontend-tests-and-configurable-ports.md',
+     'The bar chart is asserted on count and threshold, not on geo'):
+        'bar-geometry-in-a-browser',
+    ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
+     "It leaves the refusal's wording wrong"):
+        'view-named-before-converting',
     ('2026-09-19-the-count-a-refusal-did-not-write.md',
      'The plain (non-conditional) delete arm\'s "failed having appl'):
         'strike-is-not-open',
