@@ -221,6 +221,47 @@ def units(body: str) -> list[str]:
     return found
 
 
+def struck(root: Path = ROOT) -> set[str]:
+    """`entry::key` for every caveat crossed out in a "does not do" section.
+
+    A strike is how this ledger records that a caveat was answered *later*, by
+    another entry. The convention keeps the original bullet standing underneath
+    — `2026-09-19-the-count-a-refusal-did-not-write.md` says so in as many
+    words, because the estimate it got wrong is the useful part — so the
+    section ends up holding the same claim twice, once struck and once not.
+
+    `ANNOTATION` drops the struck copy, which is right: a withdrawal is not a
+    caveat. But it leaves the standing copy as the only one the tracker sees,
+    and the standing copy is *history written in the present tense*. One of the
+    three pairs in this repository had been triaged from it and was recorded
+    `open` two months after the arm it names was pinned by three tests.
+
+    So the keys are collected rather than discarded, and `report` refuses a
+    live verdict on one. This does not read the strike as a verdict — a struck
+    caveat closed by a later entry still needs a `by` naming it, which is the
+    whole point of the field.
+    """
+    found: set[str] = set()
+    ledger = root / "ledger"
+    if not ledger.is_dir():
+        return found
+    for path in sorted(ledger.glob("*.md")):
+        if path.name in SKIP:
+            continue
+        section = SECTION.search(path.read_text(encoding="utf-8", errors="replace"))
+        if not section:
+            continue
+        for unit in units(section.group(1)):
+            if not unit.startswith("~~"):
+                continue
+            # The `~~` and any bold lead inside it, so the key matches what the
+            # standing copy produces. A struck bullet is `~~**Lead.** rest~~`.
+            inner = unit.lstrip("~").strip()
+            lead = LEAD.match(inner)
+            found.add(f"{path.name}::{key(lead.group(1) if lead else inner)}")
+    return found
+
+
 def caveats(root: Path = ROOT) -> list[dict[str, str]]:
     found: list[dict[str, str]] = []
     ledger = root / "ledger"
@@ -273,6 +314,7 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
     """Return (counts by verdict, problems, orphaned verdict keys)."""
     found = caveats(root)
     status = load(root)
+    crossed = struck(root)
     counts = dict.fromkeys(VERDICTS, 0)
     problems: list[str] = []
     seen: set[str] = set()
@@ -318,6 +360,20 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
                 f"`{REVIEWED}`, which is the settled-verdict stamp. A narrowed "
                 f"caveat still has a residual to re-read, so its date is "
                 f"`{CHECKED}` — `--unread` reads that one and nothing else."
+            )
+        # A claim that also stands struck through in the same section was
+        # answered by a later entry; the standing copy is the original text,
+        # kept on purpose. Reading it as current is how one of the three pairs
+        # here was triaged `open` long after it was closed — and the tracker
+        # could not have shown that, because the strike is the only difference
+        # and `ANNOTATION` had already dropped it.
+        if k in crossed and verdict in ("open", "untriaged", "moment"):
+            problems.append(
+                f"{c['entry']}: `{key(c['claim'])}` is {verdict}, and the same "
+                f"claim also stands struck through in that section. The strike "
+                f"says a later entry answered it and the standing copy is the "
+                f"original text kept for the record. Read the strike, then "
+                f"record `closed` or `narrowed` with a `by` naming the entry."
             )
         counts[verdict] += 1
     orphans = sorted(set(status) - seen)

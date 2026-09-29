@@ -419,6 +419,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- a caveat closed by a line through it, 2026-09-29 -----------------------
+ "strike-is-not-open": (
+     "also stands struck through in that section",
+     "scripts/caveats.py",
+ ),
+
  # --- the message that caused the regex detour, 2026-09-29 -------------------
  "regex-spelling-hint": (
      "a_word_where_a_comparison_belongs_names_the_spelling_that_exists",
@@ -712,6 +718,9 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-the-kernel-on-wasm.md',
      'Nothing else in the workspace is checked for the same proble'):
         'wasm-runtime-guard',
+    ('2026-09-19-the-count-a-refusal-did-not-write.md',
+     'The plain (non-conditional) delete arm\'s "failed having appl'):
+        'strike-is-not-open',
     ('2026-09-19-the-regex-hole-that-was-not-there.md',
      'It does not improve the error message that caused the mistak'):
         'regex-spelling-hint',

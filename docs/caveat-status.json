@@ -9475,9 +9475,9 @@
     {
       "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
       "key": "The plain (non-conditional) delete arm's \"failed having appl",
-      "verdict": "open",
-      "by": "still unpinned, and the two routes tried are written beside the tests rather than left as an absence: an absent key answers Ok(false) by design, and an unauthorized delete is refused before the session task is dispatched to.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-20-the-child-that-made-the-arm-reachable.md reached the arm with a child table declared ON DELETE RESTRICT, which the entry's own estimate had ruled out as needing a foreign key on the shared `docs` fixture. Three tests in crates/slate-server/tests/transaction_counts.rs cover it. The entry strikes this bullet and leaves the original standing on purpose, so the tracker only ever saw the stale copy -- see ledger/2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
@@ -9494,9 +9494,9 @@
     {
       "entry": "2026-09-19-the-count-a-refusal-did-not-write.md",
       "key": "The `Result`-typed signature above is not implemented.",
-      "verdict": "open",
-      "by": "it would make the insert-arm mistake a compile error rather than a test failure, which is the stronger guarantee; the shape mismatch across the seven arms is why it is written down instead of written.",
-      "checked": "2026-09-28"
+      "verdict": "deliberate",
+      "by": "the entry's own Alternatives section rejected it on cost and the premise still holds, re-read against session.rs today: seven tally.applied call sites over four outcome shapes -- Result<()> from insert_many/upsert_many with the count kept separately, the same accumulated in three different loops, Result<u64> from purge_deleted, and Result<Vec<Row>> from delete_where and update_where. Three arms would build a Result purely to destructure it. The entry names the trigger to revisit -- an eighth arm -- and that has not happened.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-the-guard-i-did-not-build.md",
@@ -11438,6 +11438,34 @@
       "verdict": "open",
       "by": "true and the sharper half. check_retired_claims.py catches a restatement anywhere once the phrase is listed, but nothing makes listing it part of withdrawing a claim -- which is precisely how this instance survived ten days. A guard would have to read a ledger entry's withdrawal and demand a list entry, which is a real rule and is not written.",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "It does not check that the `by` names the entry the strike n",
+      "verdict": "open",
+      "by": "true. The rule demands a settled verdict and a non-empty `by`; a `closed` row citing the wrong entry passes. Checking it means parsing the strike's own prose for a ledger filename, which is a real rule and is not written.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "It matches on the key, so a struck bullet reworded past 60 c",
+      "verdict": "deliberate",
+      "by": "the key is how every verdict in this tracker is addressed, and a second matching scheme for one rule would be a second thing to keep in step. All three pairs here match exactly because striking a caveat means copying it. A paraphrasing strike is invisible and reads as no strike at all, which is the pre-rule behaviour rather than a regression.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "Nothing stops the pair being created wrongly in the first pl",
+      "verdict": "open",
+      "by": "true: an entry that strikes without keeping the original, or rewrites without striking, is not checked either way. That is a rule about how an entry is written and belongs in the pre-commit hook, which does not have it.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
+      "key": "Two of the three pairs were already right, so the rate is on",
+      "verdict": "moment",
+      "by": "a statement about the sample at the time of writing, not a claim about anything. It is here so the one-in-three is not later read as a measured rate.",
+      "reviewed": "2026-09-29"
     }
   ]
 }

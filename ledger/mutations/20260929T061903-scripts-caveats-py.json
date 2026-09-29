@@ -1,0 +1,95 @@
+{
+  "at": "2026-09-29T06:19:03+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "5ff76e6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the strike rule accepts open",
+      "old": "        if k in crossed and verdict in (\"open\", \"untriaged\", \"moment\"):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a claim that also stands struck through cannot be open: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the strike rule fires on every caveat, struck or not",
+      "old": "        if k in crossed and verdict in (\"open\", \"untriaged\", \"moment\"):",
+      "new": "        if verdict in (\"open\", \"untriaged\", \"moment\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "a bullet with no verdict is untriaged: problems: wanted 0, got 2 ['a.md: `It does not do the first thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "a verdict is read by the opening of its bullet: problems: wanted 0, got 2 ['a.md: `It does not do the first thing.` is open, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "a reworded bullet orphans its verdict, and says so: problems: wanted 1, got 3 ['a.md: `It does not do the first thing, reworded.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md::It does not do the first thing.']",
+        "closed without naming what closed it is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is closed and names nothing that closed or decided it', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "deliberate without naming the reasoning is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is deliberate and names nothing that closed or decided it', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "narrowed without naming what closed and what is left is refused: problems: wanted 2, got 3 ['a.md: `It does not do the first thing.` is narrowed and names nothing that closed or decided it', 'a.md: `It does not do the first thing.` is narrowed and has no `residual`. `by` says what closed; a narrowed caveat must also say what is left, in a field, so it can be counted.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "narrowed with a `by` and no `residual` is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is narrowed and has no `residual`. `by` says what closed; a narrowed caveat must also say what is left, in a field, so it can be counted.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "narrowed with a `by` and a `residual` is accepted and counted as its own thing: problems: wanted 0, got 1 ['a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "struck() keeps the leading tildes, so no key ever matches",
+      "old": "            inner = unit.lstrip(\"~\").strip()",
+      "new": "            inner = unit",
+      "verdict": "caught",
+      "caught_by": [
+        "a claim that also stands struck through cannot be open: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "struck() ignores the bold lead",
+      "old": "            found.add(f\"{path.name}::{key(lead.group(1) if lead else inner)}\")",
+      "new": "            found.add(f\"{path.name}::{key(inner)}\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a claim that also stands struck through cannot be open: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "struck() collects unstruck units instead",
+      "old": "            if not unit.startswith(\"~~\"):",
+      "new": "            if unit.startswith(\"~~\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "a bullet with no verdict is untriaged: problems: wanted 0, got 2 ['a.md: `It does not do the first thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "a verdict is read by the opening of its bullet: problems: wanted 0, got 2 ['a.md: `It does not do the first thing.` is open, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "a reworded bullet orphans its verdict, and says so: problems: wanted 1, got 3 ['a.md: `It does not do the first thing, reworded.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.', 'a.md::It does not do the first thing.']",
+        "closed without naming what closed it is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is closed and names nothing that closed or decided it', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "deliberate without naming the reasoning is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is deliberate and names nothing that closed or decided it', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "narrowed without naming what closed and what is left is refused: problems: wanted 2, got 3 ['a.md: `It does not do the first thing.` is narrowed and names nothing that closed or decided it', 'a.md: `It does not do the first thing.` is narrowed and has no `residual`. `by` says what closed; a narrowed caveat must also say what is left, in a field, so it can be counted.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "narrowed with a `by` and no `residual` is refused: problems: wanted 1, got 2 ['a.md: `It does not do the first thing.` is narrowed and has no `residual`. `by` says what closed; a narrowed caveat must also say what is left, in a field, so it can be counted.', 'a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']",
+        "narrowed with a `by` and a `residual` is accepted and counted as its own thing: problems: wanted 0, got 1 ['a.md: `It does not do the second thing.` is untriaged, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the strike rule also refuses closed",
+      "old": "        if k in crossed and verdict in (\"open\", \"untriaged\", \"moment\"):",
+      "new": "        if k in crossed and verdict != \"narrowed\":",
+      "verdict": "caught",
+      "caught_by": [
+        "the same pair recorded closed is fine: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is closed, and the same claim also stands struck through in that section. The strike says a later entry answered it and the standing copy is the original text kept for the record. Read the strike, then record `closed` or `narrowed` with a `by` naming the entry.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
