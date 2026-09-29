@@ -350,6 +350,17 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "node-wide-concurrency": (
      "GlobalConcurrencyLimitLayer",
      "crates/slate-serverd/src/serve.rs",
+ ),
+
+ # --- the demo panels the endpoints already served, 2026-09-29 ---------------
+ "demo-search-panel": ("Full-text search", "examples/explorer/web/src/panels.tsx"),
+ "demo-conditional-panel": (
+     "Conditional writes",
+     "examples/explorer/web/src/panels.tsx",
+ ),
+ "contains-conformance": (
+     "a search for terms in different rows",
+     "examples/explorer/conformance/conformance.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -1684,6 +1695,21 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-20-four-say-absent-one-says-present.md',
      'The predicate paths were probed at one shape.'):
         'retired-row-only-predicate',
+    ('2026-09-21-contains-in-the-sql-front-end.md',
+     "No search box in the demo's web UI."):
+        'demo-search-panel',
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     "The demo's UI does not show the conditional update."):
+        'demo-conditional-panel',
+    ('2026-09-18-deleting-a-row-somebody-else-just-edited.md',
+     "The demo's UI does not show it."):
+        'demo-conditional-panel',
+    ('2026-09-21-contains-on-the-wire.md',
+     'No conformance case.'):
+        'contains-conformance',
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     'No case covers a search that matches nothing *through the in'):
+        'contains-conformance',
     ('2026-09-28-a-random-twelve-found-nothing.md',
      'It says nothing about the `deliberate` verdicts.'):
         '=read',

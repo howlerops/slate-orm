@@ -297,6 +297,23 @@ CASES: list[tuple[str, str, Any, str]] = [
     ("a search for a word that is only a prefix", "/api/search",
      {"text": "game", "path": "index", "limit": 20}, "app"),
 
+    # Two real terms that are each in a title and never in the *same* title:
+    # `Solaris` is book 17 and `The Cyberiad` is book 18. `contains` is
+    # conjunctive, so this matches nothing — and it is a sharper test of that
+    # than `"the games"`, which matches one row and so is also what a client
+    # that dropped the second term would answer if the first term happened to
+    # be rare. Here a client that dropped either term answers one row and a
+    # client that turned the conjunction into a disjunction answers two, so
+    # all three mistakes are distinguishable from the correct empty answer.
+    #
+    # Both paths, because "matches nothing" is the case where an index and a
+    # scan are most likely to disagree: the index walk ends at an empty
+    # intersection and the scan tests every row and keeps none, which are
+    # different code and the same answer.
+    *[("a search for terms in different rows by " + path, "/api/search",
+       {"text": "solaris cyberiad", "path": path, "limit": 20}, "app")
+      for path in ("index", "scan")],
+
     # As a reader, whose row policy hides `The Astronauts` (1951). It holds
     # "the", so the policy has to cut the five down to four — through the
     # *index*, which is the path where a policy is easiest to lose: the
@@ -828,6 +845,13 @@ MUST_DIFFER: list[tuple[str, str]] = [
     ("a search for 'the' by index", "a search for 'the' by scan"),
 
     ("a search for 'the games' by index", "a search for 'the games' by scan"),
+
+    # And the empty answer, which is where the two paths are least alike
+    # underneath and most alike on the wire: identical rows, identical count,
+    # and `access` the only thing that can tell them apart. An adapter that
+    # ignored the hint would be invisible here without this pair.
+    ("a search for terms in different rows by index",
+     "a search for terms in different rows by scan"),
 ]
 
 #: What `MUST_DIFFER` is for, and what it is *not* needed for.

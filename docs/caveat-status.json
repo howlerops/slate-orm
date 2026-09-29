@@ -8795,9 +8795,9 @@
     {
       "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
       "key": "The demo's UI does not show it.",
-      "verdict": "open",
-      "by": "still no panel. The endpoint exists and the conformance corpus drives it; a visitor sees nothing.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the same ConditionalWrites panel, with the delete's third case \u2014 against a row that is gone, a plain delete reports affected 0 and a conditional one refuses. That distinction is the e2e check.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
@@ -9961,9 +9961,9 @@
     {
       "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
       "key": "No case covers a search that matches nothing *through the in",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nor a multi-term search whose terms are in different rows \u2014 `\"solaris cyberiad\"` would be a sharper conjunction test than `\"the games\"` and is not there."
+      "verdict": "closed",
+      "by": "'solaris cyberiad' \u2014 two real terms never in the same title \u2014 by index and by scan, with a MUST_DIFFER pair on the access path. It is the sharper conjunction test the caveat named and it covers the empty answer through the index at the same time, because the correct answer is nothing.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-python-that-runs-ci-had-no-checker.md",
@@ -10029,9 +10029,9 @@
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
       "key": "The demo's UI does not show the conditional update.",
-      "verdict": "open",
-      "by": "the endpoint exists and the corpus drives it; no panel does.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the ConditionalWrites panel shows it, with the other writer as the control: unguarded it applies and the price reads 12.50, with somebody else moving the price it is refused and 11.00 is what is stored. Asserted in the e2e.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-18-the-three-sdks-compared-on-a-decimal.md",
@@ -10158,9 +10158,9 @@
     {
       "entry": "2026-09-21-contains-in-the-sql-front-end.md",
       "key": "No search box in the demo's web UI.",
-      "verdict": "open",
-      "by": "the last surface, and the only part of F6b left.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the Search panel in examples/explorer/web/src/panels.tsx, on its own tab. It shows the access path beside the rows, because both paths return the same books by construction and the plan is the only thing that distinguishes them; two e2e checks assert that rather than that the panel rendered.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-contains-in-the-sql-front-end.md",
@@ -10194,9 +10194,9 @@
     {
       "entry": "2026-09-21-contains-on-the-wire.md",
       "key": "No conformance case.",
-      "verdict": "open",
-      "by": "the demo's catalog still has no text index to point one at, which is the same follow-up as the search box.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "both premises are false. examples/explorer/head.toml declares by_title_text, and the corpus carries eight search cases plus MUST_DIFFER pairs on the access path. Written before the demo's text index landed and never re-read.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-contains-on-the-wire.md",
@@ -10881,6 +10881,41 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-29",
       "by": "thirty of the forty-five have no mechanical subject \u2014 'prose has nothing to mutate', 'an untested path is worse than a refusal' \u2014 and there is nothing to grep for. Naming the weakness is what can be done about it; the alternative is to exclude such verdicts from the sample, which would measure the easy two thirds and report it as the whole."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "No `includeDeleted` control.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. /api/query takes the flag and no panel sets it. The interesting half is the refusal for a persona without read_deleted \u2014 distinguishing 'no retired rows' from 'you may not see them' \u2014 which is a panel's worth of design rather than a checkbox."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "The search panel refetches on every keystroke.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "a read against a six-row table on loopback. A debounce would make the panel's behaviour depend on a timer, which is what e2e checks flake on, and the cost it would save is invisible at this corpus size."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "Nothing asserts the panels' prose.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "the standing residual for every panel in this file, not new here. The e2e asserts the numbers a panel reports; whether the explanation beside them is true is a reading, and site/check/docs.py's UNCHECKED roster makes the same trade for the same reason."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "The demo still groups a two-table join and nothing else.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "unchanged by this work and already recorded as deliberate on 2026-09-14-the-grouped-plan-in-the-demo.md: the coverage belongs in crates/slate-server/tests/multi.rs, and widening the demo to exercise every shape of every RPC would make it a test rather than a demonstration."
+    },
+    {
+      "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
+      "key": "The subquery fix is a dedup, not a join.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. IN (SELECT ...) still materialises in crates/slate-wasm/src/lib.rs's resolve_subqueries; a subquery whose distinct values exceed max_in_values is refused, and the refusal's own advice \u2014 put them in a table and join to it \u2014 is advice the front end could take itself."
     }
   ]
 }

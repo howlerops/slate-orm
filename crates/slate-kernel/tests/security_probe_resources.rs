@@ -77,7 +77,9 @@ async fn seeded() -> RecordStore<MemoryStore> {
 async fn a_list_this_large_is_refused_by_default() {
     let store = seeded().await;
     let txn = store.begin().await.unwrap();
-    let values: Vec<Value> = (0..50_000).map(|i| Value::I64(1_000_000 + i as i64)).collect();
+    let values: Vec<Value> = (0..50_000)
+        .map(|i| Value::I64(1_000_000 + i as i64))
+        .collect();
     let error = txn
         .count(
             &app(),
@@ -115,12 +117,10 @@ async fn a_large_in_list_no_longer_costs_the_list_length_per_row() {
     // list that large does reach it, so it is the one place that has to opt
     // out, and `a_list_this_large_is_refused_by_default` below is what keeps
     // the opt-out from quietly becoming the shipped behaviour.
-    let store = seeded()
-        .await
-        .with_limits(slate_kernel::ExecutionLimits {
-            max_in_values: usize::MAX,
-            ..slate_kernel::ExecutionLimits::default()
-        });
+    let store = seeded().await.with_limits(slate_kernel::ExecutionLimits {
+        max_in_values: usize::MAX,
+        ..slate_kernel::ExecutionLimits::default()
+    });
     let txn = store.begin().await.unwrap();
 
     let run = |n: usize| {

@@ -95,13 +95,6 @@ NOT_IN_THE_UI = {
     ),
     "/api/related": "one relationship loaded for many parents; the join panel already shows two tables",
     "/api/page": "keyset pagination needs a cursor to be visible to mean anything",
-    "/api/search": (
-        "the full-text demo: deliberately no search box. Adding one and not a "
-        "window panel would set the precedent that the newest feature gets a "
-        "panel, which is how a demo becomes a menu"
-    ),
-    "/api/conditional-update": "optimistic concurrency needs a second writer to be worth watching",
-    "/api/conditional-delete": "the same, for a delete",
     "/api/purge": "erasing retired rows answers with a count and shows nothing",
     "/api/bad-status": "a deliberate check violation, for the conformance corpus's error shapes",
     "/api/typed": "reads two rows through the *generated* decoders; the UI decodes its own",

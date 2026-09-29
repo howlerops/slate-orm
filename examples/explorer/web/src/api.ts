@@ -87,6 +87,15 @@ export type Answer<T> = { ok: true; value: T } | { ok: false; error: SlateFailur
 
 export interface QuerySpec {
   table: string;
+  /**
+   * Reach rows a soft delete retired.
+   *
+   * A privileged read: it needs the `read_deleted` action, which the demo's
+   * `reader` persona does not hold. That refusal is the interesting half —
+   * without a control for this, the flag is one a client can set and a column
+   * it cannot find.
+   */
+  includeDeleted?: boolean;
   filter?: unknown;
   sort?: { column: number; direction: "asc" | "desc" }[];
   limit?: number | null;
@@ -178,6 +187,39 @@ export interface BatchOutcome {
 }
 
 /** One node of a relationship path: a row, and the rows below it. */
+/** What a full-text search returned, and which access path answered it. */
+export interface SearchAnswer {
+  rows: Tagged[][];
+  /**
+   * The plan's access path, or `null` for a caller without the `explain`
+   * grant. Absent rather than a refusal: EXPLAIN is privileged because a plan
+   * is costed against statistics covering rows a policy hides, and refusing
+   * the whole search over a diagnostic would make full-text the one feature a
+   * restricted reader cannot use at all.
+   */
+  access: string | null;
+}
+
+/** A conditional update's outcome: what the server said, and what is stored. */
+export interface ConditionalUpdate {
+  /** The refusal's kind, or `""` when the update landed. */
+  refused: string;
+  /** The price as stored afterwards, as units with no scale. */
+  price: Tagged;
+  /** The same value rendered at the scale the adapter declares. */
+  rendered: string;
+}
+
+/** A conditional delete's outcome. Three answers, not two. */
+export interface ConditionalDelete {
+  /** The refusal's kind, or `""` when the delete landed. */
+  refused: string;
+  /** Rows removed. Zero when refused. */
+  affected: number;
+  /** Whether the row is still in the table, which is what the table says. */
+  left: boolean;
+}
+
 export interface PathNode {
   row: Tagged[];
   related: Tagged[][];
@@ -270,6 +312,21 @@ export const api = {
 
   path: (sdk: Sdk, persona: Persona, keys: Tagged[]) =>
     call<PathAnswer>(sdk, "/api/path", { keys }, persona),
+
+  search: (
+    sdk: Sdk,
+    persona: Persona,
+    spec: { text: string; path: "index" | "scan"; limit?: number },
+  ) => call<SearchAnswer>(sdk, "/api/search", spec, persona),
+
+  conditionalUpdate: (sdk: Sdk, persona: Persona, stale: boolean) =>
+    call<ConditionalUpdate>(sdk, "/api/conditional-update", { stale }, persona),
+
+  conditionalDelete: (
+    sdk: Sdk,
+    persona: Persona,
+    spec: { stale: boolean; gone: boolean },
+  ) => call<ConditionalDelete>(sdk, "/api/conditional-delete", spec, persona),
 
   transaction: (sdk: Sdk, persona: Persona, commit: boolean) =>
     call<{ visibleInside: boolean; visibleAfter: boolean }>(

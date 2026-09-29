@@ -957,3 +957,243 @@ export function Relationships(props: Context): JSX.Element {
     </div>
   );
 }
+
+/**
+ * Full-text search, and the access path that answered it.
+ *
+ * The last surface `contains` was missing: it is on the wire, in all three
+ * clients, in the SQL front end and in the conformance corpus, and a visitor
+ * could not type a word into it. `ledger/2026-09-21-contains-in-the-sql-front-end.md`
+ * recorded that as the only part of F6b left.
+ *
+ * **The access path is the panel, not the rows.** A text index and a table scan
+ * return the same books for the same word — by construction, because a
+ * `contains` with no index is the same predicate applied to every row. So a
+ * panel showing only results would show nothing a reader could act on, and an
+ * adapter that ignored the requested path would look correct. The plan is what
+ * tells them apart, which is why it is a badge rather than a footnote.
+ */
+export function Search(props: Context): JSX.Element {
+  const [text, setText] = createSignal("the");
+  const [path, setPath] = createSignal<"index" | "scan">("index");
+
+  const outcome = createQuery(() => ({
+    queryKey: ["search", props.sdk(), props.persona(), text(), path()],
+    queryFn: () => api.search(props.sdk(), props.persona(), { text: text(), path: path() }),
+    // Runs on load and on every keystroke's settled value, unlike the write
+    // panels: a search is a read and re-running it costs a query.
+    enabled: text().length > 0,
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Full-text search</h2>
+      <p class="why">
+        <code>books.title</code> carries a text index, and{" "}
+        <code>title contains "…"</code> can be answered two ways: by walking the
+        index for the term, or by scanning the table and testing every row. Both
+        return the same books.
+      </p>
+      <p class="why">
+        <b>Which is why the plan is shown and the rows are only the evidence.</b>{" "}
+        An adapter that ignored the path you chose would return exactly these
+        rows and look right. The <code>access</code> badge is the one thing that
+        distinguishes them — and it is absent for the <code>reader</code>{" "}
+        persona, because <code>EXPLAIN</code> is privileged: a plan is costed
+        against statistics covering rows that reader's policy hides.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>title contains</span>
+          <input
+            type="text"
+            value={text()}
+            onInput={(event) => setText(event.currentTarget.value)}
+            data-test="search-text"
+          />
+        </label>
+        <label class="field">
+          <span>answer it by</span>
+          <select
+            value={path()}
+            onChange={(event) =>
+              setPath(event.currentTarget.value === "scan" ? "scan" : "index")
+            }
+            data-test="search-path"
+          >
+            <option value="index">the text index</option>
+            <option value="scan">a table scan</option>
+          </select>
+        </label>
+      </div>
+      <Show when={text().length > 0} fallback={<div class="note">type a word</div>}>
+        <Result answer={outcome.data} pending={outcome.isPending}>
+          {(value) => (
+            <>
+              <div class="badges" data-test="search-summary">
+                <span class="badge" data-tone={value.rows.length > 0 ? "good" : "warn"}>
+                  matched <b>{value.rows.length}</b>
+                </span>
+                <span class="badge" data-tone={value.access ? "good" : "warn"}>
+                  access <b>{value.access ?? "not visible to this persona"}</b>
+                </span>
+              </div>
+              <Show
+                when={value.rows.length > 0}
+                fallback={
+                  <div class="note">
+                    No title contains that. A search matching nothing is an
+                    empty answer, not a failure — and it costs the same walk.
+                  </div>
+                }
+              >
+                <ValueTable columns={TABLES["books"] ?? []} rows={value.rows} />
+              </Show>
+            </>
+          )}
+        </Result>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * Optimistic concurrency, both halves, side by side.
+ *
+ * `update … expected` and `delete … expected`: a write that carries the row as
+ * the caller read it and is refused if the stored row has moved. Two entries
+ * recorded that the endpoints existed, the conformance corpus drove them, and a
+ * visitor saw nothing.
+ *
+ * **The stale case is the only one that shows anything.** An unconditional
+ * update and a conditional one over an unchanged row do exactly the same thing,
+ * so a panel that only ever succeeded would demonstrate nothing — which is why
+ * the control is *whether somebody else writes first* rather than whether to
+ * guard.
+ *
+ * The delete has three outcomes where the update has two, and the third is the
+ * one worth the panel: a *plain* delete of an absent key reports `affected: 0`,
+ * and a conditional one refuses it. "Nothing happened" and "somebody else got
+ * there" are different answers, and only the conditional form distinguishes
+ * them.
+ */
+export function ConditionalWrites(props: Context): JSX.Element {
+  const [write, setWrite] = createSignal<"update" | "delete">("update");
+  const [meddle, setMeddle] = createSignal<"none" | "moved" | "gone">("none");
+  const [ran, setRan] = createSignal(0);
+
+  const updated = createQuery(() => ({
+    queryKey: ["conditional-update", props.sdk(), props.persona(), meddle(), ran()],
+    queryFn: () => api.conditionalUpdate(props.sdk(), props.persona(), meddle() === "moved"),
+    enabled: ran() > 0 && write() === "update",
+  }));
+
+  const deleted = createQuery(() => ({
+    queryKey: ["conditional-delete", props.sdk(), props.persona(), meddle(), ran()],
+    queryFn: () =>
+      api.conditionalDelete(props.sdk(), props.persona(), {
+        stale: meddle() === "moved",
+        gone: meddle() === "gone",
+      }),
+    enabled: ran() > 0 && write() === "delete",
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Conditional writes</h2>
+      <p class="why">
+        A write that carries the row as you read it. The server compares it with
+        what is stored and refuses if somebody moved it — the lost-update
+        problem solved without holding a lock, and without a version column the
+        schema has to carry.
+      </p>
+      <p class="why">
+        <b>Let nobody else write and both forms look like ordinary writes.</b>{" "}
+        That is why the control is what the other writer does. The delete has a
+        third case the update does not: against a row that is <i>gone</i>, a
+        plain delete reports nothing affected and a conditional one refuses —
+        "there was nothing to do" and "somebody got there first" are different
+        answers and only one form tells you which.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>write</span>
+          <select
+            value={write()}
+            onChange={(event) =>
+              setWrite(event.currentTarget.value === "delete" ? "delete" : "update")
+            }
+            data-test="conditional-write"
+          >
+            <option value="update">update … expected</option>
+            <option value="delete">delete … expected</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>meanwhile somebody</span>
+          <select
+            value={meddle()}
+            onChange={(event) => {
+              const chosen = event.currentTarget.value;
+              setMeddle(chosen === "moved" ? "moved" : chosen === "gone" ? "gone" : "none");
+            }}
+            data-test="conditional-meddle"
+          >
+            <option value="none">does nothing</option>
+            <option value="moved">changes the price</option>
+            <option value="gone" disabled={write() === "update"}>
+              deletes the row
+            </option>
+          </select>
+        </label>
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          onClick={() => setRan(ran() + 1)}
+          data-test="conditional-run"
+        >
+          run it
+        </button>
+      </div>
+      <Show when={ran() > 0} fallback={<div class="note">not run yet</div>}>
+        <Show when={write() === "update"}>
+          <Result answer={updated.data} pending={updated.isPending}>
+            {(value) => (
+              <div class="badges" data-test="conditional-summary">
+                <span class="badge" data-tone={value.refused ? "warn" : "good"}>
+                  {value.refused ? "refused" : "applied"}{" "}
+                  <b>{value.refused || "the guarded update"}</b>
+                </span>
+                <span class="badge">
+                  price now <b>{value.rendered}</b>
+                </span>
+                <span class="badge">
+                  as stored <b>{render(value.price)}</b>
+                </span>
+              </div>
+            )}
+          </Result>
+        </Show>
+        <Show when={write() === "delete"}>
+          <Result answer={deleted.data} pending={deleted.isPending}>
+            {(value) => (
+              <div class="badges" data-test="conditional-summary">
+                <span class="badge" data-tone={value.refused ? "warn" : "good"}>
+                  {value.refused ? "refused" : "applied"}{" "}
+                  <b>{value.refused || "the guarded delete"}</b>
+                </span>
+                <span class="badge">
+                  affected <b>{value.affected}</b>
+                </span>
+                <span class="badge" data-tone={value.left ? "warn" : "good"}>
+                  row <b>{value.left ? "still there" : "gone"}</b>
+                </span>
+              </div>
+            )}
+          </Result>
+        </Show>
+      </Show>
+    </div>
+  );
+}

@@ -499,6 +499,81 @@ try {
   // The three panels N5 added, each asserting the thing its panel exists to
   // show rather than that it rendered. A panel that renders and teaches the
   // wrong thing is the failure worth catching here.
+  // Full-text, asserted on the thing the panel exists to show. Both paths
+  // return the same books by construction, so a check on the rows alone would
+  // pass against an adapter that ignored the path — the failure the panel's
+  // own prose names. The access line is the assertion.
+  await check("the two full-text paths return the same books by different plans", async () => {
+    await at(page, { panel: "search" });
+    const panel = page.locator('.panel:has(h2:text-is("Full-text search"))');
+
+    await panel.locator('[data-test="search-path"]').selectOption("index");
+    await settled(page);
+    const byIndex = await panel.locator('[data-test="search-summary"]').innerText();
+    const indexRows = await panel.locator("tbody tr").count();
+
+    await panel.locator('[data-test="search-path"]').selectOption("scan");
+    await settled(page);
+    const byScan = await panel.locator('[data-test="search-summary"]').innerText();
+    const scanRows = await panel.locator("tbody tr").count();
+
+    if (indexRows === 0) throw new Error("the seeded titles matched nothing by index");
+    if (indexRows !== scanRows) {
+      throw new Error(`index returned ${indexRows} rows and scan ${scanRows}`);
+    }
+    if (byIndex === byScan) {
+      throw new Error(`both paths reported the same plan, so neither is chosen: ${byIndex}`);
+    }
+  });
+
+  await check("a search matching nothing is an empty answer, not a failure", async () => {
+    await at(page, { panel: "search" });
+    const panel = page.locator('.panel:has(h2:text-is("Full-text search"))');
+    await panel.locator('[data-test="search-text"]').fill("zzzznotitle");
+    await settled(page);
+    const summary = await panel.locator('[data-test="search-summary"]').innerText();
+    if (!summary.includes("matched 0")) throw new Error(`matched: ${summary}`);
+    // An empty answer still carries a plan, which is how it differs from a
+    // refusal — the distinction the panel is making.
+    if (summary.includes("not visible")) throw new Error(`the app persona lost its plan: ${summary}`);
+  });
+
+  // Optimistic concurrency. The unguarded case is the control: without it,
+  // "refused" is satisfied by a panel that refuses everything.
+  await check("a conditional update lands, and is refused once somebody else writes", async () => {
+    await at(page, { panel: "conditional" });
+    const panel = page.locator('.panel:has(h2:text-is("Conditional writes"))');
+
+    await panel.locator('[data-test="conditional-run"]').click();
+    await settled(page);
+    const quiet = await panel.locator('[data-test="conditional-summary"]').innerText();
+    if (!quiet.includes("applied")) throw new Error(`unguarded: ${quiet}`);
+    if (!quiet.includes("12.50")) throw new Error(`the new price did not land: ${quiet}`);
+
+    await panel.locator('[data-test="conditional-meddle"]').selectOption("moved");
+    await panel.locator('[data-test="conditional-run"]').click();
+    await settled(page);
+    const stale = await panel.locator('[data-test="conditional-summary"]').innerText();
+    if (!stale.includes("refused")) throw new Error(`stale: ${stale}`);
+    // And the other writer's value is what is stored, not the refused one.
+    if (!stale.includes("11.00")) throw new Error(`the other writer's price is not there: ${stale}`);
+  });
+
+  await check("a conditional delete refuses a row that is gone, where a plain one would not", async () => {
+    await at(page, { panel: "conditional" });
+    const panel = page.locator('.panel:has(h2:text-is("Conditional writes"))');
+    await panel.locator('[data-test="conditional-write"]').selectOption("delete");
+    await panel.locator('[data-test="conditional-meddle"]').selectOption("gone");
+    await panel.locator('[data-test="conditional-run"]').click();
+    await settled(page);
+    const summary = await panel.locator('[data-test="conditional-summary"]').innerText();
+    if (!summary.includes("refused")) throw new Error(`gone: ${summary}`);
+    // The point of the case: a plain delete would say affected 0 and look the
+    // same as a successful one over an already-absent key.
+    if (!summary.includes("affected 0")) throw new Error(`affected: ${summary}`);
+    if (!summary.includes("row gone")) throw new Error(`the row should be absent: ${summary}`);
+  });
+
   await check("a predicate write hands back the rows it destroyed", async () => {
     await at(page, { panel: "writes" });
     const panel = page.locator('.panel:has(h2:text-is("Predicate writes"))');
