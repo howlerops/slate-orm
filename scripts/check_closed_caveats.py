@@ -429,6 +429,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_renamed_column.py",
  ),
 
+ # --- the dialect mutate.py was missing, 2026-09-29 ---------------------------
+ # The needle is the suppression, not the runner's existence: a mutate_guard.py
+ # that passed a guard's exit code straight through would still be here, and
+ # would score every syntax-breaking mutation as caught.
+ "guard-dialect": (
+     "a guard that raises produces no result line at all",
+     "scripts/test_mutate_guard.py",
+ ),
+
  # --- a convention inferred from one entry, 2026-09-29 -----------------------
  # The needle is the corrected count, in the docstring of the rule the wrong
  # reason was attached to: what closed the caveat is the measurement, and the
@@ -808,6 +817,8 @@ WITNESSED: dict[tuple[str, str], str] = {
      'Nothing still checks that a fourth client arrives with a tra'): 'transport-door',
     ('2026-09-29-the-python-client-had-no-renamed-column-to-declare.md',
      'Nothing stops the fourth client arriving without this test.'): 'renamed-column-roster',
+    ('2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md',
+     'The three real-tree mutations were hand-run.'): 'guard-dialect',
     # One test closes two readings: that the permit is released before a row
     # is read, and that open streams are therefore bounded by nothing.
     ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',

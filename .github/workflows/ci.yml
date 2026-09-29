@@ -399,6 +399,12 @@ jobs:
       # off `clients/`, so a fourth arriving without the test is seen.
       - run: python3 scripts/check_renamed_column.py
       - run: python3 scripts/test_check_renamed_column.py
+      # scripts/mutate.py can read five test runners and no guard, so a
+      # mutation aimed at the real tree and judged by a guard had to be run
+      # by hand, without the restore-in-a-finally or the reported-suite
+      # count. mutate_guard.py is that missing dialect, and refuses to call
+      # a guard that died a guard that refused.
+      - run: python3 scripts/test_mutate_guard.py
 
   quickstarts:
     name: the landing page's code

@@ -11616,8 +11616,9 @@
     {
       "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
       "key": "The three real-tree mutations were hand-run.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/mutate_guard.py: the five real-tree mutations were re-run through scripts/mutate.py and are recorded under ledger/mutations/, so the restore, the exactly-once anchor check and the reported-suite count now apply to them",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
@@ -11632,6 +11633,32 @@
       "residual": "a fourth client with a PROVES entry and no NEXT_TEST line raises inside the fixture, which the loop reports as exit 70 rather than silently generating no case -- so it is caught loudly, by a message naming an exception rather than the missing line",
       "checked": "2026-09-29",
       "by": "scripts/test_check_renamed_column.py generates one case per client from PROVES and reports a fixture that raises as exit 70, so a fourth client with no NEXT_TEST line is a loud failure rather than a silently absent case"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "It is a runner, not a dialect, so `mutate.py --help` does no",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "Nothing makes the real-tree mutations run again.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "Only `check_renamed_column.py` was actually mutated against.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
+      "key": "The fixture guards are written into `scripts/` and removed i",
+      "verdict": "narrowed",
+      "by": "scripts/test_mutate_guard.py removes them in a finally, which covers every exit but a kill; the six names (passes, refuses, raises, exits_two, silent, prints_a_traceback_and_passes) are not check_* so no guard's own roster picks them up while they exist",
+      "residual": "a SIGKILL mid-run leaves six files in scripts/, which scripts/mutate.py solved for itself with an in-flight marker and this does not",
+      "checked": "2026-09-29"
     }
   ]
 }

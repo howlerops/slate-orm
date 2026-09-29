@@ -147,6 +147,7 @@ generated-is-used|.|python3 scripts/check_generated_is_used.py
 generated-is-used-guard|.|python3 scripts/test_check_generated_is_used.py
 renamed-column|.|python3 scripts/check_renamed_column.py
 renamed-column-guard|.|python3 scripts/test_check_renamed_column.py
+mutate-guard|.|python3 scripts/test_mutate_guard.py
 go-client-fmt|clients/go|gofmt -l .
 go-client-vet|clients/go|go vet ./...
 go-adapter-fmt|examples/explorer/backends/go|gofmt -l .
