@@ -62,7 +62,7 @@ use tokio_stream::StreamExt as _;
 pub(crate) struct Serving {
     /// How long in-flight requests are given after a stop signal.
     pub(crate) grace: Duration,
-    /// Requests in flight per connection, unset for unbounded.
+    /// Requests admitted at once across the node, unset for unbounded.
     pub(crate) concurrency: Option<usize>,
     /// How long one request may *wait*, unset for no timeout. Not a latency
     /// bound — see the setting it comes from in [`crate::config`].
@@ -162,23 +162,15 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     let serving_counters = Arc::clone(&counters);
     let server = tokio::spawn(async move {
         let mut builder = tonic::transport::Server::builder();
-        // Applied to the builder rather than per handler, which is the only
-        // place tonic offers — and is weaker than it looks in both cases. The
-        // concurrency limit is *per connection*, by the name of the method
-        // called, so a caller who opens a second socket gets a second
-        // allowance; the timeout only fires on a handler that pends, because
-        // `GrpcTimeout::poll` polls the inner future first. Both are written
-        // up on the settings above, and `tests/ceilings.rs` pins the timeout's
-        // half. Stated here rather than only there because this is where a
-        // reader arrives believing the names.
+        // The timeout is applied to the builder, which is the only place
+        // tonic offers, and is weaker than its name: it only fires on a
+        // handler that pends, because `GrpcTimeout::poll` polls the inner
+        // future first. Written up on the setting above, and
+        // `tests/ceilings.rs` pins what can be pinned of it.
         //
         // Left unset by default. A concurrency limit low enough to protect a
         // small node is low enough to break a large one, and there is no
-        // number that is right without knowing the machine — but until now
-        // there was no way to say one at all, which is the actual defect.
-        if let Some(limit) = concurrency {
-            builder = builder.concurrency_limit_per_connection(limit);
-        }
+        // number that is right without knowing the machine.
         if let Some(timeout) = request_timeout {
             builder = builder.timeout(timeout);
         }
@@ -188,6 +180,29 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
         // the layer. Adding the layer conditionally would mean two builder
         // types and a branch that has to construct the server twice.
         builder
+            // **Node-wide, not per connection.** `concurrency_limit_per_connection`
+            // is what this used, and its name is exact: a caller who opens a
+            // second socket got a second allowance, so the setting bounded
+            // politeness rather than load. `GlobalConcurrencyLimitLayer` holds
+            // one semaphore for the process and is layered here, outside the
+            // per-connection stack, so every connection draws on it.
+            //
+            // **What it bounds is handler starts, not streaming.** A permit is
+            // released when the response future resolves, and for a
+            // server-streaming RPC that is before any row is read — the same
+            // property `ledger/2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md`
+            // recorded about the per-connection version. So this caps how many
+            // requests are being *admitted and planned* at once, which is the
+            // expensive part, and not how many response streams are open. A
+            // bound on open streams is a different mechanism and is not this.
+            //
+            // Cloned per connection by the layer; the semaphore inside is an
+            // `Arc`, so every clone shares the count. That is the whole
+            // difference from the method it replaces, and it is one word in
+            // the type name, which is why the old one read as correct.
+            .layer(tower::util::option_layer(
+                concurrency.map(tower::limit::GlobalConcurrencyLimitLayer::new),
+            ))
             .layer(crate::observe::ObserveLayer::new(
                 serving_counters,
                 observing.request_log,

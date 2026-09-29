@@ -477,12 +477,27 @@ left finding 1's refusal covering one catalog constructor of two.
 a `GROUP BY` over the selected columns rather than adding a node, so it is
 already under `max_groups`.
 
+**A fifth ceiling, on the one input the other four do not bound.**
+`max_in_values` caps how many values an `IN` list may carry, and it sits
+differently from the rest: they bound state the node accumulates while
+answering, and this bounds an input the caller sends. It is therefore the only
+one that refuses before a row is read, because the list arrives whole. The
+number is 10,000, chosen against what a caller is *describing* rather than
+against memory — matching that many keys is a join, and saying so gets a build
+side the planner can cost. It is checked in `QueryCursor::open`, which is where
+every read and every predicate write meets, so `delete_where` is bounded by the
+same number and `a_predicate_write_is_bounded_by_the_same_ceiling` asserts that
+rather than reading it off the call graph.
+
 And `the_default_limits_are_not_unbounded`, which is the one that would have
 been missed. Every other limit test sets its own ceiling with `with_limits`, so
 all of them pass against a `new_default` returning `unbounded()` — a node with
 none of these protections, shipped green. It asserts the defaults are finite
 and non-zero without pinning the numbers, since the constants are documented as
-untuned and a deployment is expected to change them.
+untuned and a deployment is expected to change them. Its roster listed three of
+what were four fields for as long as `max_window_rows` existed — a window
+ceiling shipped as `usize::MAX` would have passed it — so it destructures
+`ExecutionLimits` now, and a sixth field added without a row will not compile.
 
 The daemon gains `max_concurrent_requests` and `request_timeout`, both unset by
 default: a concurrency limit low enough to protect a small node is low enough
@@ -491,12 +506,18 @@ Having no way to *say* one was the defect. Zero is refused for every one of
 these settings rather than read as "no limit", because a config that disables
 the feature it appears to configure is worse than one that will not start.
 
-Both are weaker than their names, and that was established after this was
+Both were weaker than their names, and that was established after this was
 written — by `crates/slate-serverd/tests/ceilings.rs`, which set out to prove
 they take effect and found the shape of what they do instead.
-`max_concurrent_requests` becomes tonic's `concurrency_limit_per_connection`,
-so a caller who opens a second socket gets a second allowance; it bounds one
-channel, not the node. `request_timeout` becomes `Server::timeout`, whose
+`max_concurrent_requests` became tonic's `concurrency_limit_per_connection`,
+so a caller who opened a second socket got a second allowance; it bounded one
+channel, not the node. **That half is fixed**: it is now
+`tower::limit::GlobalConcurrencyLimitLayer`, one semaphore for the process,
+layered outside the per-connection stack. What survives is narrower and is
+recorded on the setting: the permit is released when the response future
+resolves, which for a server-streaming RPC is before any row is read, so the
+bound is on requests *admitted* rather than on streams open.
+`request_timeout` becomes `Server::timeout`, whose
 `GrpcTimeout` future polls the handler before it polls the sleep, so a handler
 that finishes on its first poll cannot be cancelled — and one that pends once
 meets an already-elapsed sleep on the next and is. Measured both ways:

@@ -343,6 +343,13 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "offset-costs-the-same": (
      "test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor",
      "clients/python/tests/test_round_trips.py",
+ ),
+
+ # --- the fifth ceiling and the node-wide limit, 2026-09-29 -------------------
+ "in-list-ceiling": ("max_in_values", "crates/slate-kernel/src/limits.rs"),
+ "node-wide-concurrency": (
+     "GlobalConcurrencyLimitLayer",
+     "crates/slate-serverd/src/serve.rs",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -1671,6 +1678,15 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-28-two-reads-counted-rather-than-argued.md',
      'It leaves the other two unmeasured claims where they were.'):
         'ts-round-trips',
+    ('2026-09-13-in-list-per-row-cost.md',
+     'It does not cap the list. A caller can still send a very lar'):
+        'in-list-ceiling',
+    ('2026-09-13-per-request-ceilings.md',
+     'Nothing here bounds the *number* of values in an `IN` list, '):
+        'in-list-ceiling',
+    ('2026-09-13-per-request-ceilings.md',
+     "`max_concurrent_requests` maps to tonic's per-connection lim"):
+        'node-wide-concurrency',
     ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
      'It leaves forty-eight of the ninety-nine unread'):
         '=read',

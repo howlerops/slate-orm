@@ -380,6 +380,23 @@ pub enum KernelError {
         limit: usize,
     },
     #[error(
+        "an IN list carries {actual} values, more than the {limit} this node \
+         will check per row; matching that many keys is a join — put them in a \
+         table and join to it, which the planner can cost, or raise the limit"
+    )]
+    /// An `IN` list carried more values than the node will check per row.
+    ///
+    /// The only ceiling in [`ExecutionLimits`](crate::ExecutionLimits) that
+    /// refuses before a row is read, because the list arrives whole: the
+    /// others discover they are over budget partway through an answer, and
+    /// this one can say so up front and say how far over.
+    InListTooLarge {
+        /// The limit that was passed.
+        limit: usize,
+        /// How many values the list carried.
+        actual: usize,
+    },
+    #[error(
         "a window function selected more than {limit} rows; \
          filter first, or raise the limit — a LIMIT does not help, because \
          the window is computed before it applies"

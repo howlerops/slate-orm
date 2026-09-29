@@ -7412,9 +7412,9 @@
     {
       "entry": "2026-09-13-in-list-per-row-cost.md",
       "key": "It does not cap the list. A caller can still send a very lar",
-      "verdict": "open",
-      "by": "still uncapped. tonic's 4 MB default request size is the only bound, which admits a few hundred thousand values; ExecutionLimits has no max_in_list_values and the entry that added the ceilings recorded the same gap.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ExecutionLimits::max_in_values, 10,000 by default, checked in QueryCursor::open and raising KernelError::InListTooLarge. crates/slate-kernel/tests/security_probe_resources.rs has the refusal, the at-the-ceiling control and the predicate-write case.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-in-list-per-row-cost.md",
@@ -7433,9 +7433,9 @@
     {
       "entry": "2026-09-13-per-request-ceilings.md",
       "key": "`max_concurrent_requests` maps to tonic's per-connection lim",
-      "verdict": "open",
-      "by": "still per-connection. A node-wide bound needs a semaphore in the service and none is there; a caller opening more connections still gets more concurrency.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "it is tower::limit::GlobalConcurrencyLimitLayer now \u2014 one semaphore for the process, layered outside the per-connection stack in crates/slate-serverd/src/serve.rs, so a second socket gets no second allowance. What survives is narrower and is recorded on the setting: the permit is released when the response future resolves, so the bound is on requests admitted rather than on streams open.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-per-request-ceilings.md",
@@ -7447,9 +7447,9 @@
     {
       "entry": "2026-09-13-per-request-ceilings.md",
       "key": "Nothing here bounds the *number* of values in an `IN` list, ",
-      "verdict": "open",
-      "by": "the same uncapped IN list the in-list entry records. tonic's 4 MB default is the only bound on a decoded request and there is no cap on the list itself.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "the fifth ceiling. max_in_values sits beside the four in ExecutionLimits and is the only one that refuses before a row is read, because the list arrives whole in the request.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-point-the-readme-at-everything-new.md",
@@ -10470,9 +10470,10 @@
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
       "key": "It does not measure `max_concurrent_requests` binding.",
-      "verdict": "open",
-      "checked": "2026-09-28",
-      "by": "nothing yet. The per-connection claim rests on the name of the tonic method called, which is a reading. Demonstrating it needs two connections and a handler that blocks on command, and the node ships no such handler \u2014 the same wall crates/slate-serverd/tests/ceilings.rs hit."
+      "verdict": "narrowed",
+      "by": "the per-connection half is fixed rather than measured: the limit is node-wide now, which removes the claim that rested on the name of the tonic method called.",
+      "checked": "2026-09-29",
+      "residual": "nothing has seen it bind. A tower permit is released when the response future resolves, which for a server-streaming RPC is before any row is read, so a client cannot hold one long enough to watch a refusal. Unchanged by the scope fix."
     },
     {
       "entry": "2026-09-28-two-limits-that-are-weaker-than-their-names.md",
@@ -10822,6 +10823,34 @@
       "verdict": "open",
       "checked": "2026-09-29",
       "by": "nothing yet. Latency and bytes on the wire needs MinIO; a conformance case comparing the three clients' request counts is tracked and not started."
+    },
+    {
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "Nothing has seen the concurrency limit bind.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. A tower permit is released when the response future resolves, and every read RPC is server-streaming, so a client cannot hold one long enough to watch a refusal. Making the limit node-wide fixed its scope and not this."
+    },
+    {
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "It bounds admission, not open streams.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. A caller who opens ten thousand slow streams is bounded by nothing here; a cap on concurrent response streams is a different mechanism and does not exist."
+    },
+    {
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "The `IN` ceiling is not measured against a real cost.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "10,000 is argued for rather than derived \u2014 a list that long is a join \u2014 and the other four constants are documented as untuned for the same reason. A number derived from this container's hardware would be worse than an argument, because it would read as tuned for the reader's."
+    },
+    {
+      "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
+      "key": "No client refuses a long list before sending it.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. The refusal arrives from the server after the request is encoded and decoded, so the bytes are spent; none of the three clients checks the length before sending."
     }
   ]
 }

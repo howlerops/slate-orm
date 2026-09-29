@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-29T00:50:56+00:00",
+  "file": "crates/slate-kernel/src/exec.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "security_probe_resources",
+    "--no-fail-fast"
+  ],
+  "commit": "5ec7009",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the ceiling is never checked",
+      "old": "        let widest = query.filter.widest_in_list();\n        if widest > limits.max_in_values {",
+      "new": "        let widest = query.filter.widest_in_list();\n        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "limits::a_predicate_write_is_bounded_by_the_same_ceiling",
+        "limits::an_in_list_past_the_ceiling_is_refused_before_a_row_is_read",
+        "a_list_this_large_is_refused_by_default"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the ceiling is off by one, refusing a list exactly at it",
+      "old": "        if widest > limits.max_in_values {",
+      "new": "        if widest >= limits.max_in_values {",
+      "verdict": "caught",
+      "caught_by": [
+        "limits::an_in_list_at_the_ceiling_is_served"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

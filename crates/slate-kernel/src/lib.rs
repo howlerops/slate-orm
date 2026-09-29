@@ -49,7 +49,8 @@ pub use join::{
 };
 pub use keys::{IndexEntry, decode_index_entry, decode_row_key, index_entry, row_key};
 pub use limits::{
-    DEFAULT_DISTINCT_LIMIT, DEFAULT_GROUP_LIMIT, DEFAULT_SORT_LIMIT, ExecutionLimits,
+    DEFAULT_DISTINCT_LIMIT, DEFAULT_GROUP_LIMIT, DEFAULT_IN_LIST_LIMIT, DEFAULT_SORT_LIMIT,
+    DEFAULT_WINDOW_LIMIT, ExecutionLimits,
 };
 pub use migrate::{
     MigrationPlan, Refusal, Report as MigrationReport, Step as MigrationStep, TableState,

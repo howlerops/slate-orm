@@ -886,6 +886,57 @@ impl Expr {
             Self::Not(inner) => inner.collect_columns(out),
         }
     }
+
+    /// The longest `IN` list anywhere in this predicate, or 0 if there is none.
+    ///
+    /// ```
+    /// use slate_kernel::Expr;
+    /// use slate_schema::Ordinal;
+    /// use slate_tuple::Value;
+    ///
+    /// let three = Expr::In {
+    ///     column: Ordinal(0),
+    ///     values: (0..3).map(Value::U64).collect(),
+    /// };
+    /// let five = Expr::In {
+    ///     column: Ordinal(1),
+    ///     values: (0..5).map(Value::U64).collect(),
+    /// };
+    /// // The longest, not the sum: two lists are checked one at a time.
+    /// assert_eq!(Expr::And(vec![three.clone(), five.clone()]).widest_in_list(), 5);
+    /// assert_eq!(Expr::Not(Box::new(three)).widest_in_list(), 3);
+    /// assert_eq!(Expr::True.widest_in_list(), 0);
+    /// // And the prepared form counts, which is what a long list becomes:
+    /// // twenty is over `IN_LOOKUP_THRESHOLD`, so this is an `InSorted`.
+    /// let twenty = Expr::In {
+    ///     column: Ordinal(0),
+    ///     values: (0..20).map(Value::U64).collect(),
+    /// };
+    /// assert_eq!(twenty.prepared().widest_in_list(), 20);
+    /// ```
+    ///
+    /// The *longest* rather than the sum, because the cost this bounds is per
+    /// row and the lists are checked one at a time: two lists of 6,000 cost
+    /// what the longer one costs twice, not what a list of 12,000 costs. A sum
+    /// would refuse a predicate that is cheaper than one it accepts.
+    ///
+    /// Counts `InSorted` as well as `In`. They are the same list — `prepared`
+    /// turns one into the other above
+    /// [`IN_LOOKUP_THRESHOLD`] — and a ceiling that saw only the unoptimised
+    /// form would fire on short lists and never on long ones, which is exactly
+    /// backwards.
+    #[must_use]
+    pub fn widest_in_list(&self) -> usize {
+        match self {
+            Self::In { values, .. } => values.len(),
+            Self::InSorted { values, .. } => values.len(),
+            Self::And(parts) | Self::Or(parts) => {
+                parts.iter().map(Self::widest_in_list).max().unwrap_or(0)
+            }
+            Self::Not(inner) => inner.widest_in_list(),
+            _ => 0,
+        }
+    }
 }
 
 /// Whether `text` matches a SQL `LIKE` pattern.

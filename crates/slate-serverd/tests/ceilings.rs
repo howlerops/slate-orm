@@ -185,22 +185,22 @@ async fn the_same_query_succeeds_with_no_timeout_set() {
 
 /// A node started with `max_concurrent_requests` still serves.
 ///
-/// **This is weaker than it looks and is written to say so.**
-/// `max_concurrent_requests` maps to tonic's `concurrency_limit_per_connection`,
-/// which is a `tower` concurrency limit over the *HTTP* service: the permit is
-/// held by the response future and released when that future resolves. For a
-/// server-streaming RPC — `Query`, `Join` and `Aggregate` are all streaming —
-/// the response future resolves once the headers are ready, before a single row
-/// has been read. So a held-open stream holds no permit, and there is no way
-/// from a client to keep one for long enough to observe the limit refuse
-/// anything.
+/// **It is node-wide now, and still weaker than it looks.**
+/// `max_concurrent_requests` was tonic's `concurrency_limit_per_connection`,
+/// which gave a caller a fresh allowance per socket; it is now
+/// `tower::limit::GlobalConcurrencyLimitLayer`, one semaphore for the process.
+/// That fixes the half that was a lie about scope. The half that remains is
+/// about *when the permit is released*: a `tower` concurrency limit holds the
+/// permit in the response future and drops it when that future resolves, and
+/// for a server-streaming RPC — `Query`, `Join` and `Aggregate` are all
+/// streaming — that is once the headers are ready, before a single row has
+/// been read. So a held-open stream holds no permit, and there is still no way
+/// from a client to keep one long enough to watch the limit refuse anything.
 ///
 /// What is asserted is therefore the whole of what a client can see: the value
-/// reaches the builder without the node refusing to start, and a request still
-/// gets an answer. Whether the limit ever *binds* is recorded as open against
-/// `ledger/2026-09-20-the-ceilings-and-the-paths-they-do-not-reach.md` rather
-/// than asserted here, because a test that cannot fail for the right reason is
-/// worse than an admission.
+/// reaches the layer without the node refusing to start, and a request still
+/// gets an answer. Whether the limit ever *binds* stays open, because a test
+/// that cannot fail for the right reason is worse than an admission.
 #[tokio::test]
 async fn a_concurrency_limit_in_the_file_still_serves() {
     let files = Files::new();
