@@ -970,6 +970,37 @@ CATALOG_CASES: list[tuple[str, str | dict[str, str] | None, int, str]] = [
         "",
     ),
     (
+        # An `impl Catalog` inside a `mod` is legal and was invisible to the
+        # column-zero match the first version used. The `}` that ends it is
+        # the one at the `impl`'s own indentation, not the first one in the
+        # file — which is what the `mod`'s trailing brace is here to check.
+        "a lookup in an indented `impl Catalog` is reported",
+        CATALOG + "\nmod extra {\n"
+        "    impl Catalog {\n"
+        "        pub fn nested(&self, name: &str) -> Option<&TableDef> {\n"
+        "            None\n"
+        "        }\n"
+        "    }\n}\n",
+        1,
+        "`Catalog::nested` is public and hands out a `TableDef`",
+    ),
+    (
+        # And the block still *ends*: a method after the indented `impl`
+        # closes is outside it and must not be read as one of its own.
+        "a method after an indented block closes is not inside it",
+        CATALOG + "\nmod extra {\n"
+        "    impl Catalog {\n"
+        "        pub fn nested(&self, name: &str) -> Option<&Table> {\n"
+        "            None\n"
+        "        }\n"
+        "    }\n\n"
+        "    pub fn loose(c: &Catalog) -> Option<&TableDef> {\n"
+        "        None\n"
+        "    }\n}\n",
+        0,
+        "",
+    ),
+    (
         "a roster entry for a method that is gone is reported",
         CATALOG.replace(
             "    pub fn referencing(&self, parent: TableId) -> Vec<(&TableDef, &ForeignKeyDef)> {\n"

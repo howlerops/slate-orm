@@ -110,11 +110,13 @@ only public source is the slice. Nothing new is unguarded by this change; the
 sentence "rule 10 covers the inherent surface" is exact, and "the inherent
 surface is the whole surface" is not.
 
-**Column zero is still the test for an `impl` block.** An `impl Catalog`
+~~**Column zero is still the test for an `impl` block.** An `impl Catalog`
 indented inside a `mod` — legal, and how a `#[cfg(test)]` helper would be
-written — is skipped. That is deliberate for tests and wrong for a real
-submodule that indents its contents, which no file in this crate does and
-nothing checks.
+written — is skipped.~~ **Withdrawn the same day.** The reasoning had the
+fail direction backwards: an indented block is invisible whether it is a test
+helper or a real submodule, and the second is where an accessor would hide.
+Any indentation now matches, and the block ends at the brace at its own.
+See `ledger/2026-09-29-the-indentation-was-the-wrong-thing-to-trust.md`.
 
 **The eight-file count is today's.** Nothing asserts that `slate-schema/src`
 still holds a file with `impl Catalog` in it; the never-fires branch fires on

@@ -404,9 +404,17 @@ FINDS_BY_NAME = {
 #: being written down.
 CATALOG_SOURCE = Path("crates") / "slate-schema" / "src"
 
-#: The `impl` block rule 10 reads. Column zero, because a nested `impl` inside
-#: a test module is not the public surface.
-IMPL_CATALOG = re.compile(r"^impl Catalog\b")
+#: The `impl` block rule 10 reads, at any indentation.
+#:
+#: Column zero was the first version's test, on the reasoning that an `impl`
+#: inside a `#[cfg(test)] mod` is not the public surface. That reasoning gets
+#: the *fail* direction backwards: an indented `impl Catalog` is invisible to
+#: a column-zero match whether it is a test helper or a real submodule that
+#: indents its contents, and the second is exactly where an accessor would
+#: hide. Matching any indentation fails closed — a test module that really
+#: does add a public accessor gets a roster entry saying so, which is the
+#: roster idiom the whole file is built on.
+IMPL_CATALOG = re.compile(r"^(\s*)impl Catalog\b")
 
 #: A public method inside it. `pub(crate)` counts: `slate-schema` is a library
 #: crate and its own crate is where the resolvers that matter live.
@@ -692,15 +700,22 @@ def impl_catalog_accessors(lines: list[str]) -> set[str]:
     """The same, over one file's lines."""
     found: set[str] = set()
     inside = False
+    # The `impl`'s own indentation, so the block ends at *its* closing brace
+    # rather than at the first one in the file. A nested block's `}` is
+    # further in; the enclosing `mod`'s is further out and would be missed,
+    # which only costs a block that runs to end of file.
+    closing = "}"
     signature: list[str] = []
     name = ""
     for line in lines:
-        if IMPL_CATALOG.match(line):
+        opened = IMPL_CATALOG.match(line)
+        if opened is not None:
             inside = True
+            closing = opened.group(1) + "}"
             continue
         if not inside:
             continue
-        if line.startswith("}"):
+        if line.rstrip() == closing:
             # Not `break`. Rust allows a type several inherent `impl` blocks,
             # and the first version of this stopped at the first closing
             # brace — so a second `impl Catalog` further down the file was
