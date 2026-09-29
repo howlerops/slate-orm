@@ -693,13 +693,35 @@ fn lex(text: &str) -> Result<Vec<Spanned>, SqlError> {
             });
         } else {
             // Two-character operators first, or `<=` lexes as `<` then `=`.
+            //
+            // Which pairs those are is read out of `COMPARISONS` rather than
+            // written here. The list used to be a `matches!` arm spelling
+            // `"<=" | ">=" | "!=" | "<>"`, and it is the *reason* the table's
+            // order does not matter — a new two-character symbol added to the
+            // table and not to the arm would lex as two tokens, and
+            // `eat_symbol` would match its first character against some other
+            // row. Two lists that have to agree, one of them invisible from
+            // the other: `ledger/2026-09-29-the-parsers-vocabulary-is-the-parser.md`
+            // recorded exactly that as what the entry had not closed.
             let start = offset(i);
             let pair = [Some(c), at(i + 1)];
             let two = match pair {
                 [Some(a), Some(b)] => format!("{a}{b}"),
                 _ => String::new(),
             };
-            let symbol = if matches!(two.as_str(), "<=" | ">=" | "!=" | "<>") {
+            //
+            // No `!one.keyword` filter. One was here and a mutation deleting
+            // it survived every suite, because it cannot fire: this branch is
+            // reached only when `c` is punctuation — a word was consumed by
+            // the alphabetic arm far above — and a keyword spelling is
+            // matched by `eat` as a whole word, so it is alphabetic by
+            // construction. `two` is exactly two characters and can never
+            // equal one. `check_handlers.py`'s `unscanned` carries the same
+            // note about an `is_dir()` guard, for the same reason: a dead
+            // safety check is worse than none, because the next reader
+            // weighs a hazard nobody is running.
+            let paired = COMPARISONS.iter().any(|one| one.spelling == two);
+            let symbol = if paired {
                 i += 2;
                 two
             } else {

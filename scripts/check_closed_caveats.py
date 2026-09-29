@@ -792,6 +792,17 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "HANDS_OUT_A_TABLE = {",
      "scripts/check_handlers.py",
  ),
+
+ # --- the lexer reads the table too, 2026-09-29 -----------------------------
+ #
+ # `lex` kept a hand-written copy of which two-character runs are one token,
+ # and that pairing is why the table's order does not matter. The needle is
+ # the derivation itself rather than the test: a test name would survive the
+ # line going back to a `matches!` arm, which is the mutation this closed.
+ "lex-reads-comparisons": (
+     "let paired = COMPARISONS.iter().any(",
+     "crates/slate-sql/src/sql.rs",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -989,6 +1000,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-the-parsers-vocabulary-is-the-parser.md',
+     'Nothing checks that `lex` pairs exactly the symbols `COMPARI'):
+        'lex-reads-comparisons',
     ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
      'It does not check the property it relies on.'): 'catalog-lookup-roster',
     ('2026-09-21-contains-in-the-sql-front-end.md',

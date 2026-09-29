@@ -32,7 +32,7 @@
 
 use slate_kernel::{CmpOp, Expr};
 use slate_schema::{IndexDef, IndexId, Ordinal, TableDef, TableId};
-use slate_sql::sql::{Schema, Statement, parse};
+use slate_sql::sql::{COMPARISONS, Schema, Statement, parse};
 use slate_sql::{QuerySpec, lower};
 use slate_tuple::{Value, ValueType};
 
@@ -88,6 +88,38 @@ fn a_select_parses_into_a_spec_naming_the_table_and_the_filter() {
     assert_eq!(spec.filters[0].column, 3);
     assert_eq!(spec.filters[0].op, "ge");
     assert_eq!(spec.filters[0].value, "1970");
+}
+
+/// Every spelling in `COMPARISONS` reaches the parser as one operator.
+///
+/// The table is the parser's vocabulary — `comparison_tail` loops over it and
+/// `crates/slate-wasm/tests/sql.rs` generates from it — and until this test
+/// nothing ran a query for each row. That left one list able to drift from
+/// the code: `lex` used to decide which symbols are two characters with a
+/// hand-written `matches!("<=" | ">=" | "!=" | "<>")`, so a fifth
+/// two-character spelling added to the table would lex as two tokens and
+/// `eat_symbol` would match its first character against some other row.
+/// `lex` now reads the table, and this is what says the reading works:
+/// dropping a spelling from `lex`'s arm used to change nothing here because
+/// nothing here existed.
+#[test]
+fn every_comparison_the_table_declares_parses_as_the_operator_it_names() {
+    for one in COMPARISONS {
+        // The string operators need the string column; `year >= 'a'` would
+        // fail for a reason that is not this test's.
+        let (column, ordinal, value) = match one.op {
+            "like" | "ilike" | "matches" | "contains" => ("title", 2, "'a'"),
+            _ => ("year", 3, "1970"),
+        };
+        let text = format!(
+            "SELECT * FROM books WHERE {column} {} {value}",
+            one.spelling
+        );
+        let spec = select(&text);
+        assert_eq!(spec.filters.len(), 1, "{text}");
+        assert_eq!(spec.filters[0].column, ordinal, "{text}");
+        assert_eq!(spec.filters[0].op, one.op, "{text}");
+    }
 }
 
 #[test]

@@ -12760,9 +12760,9 @@
     {
       "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
       "key": "Nothing checks that `lex` pairs exactly the symbols `COMPARI",
-      "verdict": "open",
-      "by": "the expect_survivor on the ordering mutation asserts the pairing for `<=` by way of the order being irrelevant, and nothing covers a new two-character symbol added to COMPARISONS and not to lex.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "lex now reads COMPARISONS instead of a hand-written matches!(\"<=\" | \">=\" | \"!=\" | \"<>\") arm, so the pairing cannot drift from the table, and every_comparison_the_table_declares_parses_as_the_operator_it_names in crates/slate-sql/tests/front_end.rs runs a query for each of the eleven rows. Reverting lex to a hand-written arm missing `<>` is caught. See ledger/2026-09-29-the-lexer-reads-the-table-too.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
@@ -12935,6 +12935,27 @@
       "verdict": "moment",
       "by": "",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-lexer-reads-the-table-too.md",
+      "key": "Three-character operators are still impossible.",
+      "verdict": "deliberate",
+      "by": "lex looks at two characters and the derivation makes it agree with the table for the lengths it handles, not for every length a row could have. A debug_assert on spelling.len() was costed in the entry and left out: it fires in debug and never in release, which is the wrong place for a fact about a const",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-lexer-reads-the-table-too.md",
+      "key": "The test picks a column by operator name.",
+      "verdict": "deliberate",
+      "by": "a fourth hand-written list, smaller than the one removed and with the same weakness: a twelfth string operator tested against an integer column. It fails loudly rather than silently, which is why it is acceptable - the entry says so rather than claiming it is right",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-lexer-reads-the-table-too.md",
+      "key": "Nothing holds the renderer to the table.",
+      "verdict": "open",
+      "by": "the sibling caveat of the same entry, untouched here: crates/slate-wasm/tests/sql.rs matches on the operator and panics on one it has no spelling for, pinning the two at run time rather than at compile time. Tracked on the entry that recorded it, 2026-09-29-the-parsers-vocabulary-is-the-parser.md",
+      "checked": "2026-09-29"
     }
   ]
 }
