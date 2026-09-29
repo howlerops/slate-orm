@@ -9928,9 +9928,9 @@
     {
       "entry": "2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md",
       "key": "`access` is compared only for equality between two cases.",
-      "verdict": "open",
-      "by": "nothing asserts its content, so a server that renamed every plan would keep the corpus green.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: EXPECTED_ACCESS rosters the plan every case that reports one must carry, both directions \u2014 a case answering an access path nobody rostered fails, and a roster line whose case stopped reporting one fails as stale. Twelve cases; a mutation renaming one line failed the live run.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
@@ -10137,9 +10137,9 @@
     {
       "entry": "2026-09-19-which-guard-covers-which-field.md",
       "key": "`MUST_DIFFER` still compares whole answers. Two cases that d",
-      "verdict": "open",
-      "by": "two cases differing for a reason unrelated to the field under test would satisfy it, and nothing checks the difference is the right one.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "examples/explorer/conformance/conformance.py: every MUST_DIFFER pair now names the top-level field the difference has to be in, and a pair whose field is absent from either answer is reported rather than comparing None to None.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-which-guard-covers-which-field.md",
@@ -10916,6 +10916,55 @@
       "verdict": "open",
       "checked": "2026-09-29",
       "by": "nothing yet. IN (SELECT ...) still materialises in crates/slate-wasm/src/lib.rs's resolve_subqueries; a subquery whose distinct values exceed max_in_values is refused, and the refusal's own advice \u2014 put them in a table and join to it \u2014 is advice the front end could take itself."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "It still counts calls, not work.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet, and inherited unchanged from the two entries this closes the other half of: four rows in a batch are still four schema claims and four value encodings in the client, and no count can see that."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "It says nothing about latency or bytes.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. examples/deployed is where a network round trip would be timed, it needs MinIO, and this container has none."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "Four rows and three pages are not a scale.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: sized so a disagreement is legible, not so the number means anything about throughput. Twenty, as the per-client suites use, runs against the shared demo database on every conformance run and every CI job; four shows the shape as well."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "Nothing still checks that a fourth client arrives with a tra",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet, and one client wider than before: the TypeScript client re-exports grpc, which is a third way to reach a channel and not a guard. No check fails if a fourth client arrives exposing none."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "The `MUST_DIFFER` pairs cannot see three clients wrong the s",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: every pair in this runner is written by hand and argued for in a comment, and a roster forcing one per workload would be a rule about a list of four. All four workloads have a pair today; a fifth added without one is compared for agreement, which is what the file did for everything before pairs existed."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "The lock is real and untested.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: the conformance runner is sequential, so nothing exercises contention. The alternative is no lock, and a count that is silently wrong under concurrency is worse than one that waits \u2014 the cost of the decision is an untested path, and it is recorded rather than covered by a test that would have to invent the concurrency."
+    },
+    {
+      "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
+      "key": "The endpoint ignores `X-Demo-Identity`.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "CONTRACT.md: row-level security changes which rows a read returns and not how many requests fetching them takes, so honouring the header would offer a knob that cannot move the answer. Not offered, rather than offered and meaningless."
     }
   ]
 }

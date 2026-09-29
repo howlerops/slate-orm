@@ -315,7 +315,7 @@ CASES: list[tuple[str, str, Any, str]] = [
       for path in ("index", "scan")],
 
     # As a reader, whose row policy hides `The Astronauts` (1951). It holds
-    # "the", so the policy has to cut the five down to four — through the
+    # "the", so the policy has to cut the six down to five — through the
     # *index*, which is the path where a policy is easiest to lose: the
     # entries are read before any row is, and a filter applied only to a table
     # scan would show up here and nowhere else in this corpus.
@@ -805,7 +805,61 @@ EXPECTED_REFUSALS = {
 }
 
 
-#: Pairs of cases whose answers must **differ** from each other.
+#: The plan's access path every case that reports one must carry.
+#:
+#: `MUST_DIFFER` compares two cases' `access` to each other, which is what
+#: catches an adapter that dropped the hint. It cannot catch the server: a node
+#: that renamed every plan — `Index Scan using …` to `IndexScan(…)`, or `Table
+#: Scan` to `Seq Scan` — keeps every pair differing and every adapter agreeing,
+#: and the corpus stays green while the string a caller reads has changed.
+#: That is a wire-visible change to what an `EXPLAIN` says, and this is the
+#: only place in the repository that compares it across three clients, so the
+#: content is rostered rather than only the relationship.
+#:
+#: Every case whose agreed answer carries an `access` key must be here, and
+#: `main` refuses one that is not: a search or explain case added without a
+#: line is a plan nobody looked at.
+#:
+#: `None` is a value and not an omission. `EXPLAIN` is privileged, all three
+#: adapters swallow `PERMISSION_DENIED` from it and nothing else, and the
+#: demo's `reader` holds no `explain` grant — so a `reader`'s search serves its
+#: rows with no plan. A future run where that came back as a string would mean
+#: the grant had moved, which is exactly the change worth failing on.
+EXPECTED_ACCESS: dict[str, str | None] = {
+    # The index the hint asks for, by name. Six searches down both paths, and
+    # the name is the half `MUST_DIFFER` cannot see.
+    "a search for 'the' by index": "Index Scan using by_title_text",
+    "a search for 'the' by scan": "Table Scan",
+    "a search for 'the games' by index": "Index Scan using by_title_text",
+    "a search for 'the games' by scan": "Table Scan",
+    "a search for 'GAMES' by index": "Index Scan using by_title_text",
+    "a search for 'GAMES' by scan": "Table Scan",
+    # No rows, and still the index: an empty answer is served by a plan, and a
+    # server that fell back to a scan when a term matched nothing would be
+    # invisible without this line.
+    "a search for a word that is only a prefix": "Index Scan using by_title_text",
+    "a search for terms in different rows by index": "Index Scan using by_title_text",
+    "a search for terms in different rows by scan": "Table Scan",
+    # See above: privileged, so no plan, so `None`.
+    "a reader's search": None,
+    # The two `/api/explain` cases. `Point Get` rather than an index scan is
+    # the planner's answer to an equality on the primary key, and it is the
+    # one case in the corpus where the access path is not one of the two the
+    # searches produce.
+    "a plan": "Table Scan",
+    "a plan under a filter": "Point Get",
+}
+
+#: Pairs of cases whose answers must **differ** from each other, and where.
+#:
+#: The third element names the top-level field the difference has to be in.
+#: Without it the check was "the two answers are not byte-identical", which two
+#: cases satisfy for reasons that have nothing to do with the field under test
+#: — a pair on `includeDeleted` would pass on a different `servedBy`, and the
+#: pair would then be a test of nothing while reading as a test of something.
+#: Naming the field also catches a server that stopped sending it: a pair whose
+#: field is missing from either answer is reported rather than quietly
+#: comparing `None` against `None`.
 #:
 #: Three clients agreeing is the whole point of this runner and it cannot see
 #: one class of bug: a request field that every client drops. All three then
@@ -817,8 +871,8 @@ EXPECTED_REFUSALS = {
 #: what the plain read returns. The evidence is that asking changes the answer,
 #: which needs two cases and a comparison between them, and this is where that
 #: comparison lives.
-MUST_DIFFER: list[tuple[str, str]] = [
-    ("a read that cannot see a retired row", "a read that asks for retired rows too"),
+MUST_DIFFER: list[tuple[str, str, str]] = [
+    ("a read that cannot see a retired row", "a read that asks for retired rows too", "rows"),
     # A view has the same shape as `includeDeleted` and it is the shape that
     # matters most: "the view returned eight rows" proves nothing about the
     # row policy, because a view carrying its own `TableId` — the design
@@ -830,20 +884,20 @@ MUST_DIFFER: list[tuple[str, str]] = [
     # gets a different answer, which needs two cases and this comparison. Six
     # rows against eight; the two books from 1955 and 1951 are inside the view
     # and outside `modern_only`.
-    ("a reader's read through the same view", "a read through a view"),
+    ("a reader's read through the same view", "a read through a view", "rows"),
     # And that the caller's filter *composed* rather than being dropped: a
     # server that ignored it would return the view's own eight rows, which is
     # what this pair forbids. The other direction — a composition that widened
     # to an `OR` — is not visible here, because `year >= 1970` over an `OR`
     # returns more than either, and `crates/slate-serverd/tests/views.rs`
     # asserts that one against a running server instead.
-    ("a filter composed with a view's", "a read through a view"),
+    ("a filter composed with a view's", "a read through a view", "rows"),
     # `returning` has the same shape and was demonstrated to have the same
     # hole: every `Returning` in all three clients set to false — twelve call
     # sites — and the run stayed green at 96 cases agreeing. These two cases
     # were already here, adjacent, describing each other in their comments, and
     # nothing compared them.
-    ("a predicate delete, returning what it destroyed", "a predicate delete, not returning"),
+    ("a predicate delete, returning what it destroyed", "a predicate delete, not returning", "rows"),
     # `partition` and `running` are the two window fields with exactly this
     # weakness: a client that dropped either sends a smaller request, gets a
     # smaller answer, and agrees with two other clients doing the same. Nothing
@@ -853,31 +907,31 @@ MUST_DIFFER: list[tuple[str, str]] = [
     # the clause is most visibly wrong and least visibly an error: unpartitioned
     # it numbers 1..11 straight through, which is a column of plausible
     # integers.
-    ("a rowNumber window per author", "a rowNumber window"),
-    ("a sum window per author", "a sum window"),
+    ("a rowNumber window per author", "a rowNumber window", "rows"),
+    ("a sum window per author", "a sum window", "rows"),
     # And the frame: the same aggregate over the same partition, with and
     # without the window's own order. One is the total on every row and the
     # other is a running value, and the standard says the order is what decides
     # — so a client that always sent one, or never did, is wrong here and
     # nowhere else.
-    ("a running sum window", "a sum window per author"),
-    ("a running count window", "a count window per author"),
+    ("a running sum window", "a sum window per author", "rows"),
+    ("a running count window", "a count window per author", "rows"),
     # And the access path, which has exactly this weakness in its purest form:
     # the two requests are *required* to return the same rows, so an adapter
     # that ignored `path` agrees with two others doing the same on every row of
     # every search above. `access` is the only field that can differ, and
     # nothing refuses a query whose hint went missing — a hint is advice, so
     # `EXPECTED_REFUSALS` cannot cover this either.
-    ("a search for 'the' by index", "a search for 'the' by scan"),
+    ("a search for 'the' by index", "a search for 'the' by scan", "access"),
 
-    ("a search for 'the games' by index", "a search for 'the games' by scan"),
+    ("a search for 'the games' by index", "a search for 'the games' by scan", "access"),
 
     # And the empty answer, which is where the two paths are least alike
     # underneath and most alike on the wire: identical rows, identical count,
     # and `access` the only thing that can tell them apart. An adapter that
     # ignored the hint would be invisible here without this pair.
     ("a search for terms in different rows by index",
-     "a search for terms in different rows by scan"),
+     "a search for terms in different rows by scan", "access"),
 
     # The round-trip workloads, which have the weakness in its sharpest form:
     # an adapter that ignored `workload` runs one of them four times and agrees
@@ -890,9 +944,10 @@ MUST_DIFFER: list[tuple[str, str]] = [
     # `Insert` calls against one `Batch`. The other two are there so a
     # `workload` dropped in favour of a *default* is caught as well as one
     # dropped in favour of the first branch.
-    ("four singles cost four requests", "four rows in a batch cost one request"),
-    ("three keyset pages cost three requests", "a relation for three parents costs one request"),
-    ("four singles cost four requests", "three keyset pages cost three requests"),
+    ("four singles cost four requests", "four rows in a batch cost one request", "calls"),
+    ("three keyset pages cost three requests",
+     "a relation for three parents costs one request", "calls"),
+    ("four singles cost four requests", "three keyset pages cost three requests", "calls"),
 ]
 
 #: What `MUST_DIFFER` is for, and what it is *not* needed for.
@@ -992,7 +1047,7 @@ def silent_cases(
     ]
 
 
-def must_differ_findings(agreed_by_name: dict[str, str]) -> list[Finding]:
+def must_differ_findings(agreed_by_name: dict[str, Any]) -> list[Finding]:
     """Every `MUST_DIFFER` pair that did not, as findings about no case.
 
     Lifted out of `main` so it can be tested: it takes the agreed answers and
@@ -1005,9 +1060,14 @@ def must_differ_findings(agreed_by_name: dict[str, str]) -> list[Finding]:
     agree across the three SDKs — both pass — and still fail this, because
     what fails is that they agree with each *other*. Blaming either would take
     a passing case off the count.
+
+    The answers arrive parsed rather than rendered. The difference has to be
+    in the field the pair names, and reading one field out of a JSON string
+    would mean parsing it here anyway — so `main` hands over what it already
+    has and renders only for the failure message.
     """
     findings: list[Finding] = []
-    for quiet, loud in MUST_DIFFER:
+    for quiet, loud, field in MUST_DIFFER:
         if quiet not in agreed_by_name or loud not in agreed_by_name:
             # One of them already failed, or is missing from CASES entirely —
             # the second is worth saying out loud, because a renamed case would
@@ -1019,13 +1079,71 @@ def must_differ_findings(agreed_by_name: dict[str, str]) -> list[Finding]:
                 f"agreed answer"
             ]))
             continue
-        if agreed_by_name[quiet] == agreed_by_name[loud]:
+        answers = {n: agreed_by_name[n] for n in (quiet, loud)}
+        absent = [
+            n for n, a in answers.items()
+            if not isinstance(a, dict) or field not in a
+        ]
+        if absent:
+            # Not the same failure as "they agree": the field the pair is
+            # about is not in the answer at all, so there is nothing to
+            # compare and `a.get(field)` would compare None to None and pass.
             findings.append(Finding(None, [
-                f"FAIL  {quiet!r} and {loud!r} returned the same answer, so "
+                f"FAIL  the must-differ pair ({quiet!r}, {loud!r}) is about "
+                f"{field!r}, which is not in the answer of "
+                f"{', '.join(repr(n) for n in absent)}",
+                *(f"    {n:7} {json.dumps(answers[n], sort_keys=True)[:400]}"
+                  for n in absent),
+            ]))
+            continue
+        if answers[quiet][field] == answers[loud][field]:
+            findings.append(Finding(None, [
+                f"FAIL  {quiet!r} and {loud!r} returned the same {field!r}, so "
                 f"whatever separates them was dropped by all three clients or "
                 f"ignored by the server",
-                f"    {agreed_by_name[quiet][:400]}",
+                f"    {json.dumps(answers[quiet][field], sort_keys=True)[:400]}",
             ]))
+    return findings
+
+
+def access_findings(agreed_by_name: dict[str, Any]) -> list[Finding]:
+    """Every case whose plan is not the plan `EXPECTED_ACCESS` rosters.
+
+    Blamed on the case, unlike a pair: this is a statement about one answer,
+    and a case whose plan changed did not pass.
+
+    Both directions. A case reporting an `access` the roster does not mention
+    is a plan nobody looked at — the roster is the record that somebody did —
+    and a roster line for a case that no longer reports one is stale, which is
+    the `EXPECTED_REFUSALS` idiom applied to a second field.
+    """
+    findings: list[Finding] = []
+    reports = {
+        name: answer["access"]
+        for name, answer in agreed_by_name.items()
+        if isinstance(answer, dict) and "access" in answer
+    }
+    for name, access in sorted(reports.items()):
+        if name not in EXPECTED_ACCESS:
+            findings.append(Finding(name, [
+                f"FAIL  {name}: reports an access path and is not in "
+                f"EXPECTED_ACCESS, so nothing has looked at it",
+                f"    {access!r}",
+            ]))
+        elif EXPECTED_ACCESS[name] != access:
+            findings.append(Finding(name, [
+                f"FAIL  {name}: the plan's access path changed",
+                f"    rostered {EXPECTED_ACCESS[name]!r}",
+                f"    answered {access!r}",
+            ]))
+    for name in sorted(set(EXPECTED_ACCESS) - set(reports)):
+        # `case=None`: the case may have passed and simply stopped reporting a
+        # plan, or may not exist at all. Either way the stale line is the
+        # finding and blaming the case would take a passing one off the count.
+        findings.append(Finding(None, [
+            f"FAIL  EXPECTED_ACCESS names {name!r}, which produced no agreed "
+            f"answer carrying an access path; the roster is stale"
+        ]))
     return findings
 
 
@@ -1040,11 +1158,15 @@ def main() -> int:
     adapters = {sdk: getattr(args, sdk) for sdk in DEFAULTS}
 
     findings: list[Finding] = []
-    # Every case's agreed answer, for the `MUST_DIFFER` check below. Only the
-    # cases where all three agreed are recorded: a disagreement is already a
-    # failure and comparing one of three answers to another case would say
-    # nothing about which.
-    agreed_by_name: dict[str, str] = {}
+    # Every case's agreed answer, for the `MUST_DIFFER` and `EXPECTED_ACCESS`
+    # checks below. Only the cases where all three agreed are recorded: a
+    # disagreement is already a failure and comparing one of three answers to
+    # another case, or to a roster, would say nothing about which.
+    #
+    # Parsed rather than rendered. Both checks read a field out of it, and the
+    # whole-answer comparison that wanted a string is done above, per case,
+    # against the three renderings.
+    agreed_by_name: dict[str, Any] = {}
     for name, path, body, identity in CASES:
         answers = {
             sdk: normalise(call(base, path, body, identity)) for sdk, base in adapters.items()
@@ -1077,7 +1199,7 @@ def main() -> int:
                     f"three answered it; the list is stale"
                 ]))
                 continue
-            agreed_by_name[name] = rendered[next(iter(rendered))]
+            agreed_by_name[name] = agreed
             if args.verbose:
                 print(f"  ok    {name}")
             continue
@@ -1087,8 +1209,10 @@ def main() -> int:
             *(f"    {sdk:7} {text[:400]}" for sdk, text in rendered.items()),
         ]))
 
-    # Before `must_differ_findings`, whose findings are about no case and so
-    # would not fill a silent case's slot.
+    # `access_findings` first, because some of its findings *are* about a case
+    # and so belong in the verdict `silent_cases` reads. The pair check's are
+    # not, and would not fill a silent case's slot.
+    findings.extend(access_findings(agreed_by_name))
     findings.extend(silent_cases([c[0] for c in CASES], findings, agreed_by_name))
     findings.extend(must_differ_findings(agreed_by_name))
 

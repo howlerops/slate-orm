@@ -371,6 +371,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "round-trips-endpoint": (
      "func (s *server) roundTrips",
      "examples/explorer/backends/go/roundtrips.go",
+ ),
+
+ # --- the corpus compares more precisely, 2026-09-29 --------------------------
+ "expected-access": (
+     "EXPECTED_ACCESS",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "must-differ-names-the-field": (
+     "def must_differ_findings",
+     "examples/explorer/conformance/conformance.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -565,6 +575,18 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    # A roster for the plan text itself, which the pair check cannot see: it
+    # compares two plans to each other, so a server renaming both keeps every
+    # pair differing.
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     '`access` is compared only for equality between two cases.'):
+        'expected-access',
+    # The needle is the function rather than `MUST_DIFFER`, because the roster
+    # would still be there with the third element deleted; the check that
+    # reads it is what moved.
+    ('2026-09-19-which-guard-covers-which-field.md',
+     '`MUST_DIFFER` still compares whole answers. Two cases that d'):
+        'must-differ-names-the-field',
     # Two entries asked, in two wordings, for the comparison the conformance
     # runner now makes. One names the *case*, one the endpoint that serves it,
     # because a case with no endpoint behind it is a case comparing three

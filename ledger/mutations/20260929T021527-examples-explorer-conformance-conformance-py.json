@@ -1,0 +1,68 @@
+{
+  "at": "2026-09-29T02:15:27+00:00",
+  "file": "examples/explorer/conformance/conformance.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "examples/explorer/conformance/test_conformance.py"
+  ],
+  "commit": "ef18e75",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the pair check compares whole answers again, not the named field",
+      "old": "        if answers[quiet][field] == answers[loud][field]:",
+      "new": "        if answers[quiet] == answers[loud]:",
+      "verdict": "caught",
+      "caught_by": [
+        "a pair that differed somewhere else is still reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a pair whose field is missing is compared rather than reported",
+      "old": "            if not isinstance(a, dict) or field not in a",
+      "new": "            if not isinstance(a, dict)",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "the roster's stale half stops looking",
+      "old": "    for name in sorted(set(EXPECTED_ACCESS) - set(reports)):",
+      "new": "    for name in sorted(set() - set(reports)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a roster line for a case that reported no plan is reported",
+        "and is blamed on no case, since the case itself may have passed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an access the roster does not hold is accepted",
+      "old": "        elif EXPECTED_ACCESS[name] != access:",
+      "new": "        elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a renamed plan is reported",
+        "and is blamed on the case, which did not pass"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a case reporting an unrostered access is accepted",
+      "old": "        if name not in EXPECTED_ACCESS:",
+      "new": "        if False:",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

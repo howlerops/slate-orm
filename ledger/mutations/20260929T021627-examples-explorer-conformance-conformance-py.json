@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T02:16:27+00:00",
+  "file": "examples/explorer/conformance/conformance.py",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "ef18e75",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the roster expects a scan where the hint asks for the index",
+      "old": "    \"a search for 'the' by index\": \"Index Scan using by_title_text\",",
+      "new": "    \"a search for 'the' by index\": \"Table Scan\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a search for 'the' by index: the plan's access path changed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
