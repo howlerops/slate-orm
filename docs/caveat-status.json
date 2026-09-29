@@ -1670,8 +1670,8 @@
       "entry": "2026-09-19-one-command-for-the-checks.md",
       "key": "It does not run the suites, and the suites are where the def",
       "verdict": "deliberate",
-      "by": "this entry: the closing summary names the nine it skips",
-      "reviewed": "2026-09-26"
+      "by": "this entry: the closing summary names what it skips, by name, so a reader learns the gap from the tool rather than from here. That list is now eleven items rather than the nine this reason first counted -- re-counted 2026-09-29, and the drift is exactly the kind CLAUDE.md records about its own job count. It is prose nothing checks; scripts/test_check_sh.py holds the script to ci.yml step by step, not to the sentence.",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-19-one-command-for-the-checks.md",
