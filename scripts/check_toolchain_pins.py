@@ -152,11 +152,53 @@ def installers(root: Path) -> dict[str, list[str]]:
     return found
 
 
+def stale_skips(root: Path = ROOT) -> list[str]:
+    """Every name in `NOT_AN_INSTALLER` must still be a file carrying an example.
+
+    The skip list was checked in neither direction: it named two paths and
+    nothing asked whether they still existed or still carried the `go install`
+    the skip excuses. That is the roster rot `EXTERNAL`, `WITNESS` and `PROVES`
+    each check for and this one did not, recorded as a caveat in
+    `ledger/2026-09-29-a-guard-whose-roster-was-itself.md` and closed here.
+
+    A skip that excuses nothing is worse than no skip: it is a name in a
+    frozenset that a reader takes for a live exemption, and if the file comes
+    back carrying a *real* installer the skip hides it. The other direction
+    needs no rule — a new file with an example and no entry here is reported as
+    an installer, which is the guard asking to be told, and is what happened to
+    this file and its test when the rule was written.
+    """
+    said: list[str] = []
+    for name in NOT_AN_INSTALLER:
+        try:
+            text = (root / name).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            said.append(
+                f"NOT_AN_INSTALLER names {name}, which is not a readable file. "
+                "The skip excuses nothing; drop it, or fix the path."
+            )
+            continue
+        if not GO_INSTALL.search(text):
+            said.append(
+                f"NOT_AN_INSTALLER names {name}, which no longer carries a "
+                "`go install` example. The skip excuses nothing now, and if "
+                "the file grows a real installer it will hide it. Drop the "
+                "entry."
+            )
+    return said
+
+
 def problems(root: Path = ROOT) -> list[str]:
     """Every file that installs a pinned Go tool and leaves `GOTOOLCHAIN` to chance."""
     pinned_workflows = workflows(root)
     running = installers(root)
-    said: list[str] = []
+    # Before anything else, because `installers()` has already applied the skip
+    # list: a stale entry means the set below was computed with the wrong
+    # exclusions, so reporting an installer against it would be reporting
+    # against a tree this guard has misread.
+    said: list[str] = stale_skips(root)
+    if said:
+        return said
 
     # The never-fires halves. Either list going empty means the shape this
     # guard is about has moved, not that the tree is clean — and with no

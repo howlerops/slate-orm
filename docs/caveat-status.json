@@ -11730,8 +11730,9 @@
     {
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
       "key": "The self-skip is by filename.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "scripts/check_toolchain_pins.py's stale_skips(): every NOT_AN_INSTALLER name must be a readable file still carrying a `go install` example, and a stale entry stops the guard rather than letting it report against exclusions it has misread. Two cases in scripts/test_check_toolchain_pins.py, three mutations all caught. ledger/2026-09-29-the-skip-list-that-excused-nothing.md."
     },
     {
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
@@ -12655,6 +12656,34 @@
       "key": "The benchmark carries no assertion",
       "verdict": "deliberate",
       "by": "true of every group in crates/slate-kernel/benches/queries.rs, and deliberately: a threshold over a timing on this container is the flake ledger/2026-09-23-the-timing-flake-was-fixed-once-and-this-test-was-missed.md records. The dated entry is where a number that moved can be compared against what was observed.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
+      "key": "`PINNED` still matches any `@v<digit>` token",
+      "verdict": "open",
+      "by": "the sibling caveat in ledger/2026-09-29-a-guard-whose-roster-was-itself.md, untouched here. Nothing in the tree triggers it today, which is why it is a hazard rather than a defect.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
+      "key": "Two files is a roster small enough that rot was unlikely",
+      "verdict": "deliberate",
+      "by": "this entry: the class is real and has bitten EXTERNAL, WITNESS and PROVES, and the rule costs twenty lines. Declining it because this particular list is short is the reasoning that leaves the fourth roster unguarded, which ledger/2026-09-28-the-scale-hole-was-closed-ten-days-ago.md is about.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
+      "key": "Nothing checks that the never-fires halves still fire.",
+      "verdict": "open",
+      "by": "the seeded fixture is now a precondition every synthetic case inherits, so a case could satisfy it wrongly and the never-fires halves would go untested without anything saying so. scripts/test_check_toolchain_pins.py has cases for both halves today and nothing holds them to existing.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
+      "key": "It does not check the skip list against what the file's exam",
+      "verdict": "deliberate",
+      "by": "this entry: `GO_INSTALL.search` says an example is present, and deciding whether it is the pattern the comment means needs a reader. The alternative is matching the example against the guard's own regex plus its position, which is a parser -- the thing this file's never-fires note already argues against.",
       "reviewed": "2026-09-29"
     }
   ]

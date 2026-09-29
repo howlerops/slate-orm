@@ -745,6 +745,17 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "fn soft_delete(c: &mut Criterion)",
      "crates/slate-kernel/benches/queries.rs",
  ),
+
+ # --- the skip list that excused nothing, 2026-09-29 -------------------------
+ #
+ # `NOT_AN_INSTALLER` was the one roster in `scripts/` checked in neither
+ # direction. The needle is the function that checks it, which occurs once —
+ # the lesson from `soft-delete-read-cost` two rows up, where a group name that
+ # occurred twice let half the thing be deleted with the guard still green.
+ "skip-list-rot": (
+     "def stale_skips(",
+     "scripts/check_toolchain_pins.py",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -939,6 +950,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-a-guard-whose-roster-was-itself.md',
+     'The self-skip is by filename.'): 'skip-list-rot',
     ('2026-09-19-a-row-that-is-gone-but-still-there.md',
      'Nothing measures the cost. Every read of a soft-deleting tab'):
         'soft-delete-read-cost',

@@ -47,10 +47,23 @@ SHELL = "go install example.com/cmd/x@v1.2.3\n"
 UNPINNED = 'subprocess.run(["go", "install", "./..."])\n'
 
 
-def run(files: dict[str, str]) -> list[str]:
+#: Every synthetic tree gets the two files `NOT_AN_INSTALLER` names, each
+#: carrying an example, because a tree without them is a tree with a stale skip
+#: list and the guard now says so. Seeding them here rather than in each case
+#: keeps the twelve cases below about what they were about; a case that wants
+#: the rot rule to fire overrides the entry with `{name: ""}`, which is what the
+#: last two do. This is the same reason `run` writes nothing else: the fixture
+#: is the guard's precondition, not the thing under test.
+SKIPPED = dict.fromkeys(guard.NOT_AN_INSTALLER, SHELL)
+
+
+def run(files: dict[str, str | None]) -> list[str]:
+    """`files` over the seeded tree; a `None` value means "and not this one"."""
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
-        for name, body in files.items():
+        for name, body in {**SKIPPED, **files}.items():
+            if body is None:
+                continue
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body, encoding="utf-8")
@@ -58,7 +71,7 @@ def run(files: dict[str, str]) -> list[str]:
 
 
 #: name, the tree, the text the report must carry ("" means clean).
-CASES: list[tuple[str, dict[str, str], str]] = [
+CASES: list[tuple[str, dict[str, str | None], str]] = [
     (
         "a pinned workflow and an installer that decides is clean",
         {".github/workflows/ci.yml": PINNED, "scripts/gen.py": DECIDES},
@@ -193,6 +206,23 @@ CASES: list[tuple[str, dict[str, str], str]] = [
         "an empty tree names both halves",
         {"README.md": "nothing here\n"},
         "no workflow pins `go-version:`",
+    ),
+    (
+        # The roster rot the caveat in
+        # `ledger/2026-09-29-a-guard-whose-roster-was-itself.md` named: the
+        # skip list was checked in neither direction, so a guard renamed away
+        # left a name in a frozenset excusing nothing.
+        "a skipped file that is gone is reported",
+        {"scripts/check_toolchain_pins.py": None},
+        "is not a readable file",
+    ),
+    (
+        # The worse half, because the file is still there and reads as a live
+        # exemption: the example has been edited out, so the skip now hides any
+        # real installer the file grows.
+        "a skipped file that no longer carries an example is reported",
+        {"scripts/check_toolchain_pins.py": "# no installer here any more\n"},
+        "no longer carries a `go install` example",
     ),
 ]
 

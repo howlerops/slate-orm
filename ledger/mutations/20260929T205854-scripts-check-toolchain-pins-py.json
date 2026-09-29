@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-29T20:58:54+00:00",
+  "file": "scripts/check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "51bdc19",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the rot rule stops noticing a skipped file that is gone",
+      "old": "        except (OSError, UnicodeDecodeError):\n            said.append(\n                f\"NOT_AN_INSTALLER names {name}, which is not a readable file. \"",
+      "new": "        except (OSError, UnicodeDecodeError):\n            continue\n            said.append(\n                f\"NOT_AN_INSTALLER names {name}, which is not a readable file. \"",
+      "verdict": "caught",
+      "caught_by": [
+        "a skipped file that is gone is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the rot rule stops noticing a skipped file with no example left",
+      "old": "        if not GO_INSTALL.search(text):\n            said.append(\n                f\"NOT_AN_INSTALLER names {name}, which no longer carries a \"",
+      "new": "        if False and not GO_INSTALL.search(text):\n            said.append(\n                f\"NOT_AN_INSTALLER names {name}, which no longer carries a \"",
+      "verdict": "caught",
+      "caught_by": [
+        "a skipped file that no longer carries an example is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a stale skip no longer stops the rest of the guard running",
+      "old": "    said: list[str] = stale_skips(root)\n    if said:\n        return said",
+      "new": "    said: list[str] = []\n    stale_skips(root)",
+      "verdict": "caught",
+      "caught_by": [
+        "a skipped file that is gone is reported",
+        "a skipped file that no longer carries an example is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
