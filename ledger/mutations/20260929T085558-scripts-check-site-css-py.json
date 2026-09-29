@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-29T08:55:58+00:00",
+  "file": "scripts/check_site_css.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_site_css.py"
+  ],
+  "commit": "f3cfc56",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a use is a substring again, so `bar` is satisfied by `toolbar`",
+      "old": "    return re.search(rf\"\\b{re.escape(name)}\\b\", used) is not None",
+      "new": "    return name in used",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "comments are not stripped, so prose counts as a use",
+      "old": "    return A_COMMENT.sub(\" \", \"\\n\".join(texts))",
+      "new": "    return \"\\n\".join(texts)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

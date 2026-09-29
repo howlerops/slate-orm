@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-29T08:57:11+00:00",
+  "file": "scripts/check_site_css.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_site_css.py"
+  ],
+  "commit": "f3cfc56",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a line comment eats to the end of the file again",
+      "old": "(?://|\\*)[^\\n]*",
+      "new": "(?://|\\*).*$",
+      "verdict": "caught",
+      "caught_by": [
+        "a line comment does not hide the uses below it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

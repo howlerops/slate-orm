@@ -204,6 +204,42 @@
           "new": "`skipping_and_decoding_can_be_blended`"
         }
       ]
+    },
+    {
+      "guard": "check_table_provenance",
+      "file": "docs/performance.md",
+      "why": "A measurement table with no build line is a number whose provenance is gone; #280 recorded that no measurement said what produced it.",
+      "cases": [
+        {
+          "name": "a measurement table loses its build line",
+          "old": "it. This is that run.\n\n```\nbuild: slate-slatedb 0.0.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | x86_64-unknown-linux-gnu | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1\n```",
+          "new": "it. This is that run."
+        }
+      ]
+    },
+    {
+      "guard": "check_generated_is_used",
+      "file": "examples/explorer/backends/python/adapter/__main__.py",
+      "why": "codegen.py --check proves a generated declaration matches the catalog, never that anybody imports it; an adapter that stopped importing would keep passing --check.",
+      "cases": [
+        {
+          "name": "an adapter stops importing its generated schema",
+          "old": "from .schema import",
+          "new": "from .nothing import"
+        }
+      ]
+    },
+    {
+      "guard": "check_site_css",
+      "file": "examples/explorer/web/src/index.tsx",
+      "why": "A selector a stylesheet defines and no source uses is dead CSS a reader takes for live.",
+      "cases": [
+        {
+          "name": "a source stops using a class the stylesheet defines",
+          "old": "shell",
+          "new": "husk"
+        }
+      ]
     }
   ],
   "unmutated": {
@@ -213,10 +249,7 @@
     "check_closed_caveats": "Deferred. Its witnesses are needles in test files, so the mutation is a rename in a file another guard's suite already mutates -- and two suites mutating one file cannot run at once safely.",
     "check_demo_surface": "Deferred. Its roster is the demo's adapter endpoints against the UI that calls them, and the UI is TypeScript the guard reads as text; a mutation is cheap but the surface moved twice this month and the anchor would rot faster than the suite is worth.",
     "check_examples_roster": "Deferred. Its subject is scripts/run_examples.sh's floors and handshake roster, which are also what scripts/test_check_examples_roster.py builds fixtures for; picking an anchor that is not also in that fixture needs a read this session did not do.",
-    "check_generated_is_used": "Deferred. The mutation is removing an import of a generated file, which breaks the build for whichever client holds it -- harmless while the file is restored, but it leaves a broken tree for the length of the run and this session did not want that beside other work.",
     "check_mutation_claims": "Deferred. Its input is ledger entries' mutation counts, and a mutation to one would be a deliberate falsehood written into the ledger for the length of a run. It has been exercised for real twice this session, refusing a count this session got wrong.",
-    "check_site_claims": "Deferred. It reads four trees and its claims are counts derived from them, so a one-line anchor that is a real claim rather than incidental prose needs a read this session did not do.",
-    "check_site_css": "Deferred. The mutation is removing a class use from a demo source, which is cheap; not done for time.",
-    "check_table_provenance": "Deferred. Its subject is a build line under a measurement table in docs/, and this session could not find one to anchor on without reading the whole of docs/performance.md."
+    "check_site_claims": "Deferred. It reads four trees and its claims are counts derived from them, so a one-line anchor that is a real claim rather than incidental prose needs a read this session did not do."
   }
 }

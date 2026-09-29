@@ -11763,8 +11763,10 @@
     {
       "entry": "2026-09-29-the-mutations-run-again-now.md",
       "key": "Eleven guards still have no mutation; the roster records tha",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "ledger/2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md: three of the eleven picked up, and one of the three was broken -- check_site_css counted a substring as a use",
+      "residual": "eight remain; one has a technical reason and seven are still deferred"
     },
     {
       "entry": "2026-09-29-the-mutations-run-again-now.md",
@@ -11782,6 +11784,33 @@
     {
       "entry": "2026-09-29-the-mutations-run-again-now.md",
       "key": "The eleven reasons will rot.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "Eight guards still have no mutation.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "The whole-word rule still accepts a name in any string.",
+      "verdict": "deliberate",
+      "by": "this entry: the existing case `a class only ever built dynamically still counts as used` is there to stop a tightening to attribute values, and a class built by concatenation never appears as one. Narrower than substring, wider than attribute, and that is where the evidence puts it.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "Comment stripping is three regexes, not a lexer.",
+      "verdict": "narrowed",
+      "by": "a `//` inside a string before a class use would read as dead CSS, which fails loudly rather than quietly -- the safe direction for a check that blocks a commit; the run came out unchanged across both source sets, so none exists today",
+      "residual": "a URL or regex containing `//` placed above a class use would produce a false refusal, and nothing distinguishes that from real dead CSS in the message",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
+      "key": "The measurement was taken once.",
       "verdict": "open",
       "checked": "2026-09-29"
     }

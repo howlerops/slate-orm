@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T08:55:50+00:00",
+  "file": "examples/explorer/web/src/index.tsx",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_site_css.py"
+  ],
+  "commit": "f3cfc56",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a source stops using a class the stylesheet defines",
+      "old": "shell",
+      "new": "husk",
+      "verdict": "caught",
+      "caught_by": [
+        "check_site_css: ok    site/style.css defines some classes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
