@@ -146,13 +146,14 @@ that line in two crates; rule 10 catches a method on `Catalog`; the gap
 between them is every other crate in the workspace. The roster entry for
 `tables` says so, which is not the same as fixing it.
 
-**It reads one file by path.** A `Catalog` accessor added in another module of
-`slate-schema` — an `impl Catalog` in `lib.rs`, a trait implementation, an
-extension trait in a third crate — is invisible. Rule 9 answers the
-equivalent question for `SOURCES` by comparing against the workspace members;
-there is no equivalent here, and a `slate-schema` that splits `catalog.rs` in
-two would leave this rule reading half a surface with no complaint. The
-never-fires branch only fires on *nothing* found.
+~~**It reads one file by path.** A `Catalog` accessor added in another module
+of `slate-schema` — an `impl Catalog` in `lib.rs`, a trait implementation, an
+extension trait in a third crate — is invisible.~~ **Withdrawn the same day.**
+Rule 10 reads the crate's whole `src/`, and Rust's orphan rule makes that
+complete for inherent methods: only `slate-schema` may add one to `Catalog`.
+See `ledger/2026-09-29-the-orphan-rule-makes-the-tree-the-whole-surface.md`.
+What remains is a trait implemented for `Catalog` elsewhere, which is the
+`tables()` hole above and not a second thing.
 
 **It is text, not types.** A method whose return type is an alias for
 something containing `TableDef` — `type Tables = Vec<TableDef>` used as

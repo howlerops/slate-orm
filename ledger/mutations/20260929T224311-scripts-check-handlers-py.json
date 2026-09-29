@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-29T22:43:11+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "ce3c414",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": []
+}

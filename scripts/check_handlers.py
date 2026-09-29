@@ -390,12 +390,19 @@ FINDS_BY_NAME = {
 
 #: Where rule 10 looks, relative to the workspace root.
 #:
-#: A path rather than a member of `SOURCES`, because this is not a handler
-#: tree and must not be walked by the other nine: `slate-schema` holds the
-#: primitive rule 1 exempts by name — "a crate holding a primitive is not a
-#: crate that discloses" — and adding it to `SOURCES` would make every
+#: Its own path rather than a member of `SOURCES`, because this is not a
+#: handler tree and must not be walked by the other nine: `slate-schema` holds
+#: the primitive rule 1 exempts by name — "a crate holding a primitive is not
+#: a crate that discloses" — and adding it to `SOURCES` would make every
 #: `self.table(` in it a rule 1 failure.
-CATALOG_SOURCE = Path("crates") / "slate-schema" / "src" / "catalog.rs"
+#:
+#: The crate's whole `src/`, not `catalog.rs`. The first version named the one
+#: file and recorded the gap as a limit in its own entry: an `impl Catalog` in
+#: another module of the same crate was invisible, and the never-fires branch
+#: could not see it because it fires on *nothing* found, not on half a surface
+#: found. A directory costs one `rglob` and the limit goes away instead of
+#: being written down.
+CATALOG_SOURCE = Path("crates") / "slate-schema" / "src"
 
 #: The `impl` block rule 10 reads. Column zero, because a nested `impl` inside
 #: a test module is not the public surface.
@@ -675,15 +682,19 @@ def catalog_returns_tables(root: Path) -> set[str]:
     costs a roster entry. The last would err toward missing one, which costs
     the rule.
     """
-    path = root / CATALOG_SOURCE
-    if not path.exists():
-        return set()
+    found: set[str] = set()
+    for path in sorted((root / CATALOG_SOURCE).rglob("*.rs")):
+        found |= impl_catalog_accessors(path.read_text().splitlines())
+    return found
 
+
+def impl_catalog_accessors(lines: list[str]) -> set[str]:
+    """The same, over one file's lines."""
     found: set[str] = set()
     inside = False
     signature: list[str] = []
     name = ""
-    for line in path.read_text().splitlines():
+    for line in lines:
         if IMPL_CATALOG.match(line):
             inside = True
             continue
@@ -722,7 +733,7 @@ def catalog_returns_tables(root: Path) -> set[str]:
 def unrostered_catalog_lookups(found: set[str]) -> list[str]:
     """Rule 10, both directions: an unlisted method, and a listed one gone."""
     problems = [
-        f"{CATALOG_SOURCE}: `Catalog::{name}` is public and hands out a "
+        f"`Catalog::{name}` is public and hands out a "
         "`TableDef`.\n"
         "  `Catalog::table_by_name` is meant to be the only way a name becomes "
         "a table — that is the whole of `docs/views.md` \u00a73a's claim that a view "
@@ -865,9 +876,9 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     handing_out = catalog_returns_tables(root)
     if not handing_out:
         problems.append(
-            f"no public `Catalog` method returns a `TableDef` in "
-            f"{root / CATALOG_SOURCE}, so rule 10 checked nothing. The file "
-            "moved, the `impl Catalog` block did, or the accessors are no "
+            f"no public `Catalog` method returns a `TableDef` anywhere under "
+            f"{root / CATALOG_SOURCE}, so rule 10 checked nothing. The crate "
+            "moved, the `impl Catalog` blocks did, or the accessors are no "
             "longer public — all three need a person, not a pass."
         )
     elif "table_by_name" not in handing_out:
@@ -878,7 +889,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
         # being about anything.
         problems.append(
             f"`Catalog::table_by_name` is not among the {len(handing_out)} "
-            f"public method(s) returning a `TableDef` in {CATALOG_SOURCE}, so "
+            f"public method(s) returning a `TableDef` under {CATALOG_SOURCE}, so "
             "rule 10 is measuring a roster against an anchor that is gone. It "
             "was renamed or removed; either way every other entry's reason "
             "referred to it."

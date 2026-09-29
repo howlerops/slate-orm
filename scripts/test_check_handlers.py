@@ -658,7 +658,9 @@ impl Catalog {
 """
 
 
-def workspace(root: pathlib.Path, catalog: str | None = CATALOG) -> None:
+def workspace(
+    root: pathlib.Path, catalog: str | dict[str, str] | None = CATALOG
+) -> None:
     (root / "Cargo.toml").write_text(
         '[workspace]\nmembers = ["crates/quiet"]\n'
     )
@@ -671,17 +673,22 @@ def workspace(root: pathlib.Path, catalog: str | None = CATALOG) -> None:
     # the first run without this, twelve cases failed naming a temporary
     # directory — the same shape as the nine that failed when rule 9 arrived,
     # and the fourth time in this file's history.
+    #
+    # A dict is several files in the crate's `src/`, which is the only way to
+    # write a case about rule 10 reading a tree rather than one file.
     if catalog is not None:
         schema = root / "crates" / "slate-schema" / "src"
         schema.mkdir(parents=True)
-        (schema / "catalog.rs").write_text(catalog)
+        files = {"catalog.rs": catalog} if isinstance(catalog, str) else catalog
+        for name, text in files.items():
+            (schema / name).write_text(text)
 
 
 def run(
     body: str | dict[str, str] | None,
     crates: dict[str, str] | None = None,
     inside_crate: str | None = None,
-    catalog: str | None = CATALOG,
+    catalog: str | dict[str, str] | None = CATALOG,
 ) -> tuple[int, str]:
     """`crates` adds `crates/<name>/src/lib.rs` files and lists them as members,
     which is the only way to write a case about rule 9.
@@ -842,7 +849,7 @@ SCOPE_CASES: list[tuple[str, dict[str, str], int, str]] = [
 #: name, the catalog source (`None` for no file at all), the exit code, and
 #: the text the report must carry. The service is always the passing fixture,
 #: so a failure here is rule 10's and no other rule's.
-CATALOG_CASES: list[tuple[str, str | None, int, str]] = [
+CATALOG_CASES: list[tuple[str, str | dict[str, str] | None, int, str]] = [
     (
         "the four accessors that exist today are rostered",
         CATALOG,
@@ -931,6 +938,36 @@ CATALOG_CASES: list[tuple[str, str | None, int, str]] = [
         ),
         1,
         "`Catalog::wrapped` is public and hands out a `TableDef`",
+    ),
+    (
+        # The crate is read as a tree, not as one file. `catalog.rs` is where
+        # the accessors are today and nothing makes them stay there; the first
+        # version of this rule named the file and recorded the gap as a limit
+        # rather than closing it.
+        "a lookup in another file of the same crate is reported",
+        {
+            "catalog.rs": CATALOG,
+            "views.rs": "impl Catalog {\n"
+            "    pub fn view_base(&self, name: &str) -> Option<&TableDef> {\n"
+            "        None\n"
+            "    }\n}\n",
+        },
+        1,
+        "`Catalog::view_base` is public and hands out a `TableDef`",
+    ),
+    (
+        # The other half: a file in the crate that is about something else
+        # must not be read as though it were the catalog.
+        "another file with no `impl Catalog` changes nothing",
+        {
+            "catalog.rs": CATALOG,
+            "value.rs": "impl Value {\n"
+            "    pub fn only(&self, name: &str) -> Option<&TableDef> {\n"
+            "        None\n"
+            "    }\n}\n",
+        },
+        0,
+        "",
     ),
     (
         "a roster entry for a method that is gone is reported",
