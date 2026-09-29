@@ -7556,9 +7556,9 @@
     {
       "entry": "2026-09-13-the-typescript-package-was-not-importable.md",
       "key": "The Go and Python clients are not checked this way. Go has n",
-      "verdict": "open",
-      "by": "still unchecked for Python. A wrong `packages` in clients/python/pyproject.toml produces the same class of bug and nothing imports the built package from outside its own tree; Go genuinely cannot have it, since the module path is the import path.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "clients/python/tests/test_packaging.py, which builds a wheel and an sdist from a clean copy, checks every module and stub is shipped, installs the wheel into a throwaway prefix and imports it in a subprocess. Written since and never connected back; read end to end and confirmed in ledger/2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-13-the-typescript-package-was-not-importable.md",
@@ -8107,9 +8107,9 @@
     {
       "entry": "2026-09-14-withdrawing-the-rename-caveat.md",
       "key": "The Python client has no equivalent test. Its fingerprint is",
-      "verdict": "open",
-      "by": "still absent. Its fingerprint is the reference the other two were ported from and is pinned against them, so the property follows \u2014 and this entry's own five paragraphs are about what 'follows' rather than 'shown' costs.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "ledger/2026-09-29-the-python-client-had-no-renamed-column-to-declare.md: docs.note was once `comment` in the Python fixture, and test_a_renamed_column_is_accepted_under_its_previous_name serves both spellings, refuses a third, and pins that the two fingerprints differ",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-14-writes-in-the-playground.md",
@@ -11231,6 +11231,33 @@
       "key": "Nothing checks the wasm build's own feature list stays right",
       "verdict": "deliberate",
       "by": "this entry: ON_WASM can go stale in one direction only \u2014 a feature tokio adds makes this refuse loudly, one it removes is caught by the CI wasm build",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "It does not cover several previous names, or `MAX_SPELLINGS`",
+      "verdict": "deliberate",
+      "by": "this entry: unchanged from the 09-14 entry's own version for Go and TypeScript \u2014 a client sends one hash either way and cannot tell the cases apart; crates/slate-server/src/fingerprint.rs is where the enumeration lives",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "The fixture now carries a rename no migration produced.",
+      "verdict": "deliberate",
+      "by": "this entry: a schema fixture records the previous name directly, which is the right shape for it; whether a rename migration works is slate-schema's",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "Nothing stops the fourth client arriving without this test.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
+      "key": "The packaging caveat was closed by reading, not by running.",
+      "verdict": "deliberate",
+      "by": "this entry: the four tests do run, inside the 345 \u2014 what was not checked is their behaviour on a machine without network, and their own file records the one time they skipped silently",
       "reviewed": "2026-09-29"
     }
   ]

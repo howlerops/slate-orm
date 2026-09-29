@@ -433,6 +433,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "wasm-runtime-guard": (
      "RUNTIME_ON_PURPOSE",
      "scripts/check_wasm_runtime.py",
+ ),
+
+ # --- the two "I looked and it is fine" claims, 2026-09-29 --------------------
+ "python-rename-declared": (
+     "test_a_renamed_column_is_accepted_under_its_previous_name",
+     "clients/python/tests/test_fixture.py",
+ ),
+ "python-wheel-imports": (
+     "test_the_installed_package_imports",
+     "clients/python/tests/test_packaging.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -627,6 +637,16 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-14-withdrawing-the-rename-caveat.md',
+     'The Python client has no equivalent test. Its fingerprint is'):
+        'python-rename-declared',
+    # Closed by a file that already existed. The witness is the test that does
+    # the thing the caveat asked for — install the built wheel and import it —
+    # rather than the file, because three of its four tests would still pass
+    # with that one deleted.
+    ('2026-09-13-the-typescript-package-was-not-importable.md',
+     'The Go and Python clients are not checked this way. Go has n'):
+        'python-wheel-imports',
     ('2026-09-14-the-kernel-on-wasm.md',
      'Nothing else in the workspace is checked for the same proble'):
         'wasm-runtime-guard',

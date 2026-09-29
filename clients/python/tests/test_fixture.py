@@ -289,3 +289,77 @@ def test_the_coverage_guard_fires_when_a_type_is_unpinned() -> None:
     assert "u64" not in short, "docs carries u64, so it is not missing"
     # And the real answer is not simply everything: `docs` covers three.
     assert len(short) == len(list(ValueType)) - 3, short
+
+
+def test_a_renamed_column_is_accepted_under_its_previous_name(client: Client) -> None:
+    """The check Go and TypeScript had and this client did not.
+
+    `ledger/2026-09-14-withdrawing-the-rename-caveat.md` withdrew the claim
+    that only Python would be served here — the server enumerates every
+    spelling the catalog accepts, so no client models renames at all — and
+    added the test to Go and TypeScript. It left this:
+
+        The Python client has no equivalent test. Its fingerprint is the
+        reference the other two were ported from and is pinned against them,
+        so the property follows -- but "follows" is not "shown".
+
+    `docs.note` was once `comment`, declared in the testserver's schema. Both
+    spellings are served; a third the column never had is refused. It is `note`
+    rather than `kind` because
+    `test_a_renamed_column_is_refused_rather_than_silently_answered` above
+    needs `kind` spelled `category` to stay illegal.
+    """
+    from .fixture import DOCS as CURRENT
+
+    previous = Table(
+        "docs",
+        [
+            Column("id", ValueType.U64),
+            Column("kind", ValueType.STR),
+            Column("size", ValueType.I64),
+            Column("comment", ValueType.STR),  # `note`, before it was renamed
+        ],
+        primary_key=["id"],
+    )
+    for name, table in (("previous", previous), ("current", CURRENT)):
+        rows = list(client.query(Query(table).limit(1)))
+        assert rows, f"the {name} spelling returned nothing to check"
+
+    # The control, and the half that makes the pair mean something: a spelling
+    # the column never had is refused, so the acceptance above is about the
+    # recorded rename and not about the check having stopped running.
+    never = Table(
+        "docs",
+        [
+            Column("id", ValueType.U64),
+            Column("kind", ValueType.STR),
+            Column("size", ValueType.I64),
+            Column("remark", ValueType.STR),
+        ],
+        primary_key=["id"],
+    )
+    with pytest.raises(InvalidRequest):
+        list(client.query(Query(never).limit(1)))
+
+
+def test_the_two_spellings_hash_differently(client: Client) -> None:
+    """Which is why the server has to enumerate rather than compare one hash.
+
+    The client sends one fingerprint. If the two spellings hashed the same the
+    test above would pass for a reason that has nothing to do with renames —
+    the server would be comparing a number that cannot tell them apart. They
+    do not, so the acceptance is the enumeration working.
+    """
+    from .fixture import DOCS as CURRENT
+
+    previous = Table(
+        "docs",
+        [
+            Column("id", ValueType.U64),
+            Column("kind", ValueType.STR),
+            Column("size", ValueType.I64),
+            Column("comment", ValueType.STR),
+        ],
+        primary_key=["id"],
+    )
+    assert fingerprint_of(previous) != fingerprint_of(CURRENT)

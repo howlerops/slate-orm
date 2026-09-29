@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T04:21:10+00:00",
+  "file": "clients/python/testserver/src/main.rs",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_fixture.py -q --no-header -p no:cacheprovider"
+  ],
+  "commit": "37db45b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the recorded previous name is a different one",
+      "old": "        .renamed_column(\"note\", \"comment\")",
+      "new": "        .renamed_column(\"note\", \"remark\")",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_fixture.py::test_a_renamed_column_is_accepted_under_its_previous_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the column records no previous name at all",
+      "old": "        .renamed_column(\"note\", \"comment\")\n        .primary_key([\"id\"])",
+      "new": "        .primary_key([\"id\"])",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_fixture.py::test_a_renamed_column_is_accepted_under_its_previous_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
