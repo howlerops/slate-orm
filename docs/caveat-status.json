@@ -9942,9 +9942,9 @@
     {
       "entry": "2026-09-21-a-window-crosses-the-wire-in-its-own-list.md",
       "key": "The stubs are regenerated and committed here. `COPIES` is st",
-      "verdict": "open",
-      "by": "COPIES is still one pair and still has no completeness check, so a second literal copy added tomorrow is invisible to it.",
-      "checked": "2026-09-28"
+      "verdict": "closed",
+      "by": "scripts/check_proto_copies.py: COPIES is gone. The guard walks crates/slate-server/proto and clients/typescript/proto and compares every .proto beneath them in both directions, so the set of files is checked and not only the pairs somebody listed. The worry was right -- two more copies, google/rpc/status.proto and error_details.proto, were duplicated across those same trees and unguarded; three pairs are compared where one was. Eight fixture cases in scripts/test_check_proto_copies.py, five mutations against them all caught (ledger/mutations/20260929T163225-scripts-check-proto-copies-py.json), and the real-tree mutation in scripts/mutations.json now lands on status.proto -- one of the two the list never named -- and is caught (ledger/mutations/20260929T163239-clients-typescript-proto-google-rpc-status-proto.json).",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-21-annotate-the-contains-regression-seeds.md",
@@ -12127,6 +12127,33 @@
       "key": "The site's link checker and this one still do not know about",
       "verdict": "open",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-proto-roster-named-one-copy-of-three.md",
+      "key": "It compares two trees, and there could be a third.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-proto-roster-named-one-copy-of-three.md",
+      "key": "The generated stubs are still checked by their own tests, no",
+      "verdict": "deliberate",
+      "by": "this entry: a generated stub's freshness test regenerates and compares bytes, which is strictly stronger than a copy comparison and is what caught the stale stubs on 2026-09-21. Folding them into this guard would weaken them. What is worth knowing is only that a red build can come from either place, which the entry records.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-proto-roster-named-one-copy-of-three.md",
+      "key": "Nothing checks that a vendored `google/rpc` file still match",
+      "verdict": "deliberate",
+      "by": "this entry: the repository's copy of error_details.proto declares three messages where upstream declares ten, on purpose and written up in docs/orm-comparison.md, so a literal upstream comparison would be wrong by construction. What a correct check would compare is not obvious and is not invented here. Both copies are still compared to the canonical tree, which is the property the clients depend on.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-proto-roster-named-one-copy-of-three.md",
+      "key": "The mutation moved rather than multiplied.",
+      "verdict": "deliberate",
+      "by": "this entry: scripts/mutations.json allows one suite per guard -- scripts/test_check_mutations_roster.py has a case for two suites on one guard failing -- so the choice was which single real-tree file the mutation lands on. status.proto, because a mutation that only proves the guard still sees the file the old list already named would prove nothing about the widening. records.proto keeps the fixture suite and the byte comparison it shares with the other two.",
+      "reviewed": "2026-09-29"
     }
   ]
 }

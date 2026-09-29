@@ -128,6 +128,18 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "a relative citation matching two files that differ fails",
      "scripts/test_check_cited_files.py",
  ),
+
+ # --- the proto roster derived from the trees, 2026-09-29
+ #
+ # A fixture case name rather than a line of the guard, for the reason the two
+ # rows above give: the rule is a set comparison in `main()` that any rewording
+ # would move, and the case is named after what it proves. This one in
+ # particular is the case the hand-written roster could not have had, so it
+ # going missing means the derivation went with it.
+ "proto-copies-derived": (
+     "a second pair, one of them drifted",
+     "scripts/test_check_proto_copies.py",
+ ),
  # --- the 2026-09-14/15/16 backlog, triaged 2026-09-28
  'wasm-in-ci': ('wasm', '.github/workflows/ci.yml'),
  'wasm-writes': ('insert', 'crates/slate-wasm/src/lib.rs'),
@@ -2208,6 +2220,9 @@ WITNESSED: dict[tuple[str, str], str] = {
         'cited-files-ambiguous-suffix',
     ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
      'Only `docs/` is in scope.'): 'cited-files-scope',
+    ('2026-09-21-a-window-crosses-the-wire-in-its-own-list.md',
+     'The stubs are regenerated and committed here. `COPIES` is st'):
+        'proto-copies-derived',
 }
 
 

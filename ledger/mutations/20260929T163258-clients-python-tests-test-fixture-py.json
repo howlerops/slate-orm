@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T16:32:58+00:00",
+  "file": "clients/python/tests/test_fixture.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_renamed_column.py"
+  ],
+  "commit": "6d748f6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the Python test declares the current spelling instead of the previous one",
+      "old": "Column(\"comment\", ValueType.STR),  # `note`, before it was renamed",
+      "new": "Column(\"note\", ValueType.STR),  # `note`, before it was renamed",
+      "verdict": "caught",
+      "caught_by": [
+        "check_renamed_column: python's renamed-column test no longer declares an old spelling: no `Column\\(\"comment\", ValueType\\.STR\\)` between that test and the next one."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

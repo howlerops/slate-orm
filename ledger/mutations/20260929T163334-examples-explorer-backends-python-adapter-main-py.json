@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T16:33:34+00:00",
+  "file": "examples/explorer/backends/python/adapter/__main__.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_generated_is_used.py"
+  ],
+  "commit": "6d748f6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an adapter stops importing its generated schema",
+      "old": "from .schema import",
+      "new": "from .nothing import",
+      "verdict": "caught",
+      "caught_by": [
+        "check_generated_is_used: examples/explorer/backends/python/adapter/schema.py is imported but examples/explorer/backends/python/adapter/__main__.py no longer matches `^from \\.schema import`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

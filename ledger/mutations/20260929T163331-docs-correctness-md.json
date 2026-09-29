@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T16:33:31+00:00",
+  "file": "docs/correctness.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_cited_tests.py"
+  ],
+  "commit": "6d748f6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a docs page cites a test name that is not defined",
+      "old": "`skipping_and_decoding_can_be_mixed`",
+      "new": "`skipping_and_decoding_can_be_blended`",
+      "verdict": "caught",
+      "caught_by": [
+        "check_cited_tests: docs/correctness.md: `skipping_and_decoding_can_be_blended` names no test, and nothing beside it does either"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
