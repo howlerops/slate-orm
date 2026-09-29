@@ -12569,7 +12569,7 @@
       "entry": "2026-09-29-the-deliberate-sample-carried-to-216.md",
       "key": "792 remain unread",
       "verdict": "open",
-      "by": "the sample is 216 of 1008 and the remaining 792 are the task. Carried in task #329, which stays in_progress; the method is scripts/caveats.py's seeded order and /tmp/claude-0/sample.py's skip offset, derived from this entry's count.",
+      "by": "the sample is 264 of 1011 and 747 remain; carried in task #329, which stays in_progress. ledger/2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md is the batch after this entry's.",
       "checked": "2026-09-29"
     },
     {
@@ -12591,6 +12591,34 @@
       "key": "It says nothing about the 1008 that remain `deliberate` bein",
       "verdict": "deliberate",
       "by": "this entry: 'is this claim false' and 'is this argument good' are different questions, and only the first has an answer a reader can check against the tree. ledger/2026-09-29-the-deliberate-sample-carried-to-168.md's one stale reason is the second question's shape, and grading arguments at scale is the work the deliberate verdict exists to record having already been done.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md",
+      "key": "No mutation, because nothing executable changed.",
+      "verdict": "deliberate",
+      "by": "this entry: the only edit outside ledger/ is one `by` string, and the guards that read docs/caveat-status.json carry their own mutations \u2014 ledger/mutations/20260929T201837-examples-retention-seed-py.json and ledger/mutations/20260929T201851-github-workflows-ci-yml.json. A mutation here would be testing json.loads.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md",
+      "key": "747 remain unread.",
+      "verdict": "open",
+      "by": "a quarter of the bucket is read and the lower bound of 4 still admits that most false verdicts are in the unread part. Task #329, in_progress.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md",
+      "key": "It does not settle the lead, it reports one test of it.",
+      "verdict": "deliberate",
+      "by": "this entry: settling it means ~50 more negative existentials either way, and the unstratified draw is what supplies them without confirming the hypothesis by construction. Reported as one test rather than held back, which is the whole reason the entry exists.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md",
+      "key": "Twelve of forty-eight were checked mechanically, thirty-six ",
+      "verdict": "deliberate",
+      "by": "ledger/2026-09-29-the-deliberate-sample-carried-to-216.md, which names the same ceiling: a claim with no mechanical subject can only be read, and a second independent reader is not something this repository has. Restated here because the ratio of read-to-checked is worse in this batch than the last.",
       "reviewed": "2026-09-29"
     }
   ]
