@@ -9836,9 +9836,10 @@
     {
       "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
       "key": "Nothing measures a sweep's cost.",
-      "verdict": "open",
-      "by": "how long a purge of a million rows takes, and what it does to concurrent writes, is unknown and unasked.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "crates/slate-kernel/benches/queries.rs's `purge` group: 4.05-4.47 us a row at 10,000 rows erased and 5.80-6.58 us at 2,500, three runs, bands not overlapping. A million rows is roughly four seconds in memory. ledger/2026-09-29-what-a-sweep-costs-per-row.md.",
+      "checked": "2026-09-29",
+      "residual": "what a purge does to concurrent writes, which is the caveat's other half verbatim and needs the concurrency harness rather than a bench; and the million-row figure, which is extrapolated from two sizes and not run."
     },
     {
       "entry": "2026-09-20-the-sweep-nobody-scheduled.md",
@@ -12769,6 +12770,42 @@
       "verdict": "open",
       "by": "STRING_ONLY says which operators need column 2 and nothing checks column 2 is still the string column, so renaming the fixture's columns would leave it silently wrong.",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
+      "key": "It says nothing about concurrent writes",
+      "verdict": "open",
+      "by": "the caveat's other half verbatim, carried as this row's residual too. It needs the concurrency harness -- a writer contending with a purge's transaction -- rather than a criterion group.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
+      "key": "A million rows is extrapolated, not run.",
+      "verdict": "open",
+      "by": "two sizes an order of magnitude apart show the per-row cost falling and nothing says it keeps falling. ledger/2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md's loader cliff is this repository's own example of a curve that bends at a size nobody had reached.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
+      "key": "In memory, with no I/O charged.",
+      "verdict": "narrowed",
+      "by": "LatencyProfile::free(), like the soft_delete group beside it, so the figure is the CPU floor rather than the cost on object storage.",
+      "residual": "the same group under LatencyProfile::object_storage(), where erasing a key is a charged round trip and would dominate. The io profile exists in this file and is not wired to this group.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
+      "key": "One index set.",
+      "verdict": "open",
+      "by": "three secondary indexes on the fixture, so three entries erased per row plus the row. A table with ten costs more and nothing says by how much -- the most obviously linear knob and the cheapest follow-up.",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
+      "key": "The table is rebuilt inside the timed region.",
+      "verdict": "deliberate",
+      "by": "this entry: iter_batched's routine is an FnMut and the async block must own what it moves, so the borrow cannot outlive one call. It is a handful of allocations, identical at both sizes, so it inflates both readings equally and does not move the per-row comparison the entry quotes. Named in the numbers rather than hidden.",
+      "reviewed": "2026-09-29"
     }
   ]
 }

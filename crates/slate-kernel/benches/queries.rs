@@ -295,7 +295,8 @@ criterion_group!(
     scan_row_breakdown,
     reads,
     writes,
-    soft_delete
+    soft_delete,
+    purge
 );
 /// Spelled out rather than `criterion_main!(benches)`, which is what this
 /// was: the generated main runs the group and prints criterion's summary,
@@ -567,4 +568,67 @@ fn stamped_store(runtime: &Runtime, table: &TableDef, retired: u64) -> Store {
         catalog,
         security,
     )
+}
+
+/// What a sweep costs, per row erased.
+///
+/// `ledger/2026-09-20-the-sweep-nobody-scheduled.md` asked "how long a purge of
+/// a million rows takes" and answered neither half. This answers the first at a
+/// size that fits: a purge erases a row and every index entry that pointed at
+/// it, so the per-row figure is what scales, and a million rows is that figure
+/// times a million plus whatever the store does differently at that size.
+///
+/// `iter_batched` rather than `iter`, because a purge is destructive: the
+/// second iteration of a plain `iter` would find nothing left and measure an
+/// empty scan. The setup seeds a fresh store per iteration and criterion
+/// excludes it from the timing, which is the whole reason to reach for the
+/// batched form — the seeding is several times the purge and would swamp it.
+fn purge(c: &mut Criterion) {
+    let runtime = Runtime::new().expect("runtime");
+    let table = stamped(true);
+    let mut group = c.benchmark_group("purge");
+    // Small, because the setup runs once per iteration and seeding dominates
+    // the wall clock even though it is not timed.
+    group.sample_size(10);
+
+    for retired in [ROWS_PER_TENANT / 4, ROWS_PER_TENANT] {
+        let erased = retired * TENANTS as u64;
+        group.bench_with_input(
+            BenchmarkId::from_parameter(format!("{erased}_rows")),
+            &retired,
+            |b, &retired| {
+                // The table is rebuilt inside the routine rather than
+                // borrowed from outside it: `iter_batched`'s routine is an
+                // `FnMut` and the async block has to own what it moves, so a
+                // borrow of the outer `table` cannot outlive one call. Building
+                // it is a handful of allocations and is inside the timed
+                // region, which is the one impurity here — it is the same cost
+                // in both rows of the table below, so it does not move the
+                // per-row figure the entry quotes.
+                // The *sync* bencher, deliberately. `stamped_store` seeds
+                // through `runtime.block_on`, and `iter_batched`'s setup runs
+                // on the async bencher's own runtime thread — "cannot start a
+                // runtime from within a runtime", met on the first run. Here
+                // the setup is plain synchronous code and the routine enters
+                // the runtime itself, which is the only arrangement where the
+                // seeding can use the same helper the other groups do.
+                b.iter_batched(
+                    || stamped_store(&runtime, &table, retired),
+                    |store| {
+                        runtime.block_on(async {
+                            let txn = store.begin().await.expect("begin");
+                            let gone = txn
+                                .purge_deleted(&root(), &table, 1_800_000_000, None)
+                                .await
+                                .expect("purge");
+                            txn.commit().await.expect("commit");
+                            gone
+                        })
+                    },
+                    criterion::BatchSize::PerIteration,
+                );
+            },
+        );
+    }
+    group.finish();
 }
