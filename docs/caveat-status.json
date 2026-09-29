@@ -6630,9 +6630,9 @@
     {
       "entry": "2026-09-27-two-verdicts-rested-on-premises-that-had-moved.md",
       "key": "The `narrowed` residual is the measurement, and nothing sche",
-      "verdict": "deliberate",
-      "by": "this entry: the alternative is a scheduler, and there is none \u2014 no cron, no queue, nothing that runs between sessions. An expiring `checked` date read by `caveats.py --unread` is the mechanism this repository chose for exactly this, argued in ledger/2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md.",
-      "reviewed": "2026-09-27"
+      "verdict": "open",
+      "by": "read and found stale. The reason recorded was \"the alternative is a scheduler, and there is none -- no cron, no queue, nothing that runs between sessions\", which was true on 2026-09-27 and stopped being true two days later: .github/workflows/mutations.yml carries a `schedule:` and runs Mondays at 07:11 UTC. So this is ordinary undone work rather than an impossibility, which is what `open` means and `deliberate` does not.",
+      "checked": "2026-09-29"
     },
     {
       "entry": "2026-09-27-two-verdicts-rested-on-premises-that-had-moved.md",
@@ -7152,9 +7152,7 @@
     {
       "entry": "2026-09-28-the-demo-showed-a-question-mark-for-four-wire-types.md",
       "key": "`NOT_IN_THE_UI` is now empty",
-      "verdict": "deliberate",
-      "by": "that entry: the roster is the mechanism that forces the next table added to the catalog to be shown or explained, and it works empty. The alternative is to delete it and re-add it when a table needs hiding, which is the same as not having it \u2014 nobody adds a roster while adding the table it would have caught. Kept, with a comment saying why it is empty rather than unused.",
-      "reviewed": "2026-09-28"
+      "verdict": "moment"
     },
     {
       "entry": "2026-09-28-five-column-types-no-pinned-table-carried.md",
@@ -8611,9 +8609,10 @@
     {
       "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
       "key": "Nothing else is bucketed.",
-      "verdict": "open",
-      "by": "still only latency to the response head. Rows returned, bytes written and queue depth have no histogram and no counter.",
-      "checked": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "bytes written is counted: crates/slate-serverd/src/observe.rs weighs every response body frame into slate_response_bytes_total and slate_response_frames_total, per method, and crates/slate-serverd/tests/observing.rs asserts it off a real node's scrape.",
+      "checked": "2026-09-29",
+      "residual": "rows returned and queue depth still have neither a histogram nor a counter, and the two new families are counters rather than histograms -- a per-response size distribution is not available."
     },
     {
       "entry": "2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md",
@@ -11514,7 +11513,7 @@
       "entry": "2026-09-29-bytes-do-not-need-a-network.md",
       "key": "It measures the request only.",
       "verdict": "deliberate",
-      "by": "ByteSize() is the protobuf payload. Draining a server-streaming response to weigh it would make the batch comparison meaningless -- the same twenty rows come back either way -- and the caveats are about what a caller sends. The class docstring says so rather than letting \"bytes\" imply \"on the wire\".",
+      "by": "ByteSize() is the protobuf payload. Draining a server-streaming response to weigh it would make the batch comparison meaningless -- the same twenty rows come back either way -- and the caveats are about what a caller sends. The class docstring says so rather than letting \"bytes\" imply \"on the wire\". The server half exists now and is somewhere else: slate_response_bytes_total in crates/slate-serverd/src/observe.rs weighs the response body at the node, in the same unit, which is where it belongs rather than in a client interceptor whose batch comparison it would spoil.",
       "reviewed": "2026-09-29"
     },
     {
@@ -11557,7 +11556,7 @@
       "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
       "key": "The request only, again.",
       "verdict": "deliberate",
-      "by": "inherited from the Python entry and settled there: each instrument sees what its own channel is about to send. Weighing a response would make the batch comparison meaningless, since the same rows come back either way.",
+      "by": "inherited from the Python entry and settled there: each instrument sees what its own channel is about to send. Weighing a response would make the batch comparison meaningless, since the same rows come back either way. And the other direction is measured at the node instead: slate_response_bytes_total, added the same day for exactly this gap.",
       "reviewed": "2026-09-29"
     },
     {

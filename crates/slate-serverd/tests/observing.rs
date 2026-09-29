@@ -227,6 +227,60 @@ async fn a_scrape_reports_what_the_node_served() {
 }
 
 #[tokio::test]
+async fn a_scrape_weighs_what_the_node_answered() {
+    // The unit tests beside `observe.rs` weigh a body built by hand, which
+    // says the arithmetic is right and nothing about whether a real streamed
+    // response reaches the wrapper at all: the layer only wraps a call that
+    // succeeded at the head *and* has a body left to send, and both halves of
+    // that condition are decided in `serve.rs` rather than in the counter. A
+    // node that stopped wrapping would pass every unit test and export zero.
+    //
+    // Two properties, not one number. A literal would pin the encoded size of
+    // this fixture's rows, which is a fact about `docs` rather than about the
+    // instrument, and would go red on a column added to the fixture.
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+
+    let mut client = connect(&serving).await;
+    let answered = rows(&mut client, &APP, query("docs"))
+        .await
+        .expect("a query the node will answer");
+    assert!(
+        !answered.is_empty(),
+        "the fixture should seed rows, or a zero weight proves nothing"
+    );
+    drop(client);
+
+    let scraped = scrape(&address, "/metrics").await;
+    let query_method = "/slate.v1.Records/Query";
+    let value = |family: &str| -> u64 {
+        let wanted = format!("{family}{{method=\"{query_method}\"}} ");
+        scraped
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(&wanted)?.parse().ok())
+            .unwrap_or_else(|| panic!("no {family} for {query_method}:\n{scraped}"))
+    };
+
+    // Non-zero, and bigger than the frames it arrived in: a wrapper that
+    // added one per frame rather than the frame's length would satisfy
+    // "non-zero" and fail this. Rows are tens of bytes each, so the margin is
+    // not close.
+    let bytes = value("slate_response_bytes_total");
+    let frames = value("slate_response_frames_total");
+    assert!(frames >= 1, "one query answered at least one frame");
+    assert!(
+        bytes > frames,
+        "{bytes} bytes over {frames} frames is a frame count, not a weight:\n{scraped}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
 async fn a_scrape_reports_the_rows_a_write_touched() {
     // The other counter, and the other wiring line. `a_scrape_reports_what the
     // node served` above covers `slate_requests_total`, whose layer wraps the

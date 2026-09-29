@@ -32,6 +32,23 @@
 //! read as a slow server. `rows_per_message` and the client's own timing are
 //! where the rest of that lives. The log line says `head` so this is not
 //! mistaken for the whole call.
+//!
+//! # The size of a response is not the duration of one, and is counted
+//!
+//! That argument is about *time* and does not reach *bytes*, which is how the
+//! stream went unmeasured in both for as long as it did. A slow consumer makes
+//! a response take longer; it does not make it larger. So the body is weighed
+//! frame by frame — `slate_response_bytes_total` and
+//! `slate_response_frames_total`, and `resp_bytes` / `resp_frames` on the
+//! summary line — while the duration stays at the head.
+//!
+//! This is the server's half of a number the three clients already had. Each
+//! of them weighs the *request* it sends at its own channel, which
+//! `ledger/2026-09-29-the-same-framing-cost-in-three-clients.md` used to find
+//! that a batch of twenty costs more bytes than twenty singles. Nothing
+//! weighed what came back, in any of them, so no comparison of the two
+//! directions was possible. It is the same unit on both sides: a protobuf
+//! payload, not the HTTP/2 framing, not the headers, not the trailers.
 
 use core::fmt::Write as _;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -178,6 +195,29 @@ pub(crate) struct Method {
     /// request already takes. Bucketed counts are a fixed 4 KiB a method and
     /// two relaxed atomic operations.
     heads: Box<[AtomicU64]>,
+    /// Response body bytes sent, summed over this method's calls.
+    ///
+    /// A counter and not a histogram, unlike `heads`, because the question it
+    /// answers is a rate — how much this node is putting on the wire — and a
+    /// per-response distribution would be 26 more series a method to answer a
+    /// question nobody asked. A reader wanting a mean response divides by
+    /// `calls`, which is exported beside it.
+    ///
+    /// **This is the body, not the response.** Not the HTTP/2 framing, not the
+    /// headers, not the trailers. It is the same thing the clients' own
+    /// interceptors weigh on the request side — a protobuf payload — which is
+    /// what makes the two comparable, and the reason they are worth comparing
+    /// is that until this existed the request side was measured in three
+    /// languages and the response side in none.
+    body_bytes: AtomicU64,
+    /// Body frames sent.
+    ///
+    /// A frame is a gRPC *message*, not a row: a streamed read batches rows at
+    /// `rows_per_message`, so this is the message count and `bytes / frames`
+    /// is the mean message. Kept because bytes alone cannot tell a hundred
+    /// small messages from one large one, and that difference is the whole of
+    /// what `rows_per_message` tunes.
+    body_frames: AtomicU64,
 }
 
 impl Default for Method {
@@ -189,6 +229,8 @@ impl Default for Method {
             micros: AtomicU64::new(0),
             slowest: AtomicU64::new(0),
             heads: (0..BUCKETS).map(|_| AtomicU64::new(0)).collect(),
+            body_bytes: AtomicU64::new(0),
+            body_frames: AtomicU64::new(0),
         }
     }
 }
@@ -390,16 +432,23 @@ impl Counters {
             // `unwrap_or(slowest)` rather than an `expect` so a logging path
             // has no way to panic at all.
             let at = |numerator| counters.quantile(numerator, 100).unwrap_or(slowest);
+            // `resp_bytes` and `resp_frames` at the end, after the durations,
+            // because appending is the one edit to this line that cannot
+            // break a reader: every parser of it in this repository finds a
+            // field by name or by `contains`, and a field inserted in the
+            // middle would still move a column for anything that did not.
             let _ = writeln!(
                 out,
                 "slate-serverd: {name} calls={calls} failed={failures} \
                  late={late} mean_head={:.1}ms p50_head<={:.1}ms p90_head<={:.1}ms \
-                 p99_head<={:.1}ms slowest_head={:.1}ms",
+                 p99_head<={:.1}ms slowest_head={:.1}ms resp_bytes={} resp_frames={}",
                 total as f64 / calls as f64 / 1000.0,
                 at(50) as f64 / 1000.0,
                 at(90) as f64 / 1000.0,
                 at(99) as f64 / 1000.0,
                 slowest as f64 / 1000.0,
+                counters.body_bytes.load(Ordering::Relaxed),
+                counters.body_frames.load(Ordering::Relaxed),
             );
         }
         (!out.is_empty()).then_some(out)
@@ -480,6 +529,18 @@ impl Counters {
             "counter",
             "slate_request_late_failures_total",
             &|method| method.late.load(Ordering::Relaxed),
+        );
+        family(
+            "Protobuf response body bytes sent by calls that answered, by method.",
+            "counter",
+            "slate_response_bytes_total",
+            &|method| method.body_bytes.load(Ordering::Relaxed),
+        );
+        family(
+            "Response body frames sent; a frame is a gRPC message, not a row.",
+            "counter",
+            "slate_response_frames_total",
+            &|method| method.body_frames.load(Ordering::Relaxed),
         );
 
         // Its own loop rather than a `family` call: this is keyed on a pair,
@@ -653,18 +714,20 @@ fn head_status(headers: &http::HeaderMap) -> Option<&str> {
 /// measurement is written up in the ledger entry.
 struct Trailing {
     inner: tonic::body::Body,
-    /// Where to report a late failure, taken when it is reported.
+    /// The counters this response reports into.
     ///
-    /// An `Option` so a body cannot count the same call twice: gRPC sends one
-    /// trailers frame, but nothing in the `Body` contract says a wrapper will
-    /// be polled exactly once after it, and a counter that can double under a
-    /// polling pattern is a counter nobody can trust.
-    late: Option<Late>,
-}
-
-/// What a [`Trailing`] needs to report a late failure: the row itself.
-struct Late {
+    /// Held directly rather than inside the `late` flag's payload, as it was
+    /// when a late failure was the only thing this wrapper reported: weighing
+    /// happens on every data frame and reporting a late failure happens once,
+    /// so a field that is consumed cannot hold what the frequent one needs.
     row: Arc<Method>,
+    /// Whether a late failure may still be reported on this body.
+    ///
+    /// Cleared when one is, so a body cannot count the same call twice: gRPC
+    /// sends one trailers frame, but nothing in the `Body` contract says a
+    /// wrapper will be polled exactly once after it, and a counter that can
+    /// double under a polling pattern is a counter nobody can trust.
+    late: bool,
 }
 
 impl http_body::Body for Trailing {
@@ -680,16 +743,35 @@ impl http_body::Body for Trailing {
         // A `pin-project` dependency to move one field would be a build-time
         // cost for a guarantee the types already give.
         let polled = core::pin::Pin::new(&mut self.inner).poll_frame(context);
+        // Weighed here rather than from a total kept in this struct and
+        // flushed on `Drop`: a scan that streams for a minute would contribute
+        // nothing to a scrape taken during it, and the read a scrape is for is
+        // exactly the one taken while the node is busy. Two relaxed atomics a
+        // frame, against the 4.7 ns a frame the wrapper itself was measured at.
+        //
+        // `data_ref` and not the frame: a trailers frame carries no data and
+        // answers `None`, so this is the data frames and only them — the same
+        // protobuf payload the three clients' interceptors weigh on the way
+        // out, which is what makes the two numbers comparable.
+        if let Poll::Ready(Some(Ok(frame))) = &polled
+            && let Some(data) = frame.data_ref()
+        {
+            self.row.body_frames.fetch_add(1, Ordering::Relaxed);
+            self.row
+                .body_bytes
+                .fetch_add(data.len() as u64, Ordering::Relaxed);
+        }
         // One chain rather than four nested `if`s, which clippy refuses under
         // CI's `-D warnings`. The order is the cheap test first: most frames
-        // carry data and never reach `trailers_ref`, and `take` runs only for
-        // the one frame that is a failing trailer.
+        // carry data and never reach `trailers_ref`, and the flag is cleared
+        // only for the one frame that is a failing trailer.
         if let Poll::Ready(Some(Ok(frame))) = &polled
             && let Some(trailers) = frame.trailers_ref()
             && head_status(trailers).is_some_and(|status| status != "0")
-            && let Some(late) = self.late.take()
+            && self.late
         {
-            late.row.record_late_failure();
+            self.late = false;
+            self.row.record_late_failure();
         }
         polled
     }
@@ -800,12 +882,21 @@ where
             // one with a body left to send can say so. A head failure carries
             // an empty body and is already counted, so wrapping it would pay
             // for a box to watch a stream with nothing in it.
+            //
+            // The same condition now also decides what is *weighed*, and that
+            // is the right answer rather than a convenience: a response that
+            // is already ended has no body bytes to count, and one that failed
+            // at the head carries the status and nothing else. Both would add
+            // zero. What this does mean is that `slate_response_bytes_total`
+            // counts the bodies of calls that got as far as answering, which
+            // is what its help string says.
             match outcome {
                 Ok(response) if !failed && !response.body().is_end_stream() => {
                     let (parts, body) = response.into_parts();
                     let wrapped = Trailing {
                         inner: body,
-                        late: Some(Late { row }),
+                        row,
+                        late: true,
                     };
                     Ok(http::Response::from_parts(
                         parts,
@@ -1161,7 +1252,8 @@ mod tests {
         let row = counters.record("/x", Duration::from_millis(1), false);
         Trailing {
             inner: tonic::body::Body::new(frames),
-            late: Some(Late { row }),
+            row,
+            late: true,
         }
     }
 
@@ -1173,9 +1265,11 @@ mod tests {
         // `tonic::body::Body::new` keep one it could have dropped. Nothing
         // about the counters changes, so only this says the delegation is
         // there.
+        let counters = Counters::default();
         let live = Trailing {
             inner: tonic::body::Body::new(streamed("0")),
-            late: None,
+            row: counters.record("/x", Duration::from_millis(1), false),
+            late: false,
         };
         assert!(
             !live.is_end_stream(),
@@ -1184,7 +1278,8 @@ mod tests {
 
         let empty = Trailing {
             inner: tonic::body::Body::new(Frames(Default::default())),
-            late: None,
+            row: counters.record("/x", Duration::from_millis(1), false),
+            late: false,
         };
         assert!(empty.is_end_stream(), "a body with no frames has ended");
     }
@@ -1234,6 +1329,78 @@ mod tests {
         drain(watched(&counters, frames)).await;
         let summary = counters.summary().expect("the call was recorded");
         assert!(summary.contains("failed=1 late=1"), "{summary}");
+    }
+
+    /// Data frames of the given lengths, then a successful trailer.
+    ///
+    /// Lengths rather than one repeated frame, because the two mistakes this
+    /// is here to catch are indistinguishable when every frame is the same
+    /// size: a wrapper adding a constant per frame and one adding each
+    /// frame's length agree exactly on a body of equal frames.
+    fn sized(lengths: &[usize]) -> Frames {
+        let mut trailers = http::HeaderMap::new();
+        trailers.insert("grpc-status", http::HeaderValue::from_static("0"));
+        let mut frames: std::collections::VecDeque<_> = lengths
+            .iter()
+            .map(|&n| http_body::Frame::data(BodyData::from(vec![b'x'; n])))
+            .collect();
+        frames.push_back(http_body::Frame::trailers(trailers));
+        Frames(frames)
+    }
+
+    #[tokio::test]
+    async fn a_streamed_body_is_weighed_frame_by_frame() {
+        // The gap this closes: three clients weigh the request they send and
+        // nothing weighed what came back, so no comparison of the two
+        // directions was possible in any language.
+        //
+        // Three frames of different sizes. Equal ones would pass a wrapper
+        // that added a constant per frame, and two would not distinguish a
+        // wrapper that weighed only the first.
+        let counters = Counters::default();
+        drain(watched(&counters, sized(&[7, 19, 3]))).await;
+        let summary = counters.summary().expect("the call was recorded");
+        assert!(
+            summary.contains("resp_bytes=29 resp_frames=3"),
+            "7 + 19 + 3 bytes over three frames:\n{summary}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_trailers_frame_weighs_nothing_and_is_not_a_frame() {
+        // Every successful streamed response ends with a `grpc-status: 0`
+        // trailer, so a wrapper counting it would overstate every response by
+        // one frame — and the count is what divides bytes into a mean message,
+        // which is the number `rows_per_message` is tuned against.
+        //
+        // One data frame, so the assertion is `1` and not `2`. `data_ref`
+        // answering `None` for a trailer is what makes that true, and nothing
+        // else in the suite says so.
+        let counters = Counters::default();
+        drain(watched(&counters, sized(&[11]))).await;
+        let summary = counters.summary().expect("the call was recorded");
+        assert!(
+            summary.contains("resp_bytes=11 resp_frames=1"),
+            "the trailer is neither a frame nor a byte:\n{summary}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_response_weight_is_exported_for_a_scraper() {
+        // The summary is cumulative over the process's life, which is the
+        // limitation this repository recorded about it twice. A rate needs the
+        // exported counter, so the two are not the same assertion.
+        let counters = Counters::default();
+        drain(watched(&counters, sized(&[7, 19, 3]))).await;
+        let text = counters.prometheus();
+        assert!(
+            text.contains("slate_response_bytes_total{method=\"/x\"} 29"),
+            "{text}"
+        );
+        assert!(
+            text.contains("slate_response_frames_total{method=\"/x\"} 3"),
+            "{text}"
+        );
     }
 
     #[test]
