@@ -1,0 +1,59 @@
+{
+  "at": "2026-09-29T13:45:50+00:00",
+  "file": "scripts/test_check_sh.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "8e8d485",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the glob narrows back to ci.yml, so a second workflow is invisible again",
+      "old": "    return sorted(directory.glob(\"*.yml\")) + sorted(directory.glob(\"*.yaml\"))",
+      "new": "    return sorted(directory.glob(\"ci.yml\"))",
+      "verdict": "caught",
+      "caught_by": [
+        "the parser still sees the workflows",
+        "no ELSEWHERE entry names a step the workflows have dropped"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the sentinel between files goes, so a step can take the next file's working-directory",
+      "old": "        lines.append(\"\")\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "several workflows are stitched together without bleeding into each other"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the second file's lines are dropped, so only the first workflow is parsed",
+      "old": "    for one in files:\n        lines.extend(one)",
+      "new": "    for one in files[:1]:\n        lines.extend(one)",
+      "verdict": "caught",
+      "caught_by": [
+        "several workflows are stitched together without bleeding into each other",
+        "no ELSEWHERE entry names a step the workflows have dropped"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires guards report nothing, so a blind parser reads as clean",
+      "old": "    if len(found) < 2:\n        blind.append(f\"found {len(found)} workflow file(s); the glob is not matching\")",
+      "new": "    if False:\n        blind.append(f\"found {len(found)} workflow file(s); the glob is not matching\")",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

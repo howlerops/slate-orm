@@ -566,6 +566,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "ui-tables-derived": (
      "export const TABLES: Record<string, string[]> = shown(CATALOG_TABLES);",
      "examples/explorer/web/src/api.ts",
+ ),
+
+ # Every workflow, not only `ci.yml`, from 2026-09-29. The needle is the glob
+ # that does the widening rather than a step or a reason: narrowing it back to
+ # `ci.yml` is exactly the revert, and it takes this string with it. A reason
+ # in `ELSEWHERE` would be the wrong witness — those come and go with the
+ # workflows, and the closure is about the *scope*, not about any one step.
+ "every-workflow-roster": (
+     'sorted(directory.glob("*.yaml"))',
+     "scripts/test_check_sh.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -2100,7 +2110,9 @@ WITNESSED: dict[tuple[str, str], str] = {
         '=read',
     ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
      'It does not re-read the rest of the open caveats.'):
-        '=read',
+        '=read',    ('2026-09-29-a-weekly-run-and-a-button.md',
+     "Nothing checks this workflow's steps the way `test_check_sh."):
+        'every-workflow-roster',
 }
 
 

@@ -11859,8 +11859,9 @@
     {
       "entry": "2026-09-29-a-weekly-run-and-a-button.md",
       "key": "Nothing checks this workflow's steps the way `test_check_sh.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "scripts/test_check_sh.py reads every workflow under .github/workflows/, not ci.yml alone, so mutations.yml's steps are inside the rule rather than accounted for by coincidence. Widening it made nine steps and blocks visible that had no reason; each has one now. ledger/2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md"
     },
     {
       "entry": "2026-09-29-a-weekly-run-and-a-button.md",
@@ -11915,6 +11916,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-29",
       "by": "this entry: the two residual mutations are one mutation applied twice, which is stated rather than dressed up as two, and the orphan case was added on noticing it. Three independent mutations of a two-row data change would be padding."
+    },
+    {
+      "entry": "2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md",
+      "key": "It reads `- run:` and `- name:`, not YAML.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: parsing the workflows properly needs a YAML dependency scripts/check.sh does not have and CI's `scripts` job does not install, which would trade a real dependency for a class of step nobody writes here. Unchanged from the guard's original design; the widening multiplies it by five files rather than introducing it."
+    },
+    {
+      "entry": "2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md",
+      "key": "`environment_matches` is still `ci.yml` only.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. It compares check.sh's exports against one workflow's `env:` block and no other workflow has one today, so a workflow-level `env:` added to mutations.yml would go unnoticed \u2014 the same hole this entry closed, one level down."
+    },
+    {
+      "entry": "2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md",
+      "key": "The never-fires branch is exercised by one mutation, not by ",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry, after measuring it: a fourth mutation disabling the branch survived (ledger/mutations/20260929T134550-scripts-test-check-sh-py.json) because on a healthy tree it changes no answer. A single mutation cannot show a guard fires when its trigger is absent; the glob mutation dying by that check's name is the coverage, and it is real."
+    },
+    {
+      "entry": "2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md",
+      "key": "Six of the nine new reasons are for blocks in workflows nobo",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: release-build.yml cross-compiles and pages.yml deploys, neither of which this container can do. A reason says what a step is for, which is what a reader deciding whether to extend check.sh needs; it has never claimed the step works."
     }
   ]
 }

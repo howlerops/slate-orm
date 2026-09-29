@@ -29,6 +29,7 @@ Run directly: `python3 scripts/test_check_sh.py`.
 
 from __future__ import annotations
 
+import pathlib
 import re
 import sys
 from pathlib import Path
@@ -56,6 +57,17 @@ ELSEWHERE = {
     "sh site/build-wasm.sh": "a build, and it needs the tool above",
     "cargo build -p slate-serverd --bin slate-serverd": "a build",
     "cargo build -p slate-testserver --bin slate-testserver": "a build",
+    # Workflows other than `ci.yml`, covered from 2026-09-29.
+    "python3 scripts/run_mutations.py": (
+        "breaks the real tree at every guard and restores it. `check.sh` is run"
+        " beside other sessions' work and before every commit; a script that"
+        " mutates tracked files is the one thing it must not do"
+    ),
+    "git diff --exit-code": (
+        "asserts the working tree is clean, which is true of a checkout and"
+        " false of anybody's machine mid-change"
+    ),
+    "ls -l dist": "listing an artefact another job built",
     # Suites. Each needs a built binary, a browser or a container, which is
     # what `check.sh` promises not to need. Listed one by one rather than by a
     # pattern, so that a *new* suite is a decision rather than a match.
@@ -111,6 +123,18 @@ ELSEWHERE_BLOCKS = {
     "Start MinIO": "starts a container",
     "The protobuf compiler, for the stub-freshness check": "installs a tool",
     "Soak the tuple codec properties": "a release build, minutes",
+    # pages.yml and release-build.yml, covered from 2026-09-29. Every one
+    # asserts on something built or cross-compiled by the job above it, which
+    # is the category `check.sh` promises to stay out of.
+    "The pages exist": "asserts on the built site",
+    "If that failed, here is why and what to do": (
+        "prints guidance when the step above fails; it runs only on failure and"
+        " checks nothing"
+    ),
+    "Cross-compilation toolchain": "installs a toolchain",
+    "Build": "a release build for a shipping target",
+    "It starts, and validates a configuration": "runs the binary the step above built",
+    "Name it after its target": "renames an artefact",
 }
 
 
@@ -189,9 +213,45 @@ def environment_matches() -> list[str]:
     return complaints
 
 
-def workflow_steps() -> tuple[list[tuple[str, str]], list[str]]:
-    """Every `- run:` in `ci.yml`: single-line steps, and named blocks."""
-    lines = (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
+#: Every workflow, not only `ci.yml`.
+#:
+#: It was `ci.yml` alone, and `ledger/2026-09-29-a-weekly-run-and-a-button.md`
+#: recorded what that costs: a second workflow adding a step is outside the
+#: rule, so `mutations.yml`'s two steps happened to be accounted for by
+#: coincidence rather than by anything. A rule scoped to one file is a rule
+#: about that file, and this repository now has five.
+#:
+#: `sorted()` so the report is stable; the glob so a sixth workflow is covered
+#: the day it lands rather than the day somebody remembers.
+def workflows() -> list[pathlib.Path]:
+    """Every workflow file, sorted."""
+    directory = ROOT / ".github" / "workflows"
+    return sorted(directory.glob("*.yml")) + sorted(directory.glob("*.yaml"))
+
+
+def workflow_steps(
+    files: list[list[str]] | None = None,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Every `- run:` in every workflow: single-line steps, and named blocks.
+
+    `files` is one list of lines per workflow, and defaults to the real ones.
+    It is a parameter only so that the joining below can be tested: the two
+    properties that matter — a second workflow is read at all, and one
+    workflow's last step cannot borrow the next one's `working-directory:` —
+    are properties of *several* files, and nothing could exercise them while
+    this function's only input was the repository.
+    """
+    if files is None:
+        files = [path.read_text().splitlines() for path in workflows()]
+    lines: list[str] = []
+    for one in files:
+        lines.extend(one)
+        # A sentinel between files, so a `- run:` at the end of one and a
+        # `working-directory:` at the start of the next cannot be read as one
+        # step. Nothing else in this parser looks across a line boundary, and
+        # no workflow here ends that way today — this is the case that would
+        # be silently wrong the first time one does.
+        lines.append("")
     steps: list[tuple[str, str]] = []
     blocks: list[str] = []
     for at, line in enumerate(lines):
@@ -234,10 +294,64 @@ def script_checks() -> set[tuple[str, str]]:
     return found
 
 
+#: Two files, to exercise the joining that one file cannot.
+#:
+#: The first ends on a `- run:` and the second opens with a
+#: `working-directory:`, which is the arrangement the sentinel exists for and
+#: the one no real workflow has today. Written after a mutation deleting the
+#: sentinel survived every other case here: a defence against a shape the tree
+#: does not yet contain is untested by construction unless something supplies
+#: the shape.
+#: The second file's *first* line is the `working-directory:`, which is the
+#: only arrangement that reaches the bug. A first draft put `jobs:` above it
+#: and the sentinel mutation survived anyway — the fixture was a picture of
+#: the shape rather than the shape, and the picture proves nothing.
+TWO_FILES = [
+    ["jobs:", "  a:", "    steps:", "      - run: first-command"],
+    ["      working-directory: clients/go", "jobs:", "  b:", "    steps:"],
+]
+
+
+def joining() -> list[str]:
+    """Complaints about how `workflow_steps` stitches several files together."""
+    said: list[str] = []
+
+    steps, _ = workflow_steps(TWO_FILES)
+    if ("clients/go", "first-command") in steps:
+        said.append(
+            "a `- run:` at the end of one workflow took the `working-directory:` "
+            "at the start of the next; the sentinel between files is gone"
+        )
+    if (".", "first-command") not in steps:
+        said.append(f"the two-file fixture parsed to {steps}, which has lost the step")
+
+    # And that a second file is read at all, which is the whole widening.
+    one, _ = workflow_steps(TWO_FILES[:1])
+    both, _ = workflow_steps(TWO_FILES + [["      - run: second-command"]])
+    if len(both) <= len(one):
+        said.append("a second workflow's steps are not read; the glob or the loop is gone")
+
+    return said
+
+
 def main() -> int:
     steps, blocks = workflow_steps()
-    assert len(steps) > 40, f"the parser found {len(steps)} steps; it is not parsing"
-    assert len(blocks) >= 3, f"the parser found {len(blocks)} named blocks"
+
+    # The never-fires guards, reported rather than asserted. They were three
+    # bare `assert`s, and a mutation narrowing the glob back to `ci.yml` scored
+    # as **NOTHING RAN** rather than as caught: an `AssertionError` kills the
+    # run before the `N passed, M failed` line `scripts/mutate.py` reads, so a
+    # guard that correctly refused looked exactly like a suite that never
+    # started. That is the second of `mutate.py`'s six lies, met inside a file
+    # whose whole job is to stop a check going quiet.
+    found = workflows()
+    blind = []
+    if len(found) < 2:
+        blind.append(f"found {len(found)} workflow file(s); the glob is not matching")
+    if len(steps) <= 40:
+        blind.append(f"the parser found {len(steps)} steps; it is not parsing")
+    if len(blocks) < 3:
+        blind.append(f"the parser found {len(blocks)} named blocks; it is not parsing")
 
     covered = script_checks()
     # The script runs some checks CI does not — `gofmt -l`, two `tsc --noEmit`
@@ -266,7 +380,7 @@ def main() -> int:
     # way.
     checks: list[tuple[str, list[str]]] = [
         (
-            "every ci.yml step is in check.sh or in ELSEWHERE",
+            "every workflow step is in check.sh or in ELSEWHERE",
             [f"not in check.sh and not in ELSEWHERE: (in {d}) {c}" for d, c in missing],
         ),
         (
@@ -278,9 +392,17 @@ def main() -> int:
             env_complaints,
         ),
         (
-            "no ELSEWHERE entry names a step ci.yml has dropped",
-            [f"ELSEWHERE names a step ci.yml no longer has: {c}" for c in stale_elsewhere]
-            + [f"ELSEWHERE_BLOCKS names a block ci.yml no longer has: {n}" for n in stale_blocks],
+            "the parser still sees the workflows",
+            blind,
+        ),
+        (
+            "several workflows are stitched together without bleeding into each other",
+            joining(),
+        ),
+        (
+            "no ELSEWHERE entry names a step the workflows have dropped",
+            [f"ELSEWHERE names a step no workflow has: {c}" for c in stale_elsewhere]
+            + [f"ELSEWHERE_BLOCKS names a block no workflow has: {n}" for n in stale_blocks],
         ),
     ]
 
