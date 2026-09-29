@@ -11254,8 +11254,9 @@
     {
       "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
       "key": "Nothing stops the fourth client arriving without this test.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/check_renamed_column.py, run by check.sh and ci.yml's guards job: the client roster is read off clients/, so a fourth arriving without a renamed-column test is refused by name",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-python-client-had-no-renamed-column-to-declare.md",
@@ -11598,6 +11599,39 @@
       "verdict": "moment",
       "by": "3 of 51 is today's tree, stated as a measurement at a date. Nothing keeps the docstring's number honest as entries are added, which is the staleness this repository's guards exist for -- recorded as a passing observation rather than a gap, because the finding is the ratio and not the integers.",
       "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "It checks that a test exists and what it declares, never tha",
+      "verdict": "deliberate",
+      "by": "this entry: a static guard over source cannot run a suite. The three client suites run these tests; this only stops one going missing.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "`BOUNDARY` is a heuristic, not a parser.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "The three real-tree mutations were hand-run.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "The roster of test names is still weaker than a roster of do",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
+      "key": "`NEXT_TEST` in the test file is a fourth hand-maintained per",
+      "verdict": "narrowed",
+      "residual": "a fourth client with a PROVES entry and no NEXT_TEST line raises inside the fixture, which the loop reports as exit 70 rather than silently generating no case -- so it is caught loudly, by a message naming an exception rather than the missing line",
+      "checked": "2026-09-29",
+      "by": "scripts/test_check_renamed_column.py generates one case per client from PROVES and reports a fixture that raises as exit 70, so a fourth client with no NEXT_TEST line is a loud failure rather than a silently absent case"
     }
   ]
 }

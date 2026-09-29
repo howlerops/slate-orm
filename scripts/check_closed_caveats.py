@@ -419,6 +419,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_check_transport_door.py",
  ),
 
+ # --- a rename test for the fourth client, 2026-09-29 -------------------------
+ # The needle is the *fixture* case, not the guard's own report: the guard
+ # would keep printing three clients with its rule gutted, and did — the first
+ # draft searched the whole file and stayed green with the real declaration cut
+ # out of the real test.
+ "renamed-column-roster": (
+     "a fourth client with no test fails and names it",
+     "scripts/test_check_renamed_column.py",
+ ),
+
  # --- a convention inferred from one entry, 2026-09-29 -----------------------
  # The needle is the corrected count, in the docstring of the rule the wrong
  # reason was attached to: what closed the caveat is the measurement, and the
@@ -796,6 +806,8 @@ WITNESSED: dict[tuple[str, str], str] = {
      'Nothing checks that a new client transport keeps this door.'): 'transport-door',
     ('2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md',
      'Nothing still checks that a fourth client arrives with a tra'): 'transport-door',
+    ('2026-09-29-the-python-client-had-no-renamed-column-to-declare.md',
+     'Nothing stops the fourth client arriving without this test.'): 'renamed-column-roster',
     # One test closes two readings: that the permit is released before a row
     # is read, and that open streams are therefore bounded by nothing.
     ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',

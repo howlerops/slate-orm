@@ -391,6 +391,14 @@ jobs:
       # every request with no schema claim on it.
       - run: python3 scripts/check_generated_is_used.py
       - run: python3 scripts/test_check_generated_is_used.py
+      # A client accepts a renamed column's previous name by doing
+      # nothing at all — the server enumerates every spelling the catalog
+      # accepts — so the property is lost the moment a client gets in the
+      # way, with no test to say so. Two entries recorded Go and
+      # TypeScript as lacking it before anybody ran it. The roster is read
+      # off `clients/`, so a fourth arriving without the test is seen.
+      - run: python3 scripts/check_renamed_column.py
+      - run: python3 scripts/test_check_renamed_column.py
 
   quickstarts:
     name: the landing page's code
