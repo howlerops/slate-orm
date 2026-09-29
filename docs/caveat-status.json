@@ -11643,8 +11643,9 @@
     {
       "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
       "key": "Nothing makes the real-tree mutations run again.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/mutations.json and scripts/run_mutations.py: seventeen suites, one command, 17 clean; scripts/check_mutations_roster.py keeps the roster complete and runs in check.sh",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
@@ -11673,8 +11674,9 @@
     {
       "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
       "key": "Nothing re-runs any of them.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/mutations.json and scripts/run_mutations.py: seventeen suites, one command, 17 clean; scripts/check_mutations_roster.py keeps the roster complete and runs in check.sh",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md",
@@ -11706,8 +11708,9 @@
     {
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
       "key": "Nothing re-runs any real-tree mutation, and this entry adds ",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/mutations.json and scripts/run_mutations.py: seventeen suites, one command, 17 clean; scripts/check_mutations_roster.py keeps the roster complete and runs in check.sh",
+      "reviewed": "2026-09-29"
     },
     {
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
@@ -11732,8 +11735,10 @@
     {
       "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
       "key": "Eleven guards still have no real-tree mutation.",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "checked": "2026-09-29",
+      "by": "scripts/mutations.json's `unmutated` names all eleven with a sentence each, and scripts/check_mutations_roster.py refuses a guard in neither list -- so the eleven are a checked list rather than a number in prose",
+      "residual": "they still have no mutation, and seven of the eleven reasons are scheduling rather than a technical obstacle"
     },
     {
       "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
@@ -11753,6 +11758,31 @@
       "verdict": "narrowed",
       "by": "both guards' fixture tests cover the other sites over a tree they build; what the single real-tree mutation establishes is that the guard is pointed at the real file at all, which was the whole finding for check_toolchain_pins",
       "residual": "thirteen of check_handlers' fourteen call sites have never been broken in the real tree, so a guard that saw one and not the others would pass",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "Eleven guards still have no mutation; the roster records tha",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "Nothing runs `run_mutations.py` on a schedule.",
+      "verdict": "open",
+      "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "A suite's `why` is unchecked prose.",
+      "verdict": "deliberate",
+      "by": "this entry: whether a mutation breaks the property a guard exists for, rather than something incidental, is a judgement no rule over the text can make. Two mutations were rejected during the survey for exactly that and both were caught by reading.",
+      "reviewed": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-29-the-mutations-run-again-now.md",
+      "key": "The eleven reasons will rot.",
+      "verdict": "open",
       "checked": "2026-09-29"
     }
   ]

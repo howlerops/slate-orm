@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T08:45:47+00:00",
+  "file": "clients/typescript/proto/slate/v1/records.proto",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_proto_copies.py"
+  ],
+  "commit": "6f7f439",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the TypeScript proto copy drifts from the canonical one",
+      "old": "// The head node's wire surface over the record layer.",
+      "new": "// The head node's wire surface over the record layer (copy).",
+      "verdict": "caught",
+      "caught_by": [
+        "check_proto_copies: FAIL  clients/typescript/proto/slate/v1/records.proto differs from crates/slate-server/proto/slate/v1/records.proto; run `cp crates/slate-server/proto/slate/v1/records.proto clients/typescript/proto/slate/v1/records.proto`"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

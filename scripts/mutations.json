@@ -1,0 +1,222 @@
+{
+  "note": "Real-tree mutations: a change to a file a guard watches, which that guard must refuse. Run them with `python3 scripts/run_mutations.py`; `scripts/check_mutations_roster.py` checks this file names every guard, and runs in check.sh. See ledger/2026-09-29-the-dialect-mutate-py-was-missing.md for why a guard's fixture tests are not this, and ledger/2026-09-29-a-guard-whose-roster-was-itself.md for what the first two batches found.",
+  "suites": [
+    {
+      "guard": "check_renamed_column",
+      "file": "clients/python/tests/test_fixture.py",
+      "why": "The declaration is looked for in the renamed-column test's body. Its first draft searched the whole file and stayed green with this line cut, because a second test declares the same old spelling.",
+      "cases": [
+        {
+          "name": "the Python test declares the current spelling instead of the previous one",
+          "old": "Column(\"comment\", ValueType.STR),  # `note`, before it was renamed",
+          "new": "Column(\"note\", ValueType.STR),  # `note`, before it was renamed"
+        }
+      ]
+    },
+    {
+      "guard": "check_cited_files",
+      "file": "docs/correctness.md",
+      "why": "The class no guard covered until this one: a document naming a file that has been renamed away.",
+      "cases": [
+        {
+          "name": "a docs page names a test file that has been renamed away",
+          "old": "`crates/slate-kernel/tests/oracle.rs`",
+          "new": "`crates/slate-kernel/tests/oracles.rs`"
+        }
+      ]
+    },
+    {
+      "guard": "check_toolchain_pins",
+      "file": "clients/go/scripts/generate_proto.py",
+      "why": "The only file in the repository that installs pinned Go tools, and the guard had never seen it: its roster was its own docstring and its own test.",
+      "cases": [
+        {
+          "name": "the generator stops setting GOTOOLCHAIN and inherits the action default",
+          "old": "    env = {**os.environ, \"GOFLAGS\": \"-mod=mod\", \"GOTOOLCHAIN\": \"auto\"}",
+          "new": "    env = {**os.environ, \"GOFLAGS\": \"-mod=mod\"}"
+        }
+      ]
+    },
+    {
+      "guard": "check_cost_prose",
+      "file": "docs/performance.md",
+      "why": "A literal restatement of a constant, which a NOT_A_CLAIM marker on the paragraph had silently taken out of the guard's reach.",
+      "cases": [
+        {
+          "name": "a docs page restates a cost constant with the wrong value",
+          "old": "1.02 requests per row, against `POINT_READ_COST = 1.0`.",
+          "new": "1.02 requests per row, against `POINT_READ_COST = 3.0`."
+        }
+      ]
+    },
+    {
+      "guard": "check_guard_scope",
+      "file": "scripts/check_cost_prose.py",
+      "why": "A scope claim that understates reads as exhaustive, and the rule checked only the other direction.",
+      "cases": [
+        {
+          "name": "a guard scope claim understates the trees it reads",
+          "old": "**It reads `crates/`, `docs/` and `site/`**, plus the Markdown named in",
+          "new": "**It reads `crates/` and `docs/`**, plus the Markdown named in"
+        }
+      ]
+    },
+    {
+      "guard": "check_handlers",
+      "file": "crates/slate-server/src/service.rs",
+      "why": "The resolve-then-convert pattern: a converter taking a request and a catalog with no SecurityContext must have an authorisation above it.",
+      "cases": [
+        {
+          "name": "a handler converts a join request with no authorisation above it",
+          "old": "        self.authorize_join_inputs(&context, &wire, Action::Read)?;\n        let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;",
+          "new": "        let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;"
+        }
+      ]
+    },
+    {
+      "guard": "check_write_paths",
+      "file": "crates/slate-kernel/src/record.rs",
+      "why": "Every write path must be in the disclosure probe's roster; a renamed one is a path the probe no longer covers.",
+      "cases": [
+        {
+          "name": "a rostered write path is renamed",
+          "old": "    pub async fn delete_where(",
+          "new": "    pub async fn delete_matching("
+        }
+      ]
+    },
+    {
+      "guard": "check_secret_types",
+      "file": "crates/slate-slatedb/src/s3.rs",
+      "why": "A type holding a secret must not derive Debug; the hand-written one prints the access key id and redacts the rest.",
+      "cases": [
+        {
+          "name": "a secret-holding type derives Debug",
+          "old": "struct Credentials {",
+          "new": "#[derive(Debug)]\nstruct Credentials {"
+        }
+      ]
+    },
+    {
+      "guard": "check_transport_door",
+      "file": "clients/go/slate/client.go",
+      "why": "A client with no way to pass interceptors, TLS or keepalive is one a caller cannot instrument or secure.",
+      "cases": [
+        {
+          "name": "the Go transport door stops taking dial options",
+          "old": "opts ...grpc.DialOption",
+          "new": "opts ...string"
+        }
+      ]
+    },
+    {
+      "guard": "check_wasm_runtime",
+      "file": "crates/slate-kernel/Cargo.toml",
+      "why": "A library crate in slate-wasm's closure taking an async runtime makes a decision belonging to whoever embeds it.",
+      "cases": [
+        {
+          "name": "a library in the wasm closure asks for an async runtime",
+          "old": "tokio = { version = \"1\", default-features = false, features = [\"time\"] }",
+          "new": "tokio = { version = \"1\", features = [\"rt-multi-thread\"] }"
+        }
+      ]
+    },
+    {
+      "guard": "check_workspace",
+      "file": "Cargo.toml",
+      "why": "A crate outside the workspace is one `cargo test --workspace` does not reach; three things rotted in the testserver while it was detached.",
+      "cases": [
+        {
+          "name": "a crate leaves the workspace members list",
+          "old": "    \"crates/slate-sql\",\n",
+          "new": ""
+        }
+      ]
+    },
+    {
+      "guard": "check_none_last",
+      "file": "scripts/test_mutate.py",
+      "why": "CI's ruff is newer than this container's and RUF036 turned the scripts job red twice on one annotation.",
+      "cases": [
+        {
+          "name": "None comes first in a union",
+          "old": "        expect_after: str | None,",
+          "new": "        expect_after: None | str,"
+        }
+      ]
+    },
+    {
+      "guard": "check_retired_claims",
+      "file": "README.md",
+      "why": "A correction that reached one copy of a claim and left the others is what this list exists for.",
+      "cases": [
+        {
+          "name": "a retired phrase is restated in the README",
+          "old": "[![CI](https://github.com/howlerops/slate-orm/actions/workflows/ci.yml/badge.svg)](https://github.com/howlerops/slate-orm/actions/workflows/ci.yml)",
+          "new": "a guard whose only witness is a suite you cannot run"
+        }
+      ]
+    },
+    {
+      "guard": "check_proto_copies",
+      "file": "clients/typescript/proto/slate/v1/records.proto",
+      "why": "A field number reused only in the copy is a wire break no compiler sees.",
+      "cases": [
+        {
+          "name": "the TypeScript proto copy drifts from the canonical one",
+          "old": "// The head node's wire surface over the record layer.",
+          "new": "// The head node's wire surface over the record layer (copy)."
+        }
+      ]
+    },
+    {
+      "guard": "check_cited_docs",
+      "file": "crates/slate-server/tests/multi.rs",
+      "why": "A source file pointing at a docs page that is not there points a reader at nothing.",
+      "cases": [
+        {
+          "name": "a source file cites a docs page that is not there",
+          "old": "`docs/correctness.md` records four thresholds",
+          "new": "`docs/correctness-notes.md` records four thresholds"
+        }
+      ]
+    },
+    {
+      "guard": "check_client_identity",
+      "file": "clients/go/slate/client.go",
+      "why": "No client's Identity grows a slot for a credential unnoticed.",
+      "cases": [
+        {
+          "name": "a Go Identity grows an unrostered credential slot",
+          "old": "\tPrincipal string",
+          "new": "\tSecretKey string"
+        }
+      ]
+    },
+    {
+      "guard": "check_cited_tests",
+      "file": "docs/correctness.md",
+      "why": "docs/security-review.md spent a week naming four probes that no longer existed.",
+      "cases": [
+        {
+          "name": "a docs page cites a test name that is not defined",
+          "old": "`skipping_and_decoding_can_be_mixed`",
+          "new": "`skipping_and_decoding_can_be_blended`"
+        }
+      ]
+    }
+  ],
+  "unmutated": {
+    "check_build_output": "Its subject is the absence of a thing: no build output is tracked, and every package root ignores its own. A mutation would have to *add* a tracked artifact, which `scripts/mutate.py` cannot express -- its patches replace text in one file, and this needs a new file plus a .gitignore edit. Its fixture tests cover the rules over a tree they build.",
+    "check_build_stamp": "Deferred. The stamp is generated at build time from the Cargo manifests, so the honest mutation is to a manifest and the guard's answer depends on a rebuild -- which does not fit on this container's disk beside a mutation run. See the disk note in CLAUDE.md.",
+    "check_caveat_citations": "Deferred. Its input is docs/caveat-status.json, which every entry in this session edits; a mutation run against it races any concurrent triage and the restore would fight it.",
+    "check_closed_caveats": "Deferred. Its witnesses are needles in test files, so the mutation is a rename in a file another guard's suite already mutates -- and two suites mutating one file cannot run at once safely.",
+    "check_demo_surface": "Deferred. Its roster is the demo's adapter endpoints against the UI that calls them, and the UI is TypeScript the guard reads as text; a mutation is cheap but the surface moved twice this month and the anchor would rot faster than the suite is worth.",
+    "check_examples_roster": "Deferred. Its subject is scripts/run_examples.sh's floors and handshake roster, which are also what scripts/test_check_examples_roster.py builds fixtures for; picking an anchor that is not also in that fixture needs a read this session did not do.",
+    "check_generated_is_used": "Deferred. The mutation is removing an import of a generated file, which breaks the build for whichever client holds it -- harmless while the file is restored, but it leaves a broken tree for the length of the run and this session did not want that beside other work.",
+    "check_mutation_claims": "Deferred. Its input is ledger entries' mutation counts, and a mutation to one would be a deliberate falsehood written into the ledger for the length of a run. It has been exercised for real twice this session, refusing a count this session got wrong.",
+    "check_site_claims": "Deferred. It reads four trees and its claims are counts derived from them, so a one-line anchor that is a real claim rather than incidental prose needs a read this session did not do.",
+    "check_site_css": "Deferred. The mutation is removing a class use from a demo source, which is cheap; not done for time.",
+    "check_table_provenance": "Deferred. Its subject is a build line under a measurement table in docs/, and this session could not find one to anchor on without reading the whole of docs/performance.md."
+  }
+}

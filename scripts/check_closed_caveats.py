@@ -438,6 +438,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/test_mutate_guard.py",
  ),
 
+ # --- the mutations run again, 2026-09-29 -------------------------------------
+ # The needle is the completeness rule's headline case, not the runner: a
+ # run_mutations.py with an empty roster would run cleanly and prove nothing,
+ # which is the shape three of these caveats were about.
+ "mutations-roster": (
+     "a guard with neither fails — the headline case",
+     "scripts/test_check_mutations_roster.py",
+ ),
+
  # --- a convention inferred from one entry, 2026-09-29 -----------------------
  # The needle is the corrected count, in the docstring of the rule the wrong
  # reason was attached to: what closed the caveat is the measurement, and the
@@ -819,6 +828,12 @@ WITNESSED: dict[tuple[str, str], str] = {
      'Nothing stops the fourth client arriving without this test.'): 'renamed-column-roster',
     ('2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md',
      'The three real-tree mutations were hand-run.'): 'guard-dialect',
+    ('2026-09-29-the-dialect-mutate-py-was-missing.md',
+     'Nothing makes the real-tree mutations run again.'): 'mutations-roster',
+    ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
+     'Nothing re-runs any of them.'): 'mutations-roster',
+    ('2026-09-29-a-guard-whose-roster-was-itself.md',
+     'Nothing re-runs any real-tree mutation, and this entry adds '): 'mutations-roster',
     # One test closes two readings: that the permit is released before a row
     # is read, and that open streams are therefore bounded by nothing.
     ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',

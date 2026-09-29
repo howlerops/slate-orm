@@ -412,6 +412,15 @@ jobs:
       # count. mutate_guard.py is that missing dialect, and refuses to call
       # a guard that died a guard that refused.
       - run: python3 scripts/test_mutate_guard.py
+      # Three guards were green for reasons unrelated to what they check,
+      # and every one was found by mutating the real tree rather than a
+      # fixture. scripts/mutations.json holds one mutation per guard, or a
+      # sentence saying why there is none; this checks the roster is
+      # complete and its anchors still occur exactly once. Running the
+      # mutations is scripts/run_mutations.py, which breaks the tree and is
+      # deliberately not here.
+      - run: python3 scripts/check_mutations_roster.py
+      - run: python3 scripts/test_check_mutations_roster.py
 
   quickstarts:
     name: the landing page's code
