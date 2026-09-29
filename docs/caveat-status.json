@@ -11640,8 +11640,9 @@
     {
       "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
       "key": "It is a runner, not a dialect, so `mutate.py --help` does no",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "reviewed": "2026-09-29",
+      "by": "`python3 scripts/mutate.py --help` prints an Adapters section listing every adapter beside it \u2014 scripts/mutate_guard.py today \u2014 globbed from the directory rather than written down, and scripts/test_mutate.py's case_help_lists_every_adapter holds the help and the directory to each other in both directions. ledger/2026-09-29-the-tool-now-prints-its-own-adapters.md"
     },
     {
       "entry": "2026-09-29-the-dialect-mutate-py-was-missing.md",
@@ -11944,6 +11945,41 @@
       "verdict": "deliberate",
       "reviewed": "2026-09-29",
       "by": "this entry: release-build.yml cross-compiles and pages.yml deploys, neither of which this container can do. A reason says what a step is for, which is what a reader deciding whether to extend check.sh needs; it has never claimed the step works."
+    },
+    {
+      "entry": "2026-09-29-the-tool-now-prints-its-own-adapters.md",
+      "key": "One adapter exists, so the list has one row.",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: a generated one-row list and a hand-written one-row list print the same thing today, and the difference shows on the second adapter. The argument for generating it is the dialect list's own history \u2014 hand-written, stale twice, and it cost a session a throwaway harness. Stated as an argument rather than a measurement."
+    },
+    {
+      "entry": "2026-09-29-the-tool-now-prints-its-own-adapters.md",
+      "key": "The docstring's first line is whatever the adapter's author ",
+      "verdict": "deliberate",
+      "reviewed": "2026-09-29",
+      "by": "this entry: a rule for a shape with one participant is a rule fitted to one example, which this repository has just been burned by twice. mutate_guard.py's first line fits; the next adapter's author can see the column width in the output."
+    },
+    {
+      "entry": "2026-09-29-the-tool-now-prints-its-own-adapters.md",
+      "key": "`--help` still does not say which dialect an adapter targets",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. mutate_guard.py reports in the `python` dialect and a reader has to open it to learn that; printing the pairing needs a declared attribute per adapter."
+    },
+    {
+      "entry": "2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md",
+      "key": "It does not stop the next filtered summary.",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. The remedy is to read check.sh's last line or its exit code, which is a habit and not a check; a hook refusing a commit whose session never ran check.sh to completion is the mechanical version and is not built."
+    },
+    {
+      "entry": "2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md",
+      "key": "Nothing checks the job count, and this is the second time it",
+      "verdict": "open",
+      "checked": "2026-09-29",
+      "by": "nothing yet. CLAUDE.md prints the one-line re.findall that answers it, so a guard is cheap; deciding which of CLAUDE.md's numbers should be checked is the part that is not, and this entry fixed one sentence rather than building the rule."
     }
   ]
 }

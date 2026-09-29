@@ -576,6 +576,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "every-workflow-roster": (
      'sorted(directory.glob("*.yaml"))',
      "scripts/test_check_sh.py",
+ ),
+
+ # `--help` prints the adapters, from 2026-09-29. The needle is the test that
+ # holds the help and the directory to each other, not the glob in `mutate.py`:
+ # a revert that kept the glob and dropped the section would leave the guard
+ # quiet, and the test is what fails in both of those directions.
+ "help-lists-adapters": (
+     "case_help_lists_every_adapter",
+     "scripts/test_mutate.py",
  ),}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -2112,7 +2121,9 @@ WITNESSED: dict[tuple[str, str], str] = {
      'It does not re-read the rest of the open caveats.'):
         '=read',    ('2026-09-29-a-weekly-run-and-a-button.md',
      "Nothing checks this workflow's steps the way `test_check_sh."):
-        'every-workflow-roster',
+        'every-workflow-roster',    ('2026-09-29-the-dialect-mutate-py-was-missing.md',
+     'It is a runner, not a dialect, so `mutate.py --help` does no'):
+        'help-lists-adapters',
 }
 
 

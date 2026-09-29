@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-29T13:55:42+00:00",
+  "file": "scripts/mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate.py"
+  ],
+  "commit": "0eeb0a3",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the adapter glob stops matching, so the list goes empty and the section is skipped",
+      "old": "for path in sorted(here.parent.glob(\"mutate_*.py\")):",
+      "new": "for path in sorted(here.parent.glob(\"mutates_*.py\")):",
+      "verdict": "caught",
+      "caught_by": [
+        "--help lists exactly the adapters beside it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the adapter list gains a name no file backs",
+      "old": "        found.append((path.name, first))",
+      "new": "        found.append((path.name, first))\n    found.append((\"mutate_imaginary.py\", \"nothing\"))",
+      "verdict": "caught",
+      "caught_by": [
+        "--help lists exactly the adapters beside it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

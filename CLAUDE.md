@@ -90,7 +90,7 @@ part of the change.
 ## What runs, and where
 
 `main` is the trunk. `.github/workflows/ci.yml` runs on **every push, to every
-branch** — twenty-one jobs covering formatting, the Rust workspace, the Go,
+branch** — twenty-two jobs covering formatting, the Rust workspace, the Go,
 Python and TypeScript clients, the demo frontend, the pre-commit hook's own
 tests, a workspace-layout guard, the repository's *other* Python (every
 harness, script and site check outside `clients/python`), the landing page's
@@ -215,7 +215,7 @@ that is set and missing is a hard error, never a silent fall back to building.
   which would have meant the site never deployed at all. Both are written up in
   the workflow files. Prefer running something cheap unconditionally.
 - **Read the run's conclusion; do not wait to be told.** A push starts
-  twenty-one jobs and nothing in this container reports how they ended. A
+  twenty-two jobs and nothing in this container reports how they ended. A
   session once set a watch that matched on the Pages string and expired after
   thirty minutes, and three red runs went by unnoticed —
   `ledger/2026-09-14-ci-clippy-is-newer-than-mine.md` recorded that the honest

@@ -45,6 +45,7 @@ Run directly: `python3 scripts/test_run_teardown.py`.
 
 from __future__ import annotations
 
+import collections
 import os
 import signal
 import subprocess
@@ -62,6 +63,11 @@ READY = "adapters are up"
 #: TypeScript client and a Go binary on a cold cache, and a timeout here is a
 #: slow machine rather than a defect.
 START_LIMIT = 600.0
+
+#: How many of the runner's last lines to print when it fails to start.
+#: Twenty is enough for the head node's log, which `run.sh` dumps inline when
+#: the node will not bind.
+TAIL = 20
 
 #: How long to wait after SIGTERM. `run.sh`'s own grace period is ten 0.2s
 #: polls before it escalates to KILL, so anything past a few seconds is the
@@ -129,10 +135,19 @@ def main() -> int:
     try:
         deadline = time.monotonic() + START_LIMIT
         ready = False
+        # The runner's last lines, kept for the failure message. Without them
+        # the only output on a failed start is "it exited 1", and the four
+        # things that actually go wrong here — a port still held by a previous
+        # run, a missing toolchain, a build that ran out of disk, a service
+        # that died on startup — are indistinguishable from each other and
+        # from a slow machine. Three runs were spent re-running `run.sh` by
+        # hand to read a message this loop had already consumed.
+        said: collections.deque[str] = collections.deque(maxlen=TAIL)
         while time.monotonic() < deadline:
             line = started.stdout.readline()
             if not line:
                 break
+            said.append(line.rstrip())
             if READY in line:
                 ready = True
                 break
@@ -143,6 +158,8 @@ def main() -> int:
                 else f"the runner never printed {READY!r} within {START_LIMIT}s",
                 file=sys.stderr,
             )
+            for one in said:
+                print(f"      {one}", file=sys.stderr)
             return 1
 
         # Recorded while the tree is intact. See the docstring: a survivor is

@@ -327,7 +327,7 @@ def joining() -> list[str]:
 
     # And that a second file is read at all, which is the whole widening.
     one, _ = workflow_steps(TWO_FILES[:1])
-    both, _ = workflow_steps(TWO_FILES + [["      - run: second-command"]])
+    both, _ = workflow_steps([*TWO_FILES, ["      - run: second-command"]])
     if len(both) <= len(one):
         said.append("a second workflow's steps are not read; the glob or the loop is gone")
 

@@ -592,6 +592,36 @@ else:
 '''
 
 
+def case_help_lists_every_adapter() -> bool:
+    """`--help` names every `scripts/mutate_*.py` beside it, and nothing else.
+
+    Same rule as the dialect list below and for the same reason, one level out.
+    `mutate_guard.py` existed, worked, and appeared in nothing this script
+    printed — recorded in
+    `ledger/2026-09-29-the-dialect-mutate-py-was-missing.md` as the staleness
+    `mutate.py`'s docstring argues against, in the one place it could not fix
+    itself.
+
+    Both directions again. A help text naming an adapter that is not there
+    sends the reader to a file that does not exist, which is the same failure
+    walking the other way.
+    """
+    name = "--help lists exactly the adapters beside it"
+    spelled = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "mutate.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    listed = set(re.findall(r"^    (mutate_\w+\.py)\b", spelled, re.M))
+    beside = {path.name for path in (ROOT / "scripts").glob("mutate_*.py")}
+    ok = bool(beside) and listed == beside
+    print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+    if not ok:
+        print(f"        help lists {sorted(listed)}, scripts/ holds {sorted(beside)}")
+    return ok
+
+
 def case_help_lists_every_dialect() -> bool:
     """`--help` names every dialect the table holds, and nothing it does not.
 
@@ -1149,6 +1179,7 @@ def main() -> int:
         case_fresh_bytecode(),
         *case_recovers_from_a_kill(),
         case_help_lists_every_dialect(),
+        case_help_lists_every_adapter(),
         *case_no_dialect_reads_a_clean_run_as_a_failure(),
         *case_every_dialect_reads_its_own_runner(),
         case_every_dialect_has_a_sample(),

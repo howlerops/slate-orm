@@ -106,6 +106,11 @@ hypothetical: a session read this docstring, concluded `node` was unsupported,
 and wrote a throwaway harness reimplementing the four protections above against
 a dialect that had been here for weeks. A list of what a tool supports is the
 one thing a tool should never be asked to keep in sync by hand.
+
+`--help` lists the **adapters** the same way, and for the same reason one level
+out: a `scripts/mutate_*.py` is a program that makes something readable by one
+of those dialects, and `mutate_guard.py` spent a day existing, working, and
+appearing in nothing this script printed.
 """
 
 from __future__ import annotations
@@ -748,6 +753,30 @@ def scored(
     return 1 if problems else 0
 
 
+def adapters() -> list[tuple[str, str]]:
+    """`scripts/mutate_*.py` beside this one, each with its docstring's first line.
+
+    Derived rather than written down, for the reason the dialect list above is
+    derived: `ledger/2026-09-29-the-dialect-mutate-py-was-missing.md` recorded
+    that `mutate_guard.py` existed, worked, and appeared in no output this
+    script prints — so a session looking for "can I mutate against a guard"
+    found the answer in an entry and not in `--help`. That is the staleness
+    this file's own docstring argues against, in the one place it could not
+    fix itself. A hand-written list would have gone stale on the second
+    adapter; a glob cannot.
+    """
+    here = Path(__file__).resolve()
+    found: list[tuple[str, str]] = []
+    for path in sorted(here.parent.glob("mutate_*.py")):
+        first = ""
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith('"""'):
+                first = line.removeprefix('"""').strip()
+                break
+        found.append((path.name, first))
+    return found
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] in {"-h", "--help"}:
         print(__doc__)
@@ -755,6 +784,15 @@ def main(argv: list[str]) -> int:
         for name, (_, reported) in sorted(DIALECTS.items()):
             print(f"    {name:<12} {reported.pattern}")
         print()
+        found = adapters()
+        if found:
+            print(
+                "Adapters — programs beside this one that make something "
+                "readable by a dialect\nabove. Pass one as the `command`:\n"
+            )
+            for name, says in found:
+                print(f"    {name:<24} {says}")
+            print()
         return 0
     text = sys.stdin.read()
     if not text.strip():
