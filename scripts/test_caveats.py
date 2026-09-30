@@ -332,12 +332,36 @@ def main() -> int:
         0,
     )
 
-    # `checked` is a claim about the tree and `--unread` reads it, so a settled
-    # verdict wearing one is a stamp nothing will ever look at again pretending
-    # to be one that will. The reverse sweep put `checked` on 316 `deliberate`
-    # rows before this told it not to.
+    # `checked` means read against the tree, and a `closed` caveat has no claim
+    # about the current tree left to read: it is answered. `reviewed` is the
+    # stamp for re-reading a settled verdict's reasoning.
     case(
-        "a settled verdict carrying `checked` rather than `reviewed` is refused",
+        "a closed verdict carrying `checked` rather than `reviewed` is refused",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "the entry argues it",
+                        "checked": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"closed": 1},
+        1,
+    )
+
+    # And the one that changed on 2026-09-30. `deliberate` was in that list
+    # until five sampling passes had read 246 of them against the tree with
+    # nowhere to say so; the reasoning was that nothing read the stamp, and
+    # the fix was to make `--unchecked` read it. See
+    # `ledger/2026-09-30-a-sample-that-pools-with-the-next-one.md`.
+    case(
+        "a deliberate verdict carrying `checked` is accepted: somebody read it",
         {
             "ledger/a.md": ENTRY,
             "docs/caveat-status.json": status(
@@ -347,13 +371,13 @@ def main() -> int:
                         "key": "It does not do the first thing.",
                         "verdict": "deliberate",
                         "by": "the entry argues it",
-                        "checked": "2026-09-26",
+                        "checked": "2026-09-30",
                     }
                 ]
             ),
         },
         {"deliberate": 1},
-        1,
+        0,
     )
 
     # The third side, and the one that was written in the docstring and
@@ -927,6 +951,73 @@ def main() -> int:
         30,
         1,
     )
+    # --- `--unchecked`, the same worklist over the other bucket -----------
+    #
+    # `--unread` is 146 rows known to be undone; this is 1038 rows asserted to
+    # be fine, of which five sampling passes found seven not fine. Its whole
+    # value is that a read leaves a mark, so the next pass draws from what is
+    # left rather than re-drawing blind — which is what the four passes before
+    # 2026-09-30 had to do. Getting that wrong in either direction costs the
+    # same as it does above.
+    def unchecked_case(
+        name: str, verdicts: list[dict[str, str]], days: int | None, want: int
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree(root, {"ledger/a.md": ENTRY, "docs/caveat-status.json": status(verdicts)})
+            got = guard.unchecked(days, root, today="2026-09-30")
+            if len(got) != want:
+                print(f"FAIL  {name}: wanted {want} listed, got {len(got)}: {got}")
+                RESULTS.append(False)
+            else:
+                print(f"ok    {name}")
+                RESULTS.append(True)
+
+    both_deliberate = [
+        {"entry": "a.md", "key": "It does not do the first thing.",
+         "verdict": "deliberate", "by": "a reason"},
+        {"entry": "a.md", "key": "It does not do the second thing.",
+         "verdict": "deliberate", "by": "another reason"},
+    ]
+    unchecked_case("a deliberate caveat nobody has read is listed", both_deliberate, None, 2)
+    unchecked_case(
+        "one read against the tree drops off, which is what makes passes pool",
+        [dict(both_deliberate[0], checked="2026-09-30"), both_deliberate[1]],
+        None,
+        1,
+    )
+    # The distinction the whole change rests on. `reviewed` is the reverse
+    # sweep's stamp — an entry's prose re-read — and 316 rows carry one. If
+    # that counted, the frame would start two thirds full of rows nobody has
+    # checked against anything.
+    unchecked_case(
+        "`reviewed` does not count as read: it is prose against prose",
+        [dict(both_deliberate[0], reviewed="2026-09-30"), both_deliberate[1]],
+        None,
+        2,
+    )
+    unchecked_case(
+        "no window means ever, so an old read still counts",
+        [dict(both_deliberate[0], checked="2026-01-01"), both_deliberate[1]],
+        None,
+        1,
+    )
+    unchecked_case(
+        "a window asks the other question, and lists the old read again",
+        [dict(both_deliberate[0], checked="2026-01-01"), both_deliberate[1]],
+        30,
+        2,
+    )
+    unchecked_case(
+        "the open backlog is `--unread`'s and does not show up here",
+        [
+            {"entry": "a.md", "key": "It does not do the first thing.", "verdict": "open"},
+            both_deliberate[1],
+        ],
+        None,
+        1,
+    )
+
     # A date nobody can read is not a date somebody checked. The alternative —
     # treating it as absent — is the same list with the error invisible, and
     # the alternative to *that* is raising, which takes the whole run down for

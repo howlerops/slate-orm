@@ -1,0 +1,64 @@
+{
+  "at": "2026-09-30T02:58:18+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "d825db8",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a reviewed stamp counts as read against the tree",
+      "old": "        stamp = entry.get(CHECKED)\n        if stamp:\n            if cutoff is None:",
+      "new": "        stamp = entry.get(CHECKED) or entry.get(REVIEWED)\n        if stamp:\n            if cutoff is None:",
+      "verdict": "caught",
+      "caught_by": [
+        "`reviewed` does not count as read: it is prose against prose: wanted 2 listed, got 1: ['a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "no window silently means thirty days",
+      "old": "    cutoff = None\n    if days is not None:",
+      "new": "    cutoff = None\n    if days is None:\n        days = 30\n    if days is not None:",
+      "verdict": "caught",
+      "caught_by": [
+        "no window means ever, so an old read still counts: wanted 1 listed, got 2: ['a.md: It does not do the first thing.', 'a.md: It does not do the second thing.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the frame is drawn over open caveats, not deliberate ones",
+      "old": "        if entry.get(\"verdict\") != \"deliberate\":\n            continue\n        stamp = entry.get(CHECKED)",
+      "new": "        if entry.get(\"verdict\") != \"open\":\n            continue\n        stamp = entry.get(CHECKED)",
+      "verdict": "caught",
+      "caught_by": [
+        "a deliberate caveat nobody has read is listed: wanted 2 listed, got 0: []",
+        "one read against the tree drops off, which is what makes passes pool: wanted 1 listed, got 0: []",
+        "`reviewed` does not count as read: it is prose against prose: wanted 2 listed, got 0: []",
+        "no window means ever, so an old read still counts: wanted 1 listed, got 0: []",
+        "a window asks the other question, and lists the old read again: wanted 2 listed, got 0: []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "deliberate goes back to refusing a checked stamp",
+      "old": "        if verdict in (\"closed\", \"moment\") and row.get(CHECKED):",
+      "new": "        if verdict in (\"closed\", \"deliberate\", \"moment\") and row.get(CHECKED):",
+      "verdict": "caught",
+      "caught_by": [
+        "a deliberate verdict carrying `checked` is accepted: somebody read it: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is deliberate and carries `checked`, which means read against the tree. A settled verdict re-read for correctness carries `reviewed`.']",
+        "the real tracker: every verdict is well formed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

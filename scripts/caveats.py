@@ -186,16 +186,23 @@ RESIDUAL = "residual"
 
 #: Two dates, because one meant two things.
 #:
-#: `checked` on an `open` or `narrowed` row says somebody read the caveat
-#: *against the tree* and believes it is still true. That is what `--unread`
-#: lists on.
+#: `checked` says somebody read the caveat *against the tree* — or against the
+#: world outside it, for the handful whose subject is there — and believes it
+#: is still true. `reviewed` is the weaker claim: the verdict's own reasoning
+#: was re-read, which is prose against prose. The 2026-09-26 reverse sweep
+#: stamped 316 `deliberate` rows that way, and
+#: `ledger/2026-09-26-the-reverse-sweep-found-six.md` recorded the difference
+#: as a caveat the same day.
 #:
-#: The 2026-09-26 reverse sweep then stamped `checked` on 316 `deliberate` rows
-#: to record that their *verdict* had been re-read — a weaker and different
-#: claim, about an entry's prose rather than about code, which
-#: `ledger/2026-09-26-the-reverse-sweep-found-six.md` wrote down as a caveat the
-#: same day. `reviewed` is that second claim, so the two cannot be mistaken for
-#: each other and `--unread` keeps meaning one thing.
+#: **`checked` was refused on a `deliberate` row until 2026-09-30**, on the
+#: grounds that `--unread` reads only `open` and `narrowed`, so the stamp would
+#: be "one nothing will ever look at again pretending to be one that will".
+#: The reasoning was sound and the conclusion was backwards: five campaigns
+#: had by then read 246 `deliberate` verdicts against the tree with no way to
+#: say so, so each new pass re-drew blind and none could be pooled with
+#: another. The fix is to make something look at it — `--unchecked` — rather
+#: than to forbid the stamp. See
+#: `ledger/2026-09-30-a-sample-that-pools-with-the-next-one.md`.
 CHECKED, REVIEWED = "checked", "reviewed"
 #: How much of a bullet keys its verdict. Long enough that two caveats in one
 #: entry do not collide, short enough that fixing a typo later in the sentence
@@ -381,11 +388,13 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
                 f"`{RESIDUAL}`. `by` says what closed; a narrowed caveat must "
                 f"also say what is left, in a field, so it can be counted."
             )
-        # A settled verdict carries `reviewed`, never `checked`: `checked` is a
-        # claim about the tree and `--unread` reads it, so a `deliberate` row
-        # wearing one is a stamp nothing will ever look at again pretending to
-        # be one that will.
-        if verdict in ("closed", "deliberate", "moment") and row.get(CHECKED):
+        # `closed` and `moment` still carry `reviewed` and never `checked`: one
+        # is answered and the other described a moment, so neither has a claim
+        # about the current tree left to re-read. `deliberate` is no longer in
+        # this list — it is a live assertion about how things are, `--unchecked`
+        # reads its `checked` date, and 246 reads had nowhere to record
+        # themselves while it was.
+        if verdict in ("closed", "moment") and row.get(CHECKED):
             problems.append(
                 f"{c['entry']}: `{key(c['claim'])}` is {verdict} and carries "
                 f"`{CHECKED}`, which means read against the tree. A settled "
@@ -528,6 +537,62 @@ def listing(verdict: str, root: Path = ROOT) -> list[str]:
     return out
 
 
+def unchecked(days: int | None, root: Path = ROOT, today: str | None = None) -> list[str]:
+    """Every `deliberate` caveat nobody has read against the tree, or not lately.
+
+    # Why this exists, and why it is not `--unread`
+
+    `--unread` is a worklist over 146 `open` and `narrowed` caveats: things
+    known to be undone, re-read so the list does not rot. This is a worklist
+    over 1038 `deliberate` ones, which is a different problem. A `deliberate`
+    verdict says a caveat describes a choice rather than a gap — and five
+    campaigns between 2026-09-28 and 2026-09-30 read 246 of them and found
+    seven false, all of them true when written and overtaken later. That is a
+    small rate over a large bucket: tens of wrong verdicts, not hundreds, and
+    no way to find them but reading.
+
+    Those five passes could not be pooled. None of the first four recorded a
+    seed or a read set, and `checked` was refused on a `deliberate` row, so a
+    read against the tree could only be stamped `reviewed` — which the
+    2026-09-26 reverse sweep had already put on 316 rows to mean something
+    weaker. Every pass therefore re-drew from the whole bucket, re-reading
+    rows at random and unable to say how much was new.
+
+    Drawing from *this* list instead makes them pool without anybody
+    recording anything: a row read today leaves the frame, the next pass draws
+    from what is left, and the union of all passes is `1038 - len(this)`.
+
+    `days` bounds how long a read stays good. Passing `None` means forever —
+    the right default for a bucket this size, where the first question is
+    "what has nobody ever read" and re-reading on a timer would mean 1038 reads
+    a period. A number is there for when the frame empties.
+    """
+    from datetime import date, timedelta
+
+    cutoff = None
+    if days is not None:
+        now = date.fromisoformat(today) if today else date.today()
+        cutoff = now - timedelta(days=days)
+    status = load(root)
+    out = []
+    for c in caveats(root):
+        entry = status.get(f"{c['entry']}::{key(c['claim'])}", {})
+        if entry.get("verdict") != "deliberate":
+            continue
+        stamp = entry.get(CHECKED)
+        if stamp:
+            if cutoff is None:
+                continue
+            try:
+                if date.fromisoformat(stamp) >= cutoff:
+                    continue
+            except ValueError:
+                out.append(f"{c['entry']}: {c['claim']}  [unreadable {CHECKED}: {stamp!r}]")
+                continue
+        out.append(f"{c['entry']}: {c['claim']}")
+    return out
+
+
 def main(root: Path = ROOT) -> int:
     argv = sys.argv[1:]
     if argv and argv[0] == "--unread":
@@ -538,6 +603,16 @@ def main(root: Path = ROOT) -> int:
         for line in lines:
             print(line)
         print(f"{len(lines)} open or narrowed and not re-read in {days} days")
+        return 0
+    if argv and argv[0] == "--unchecked":
+        # No default staleness, unlike `--unread`: see the docstring. A number
+        # asks "not read since", nothing asks "never read".
+        days = int(argv[1]) if len(argv) > 1 else None
+        lines = unchecked(days, root)
+        for line in lines:
+            print(line)
+        since = f" in {days} days" if days is not None else " against the tree, ever"
+        print(f"{len(lines)} deliberate and not read{since}")
         return 0
     if argv and argv[0] == "--residual":
         lines = residuals(root)
@@ -550,7 +625,7 @@ def main(root: Path = ROOT) -> int:
         if want not in VERDICTS:
             print(
                 f"usage: caveats.py [--{' | --'.join(VERDICTS)} "
-                "| --unread [days] | --residual]"
+                "| --unread [days] | --unchecked [days] | --residual]"
             )
             return 2
         lines = listing(want, root)
@@ -573,9 +648,16 @@ def main(root: Path = ROOT) -> int:
             "looking in the wrong place rather than that none was ever written"
         )
         return 1
+    # The `deliberate` bucket's read count, on the summary line rather than
+    # behind `--unchecked`, because five sampling passes read 246 of these and
+    # the only place the total was ever written down was a ledger entry
+    # nobody's next pass read. A number that moves on every run is a number
+    # somebody notices standing still.
+    left = len(unchecked(None, root))
     print(
         f"{total} caveats: {counts['open']} open, {counts['narrowed']} narrowed, "
-        f"{counts['closed']} closed, {counts['deliberate']} deliberate, "
+        f"{counts['closed']} closed, {counts['deliberate']} deliberate "
+        f"({counts['deliberate'] - left} read against the tree), "
         f"{counts['untriaged']} untriaged"
     )
     return 1 if problems or orphans else 0
