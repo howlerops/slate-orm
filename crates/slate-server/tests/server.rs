@@ -29,14 +29,14 @@
 mod common;
 
 use common::{app, app_in, doc, doc_ids, docs_query, drain, serving_leader, user};
+use prost::Message;
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{CmpOp, Expr};
 use slate_schema::Ordinal;
 use slate_server::convert::{Space, column_ref, expr_to_proto, row_to_proto, value_to_proto};
-use prost::Message;
 use slate_server::proto as pb;
-use slate_server::proto::rpc;
 use slate_server::proto::records_client::RecordsClient;
+use slate_server::proto::rpc;
 use slate_tuple::Value;
 use std::sync::Arc;
 use std::time::Duration;

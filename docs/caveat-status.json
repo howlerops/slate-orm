@@ -13152,6 +13152,20 @@
       "verdict": "closed",
       "reviewed": "2026-09-30",
       "by": "re-run with `env -u SLATE_SERVERD`, so run.sh built from source, and the same mutation is caught by MUST_CARRY_DETAILS - the only thing that catches it, since all three adapters correctly agree on the empty map the server sent. ledger/mutations/20260930T040901-crates-slate-server-src-status-rs.json"
+    },
+    {
+      "entry": "2026-09-30-two-imports-a-script-put-where-the-text-was.md",
+      "key": "Nothing catches the next one before CI does.",
+      "verdict": "deliberate",
+      "by": "there is no local command that runs CI's rustfmt, which is the whole content of the gap CLAUDE.md records. A guard would need the newer toolchain, and the disk note is why a second one does not fit on this container",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-two-imports-a-script-put-where-the-text-was.md",
+      "key": "It does not check the session's other scripted edits for the",
+      "verdict": "open",
+      "by": "several files were edited by script today. rustfmt covers the Rust and ruff the Python, both green - but that is two formatters agreeing rather than a reading, and the &-in-a-format-argument case CLAUDE.md records is one no formatter would catch",
+      "checked": "2026-09-30"
     }
   ]
 }

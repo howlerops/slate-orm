@@ -22,14 +22,14 @@
 mod common;
 
 use common::{app, doc, docs, serving_leader};
+use prost::Message;
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{CmpOp, Expr, Scalar};
 use slate_schema::Ordinal;
 use slate_server::convert::{Space, column_ref, expr_to_proto, scalar_to_proto};
-use prost::Message;
 use slate_server::proto as pb;
-use slate_server::proto::rpc;
 use slate_server::proto::records_client::RecordsClient;
+use slate_server::proto::rpc;
 use slate_tuple::Value;
 use std::sync::Arc;
 use std::time::Instant;
