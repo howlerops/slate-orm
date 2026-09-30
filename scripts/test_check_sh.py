@@ -54,6 +54,13 @@ ELSEWHERE = {
     "chmod +x bin/slate-testserver": "unpacking an artefact",
     "cargo install wasm-bindgen-cli --version 0.2.128 --locked": "installing a tool",
     "npx playwright install --with-deps chromium": "installing a browser",
+    # The presence half runs in `check.sh`; this is the half that fetches, and
+    # `check.sh` is the command you can run in a container with no network.
+    # See the docstring of `scripts/check_outside_premises.py` for why the two
+    # are separate rather than one check that always reaches the internet.
+    "python3 scripts/check_outside_premises.py --run": (
+        "needs the network, which `check.sh` deliberately does not"
+    ),
     "sh site/build-wasm.sh": "a build, and it needs the tool above",
     "cargo build -p slate-serverd --bin slate-serverd": "a build",
     "cargo build -p slate-testserver --bin slate-testserver": "a build",

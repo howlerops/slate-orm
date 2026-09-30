@@ -878,6 +878,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
     ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
      'The sibling claim in the same entry could not be checked.'):
         'the same closure as the Pages caveat it is about, reached from the other side: `https://howlerops.github.io/slate-orm/` answers 200. It leaves nothing in the tree for the same reason that one does -- the publishing workflow was already here while the claim was true -- and adding a second witness for one fact would be a copy',
+    ('2026-09-14-ci-that-had-never-run.md',
+     'Pages needs **Settings → Pages → Source: GitHub Actions** tu'):
+        'the same setting as the Pages caveat two entries along, and closed by the same evidence: the Pages workflow failed on `16a1db6` at 13:49:13 and succeeded on that same SHA at 14:06:41, so the hand-turn this left to whoever merges was done. The workflow it names was already in the tree while the claim was true, so it witnesses nothing',
     ('2026-09-14-main-and-the-documentation-sweep.md',
      'Pages is not enabled, and cannot be enabled from here.'):
         'closed by somebody with admin enabling Pages: `https://howlerops.github.io/slate-orm/` answers 200 and serves the site, where the entry recorded the deploy job failing on `Resource not accessible by integration`. The workflow that publishes is already in the tree and was already there while this was false, so it witnesses nothing; the published URL is the only evidence, and it is not a file',
@@ -1033,6 +1036,8 @@ WITNESSED: dict[tuple[str, str], str] = {
      '`main` is not yet the **default** branch, and this session c'): '=setting',
     ('2026-09-14-main-and-the-documentation-sweep.md',
      'Pages is not enabled, and cannot be enabled from here.'): '=setting',
+    ('2026-09-14-ci-that-had-never-run.md',
+     'Pages needs **Settings → Pages → Source: GitHub Actions** tu'): '=setting',
     ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
      'The sibling claim in the same entry could not be checked.'): '=setting',
     ('2026-09-29-the-skip-list-that-excused-nothing.md',

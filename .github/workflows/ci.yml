@@ -371,6 +371,19 @@ jobs:
       # third and fourth time.
       - run: python3 scripts/check_examples_roster.py
       - run: python3 scripts/test_check_examples_roster.py
+      # A caveat whose subject is GitHub's settings, a registry or an
+      # upstream project is falsified by nobody here doing anything, so it
+      # goes stale invisibly: `2026-09-14-main-and-the-documentation-sweep.md`
+      # said Pages could not be enabled, and Pages was enabled seventeen
+      # minutes later, on the same commit. This asks each such caveat to say
+      # how it can be re-checked.
+      - run: python3 scripts/check_outside_premises.py
+      - run: python3 scripts/test_check_outside_premises.py
+      # …and, separately, actually fetches them. This one needs the network
+      # and so is not in `scripts/check.sh`; a host that cannot be reached is
+      # reported and does not fail, but a run where *nothing* was reachable
+      # does, because it tested nothing.
+      - run: python3 scripts/check_outside_premises.py --run
       - run: python3 scripts/check_toolchain_pins.py
       - run: python3 scripts/test_check_toolchain_pins.py
       # …and that no comment states a cost constant's old value. The

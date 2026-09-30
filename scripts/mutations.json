@@ -336,6 +336,18 @@
           "new": "\"version\": \"0.0.2\","
         }
       ]
+    },
+    {
+      "guard": "check_outside_premises",
+      "file": "docs/caveat-status.json",
+      "why": "The tracker is this guard's whole subject, and the failure it exists for is a live outside-the-tree caveat with nothing saying how to re-check it. A fixture cannot show that the *real* rows are the ones being read: the guard resolves each caveat's key against `ledger/`, and a key that has drifted makes a row invisible to it while the file still parses.",
+      "cases": [
+        {
+          "name": "the npm caveat loses its recheck, the state every one of them was in",
+          "old": "      \"checked\": \"2026-09-30\",\n      \"recheck\": {\n        \"url\": \"https://registry.npmjs.org/@slate-orm/client\",\n        \"expect_status\": 404\n      }\n",
+          "new": "      \"checked\": \"2026-09-30\"\n"
+        }
+      ]
     }
   ],
   "unmutated": {

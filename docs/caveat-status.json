@@ -7585,7 +7585,11 @@
       "verdict": "narrowed",
       "by": "SLATE_SERVERD points the harness at a prebuilt binary, so `npm test` runs from a JavaScript-only checkout. clients/typescript/test/harness.ts. ledger/2026-09-14-ci-that-had-never-run.md",
       "residual": "still unpublished and still 0.0.1. Publishing is a release decision rather than a defect, and the version is honest about what it is.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30",
+      "recheck": {
+        "url": "https://registry.npmjs.org/@slate-orm/client",
+        "expect_status": 404
+      }
     },
     {
       "entry": "2026-09-13-typescript-joins-and-aggregates.md",
@@ -7688,9 +7692,9 @@
     {
       "entry": "2026-09-14-ci-that-had-never-run.md",
       "key": "Pages needs **Settings \u2192 Pages \u2192 Source: GitHub Actions** tu",
-      "verdict": "deliberate",
-      "by": "a repository setting no commit can make, and ledger/2026-09-14-main-and-the-documentation-sweep.md took the one action available: the deploy step now fails legibly, printing the setting a person with admin has to change. The alternative \u2014 `enablement: true` \u2014 is kept and does not work here, which that entry records.",
-      "reviewed": "2026-09-28"
+      "verdict": "closed",
+      "by": "the decision it left to whoever merges was made the same afternoon: the Pages workflow's run 3 failed on 16a1db6 at 13:49:13 and run 4 succeeded on the same SHA at 14:06:41, with no code changed. See ledger/2026-09-30-a-premise-nobody-here-can-falsify.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-14-ci-that-had-never-run.md",
@@ -7813,9 +7817,13 @@
     {
       "entry": "2026-09-14-main-and-the-documentation-sweep.md",
       "key": "`enablement: true` is kept rather than reverted, even though",
-      "verdict": "deliberate",
-      "by": "this entry's own Alternatives, quoted there in full: where a token is permitted it removes the manual step, and where it is not the message below it names the setting. Reverting to `enablement: false` produces an error addressed to the wrong person.",
-      "reviewed": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "the observable half is false: actions/configure-pages@v5 with enablement: true succeeds in every recent run, and the 'If that failed, here is why' step beside it is skipped. See ledger/2026-09-30-a-premise-nobody-here-can-falsify.md",
+      "checked": "2026-09-30",
+      "residual": "whether the workflow token could enable Pages if it were off is still untested and now untestable: Pages is on, so the step has nothing to do. The claim that it cannot is the part that was never demonstrated",
+      "recheck": {
+        "manual": "read the newest Pages run's `Run actions/configure-pages@v5` step. If it succeeds and the step after it is skipped, the observable half stays false."
+      }
     },
     {
       "entry": "2026-09-14-main-and-the-documentation-sweep.md",
@@ -8214,7 +8222,10 @@
       "key": "It also does not address the related and larger gap named in",
       "verdict": "deliberate",
       "by": "the toolchain gap is a property of this container, recorded in CLAUDE.md with the three lints that proved it and the instruction that follows: read the diff out of the failing job's log and apply it, rather than re-running fmt here and concluding CI is wrong. Installing a second toolchain to close it is what the disk note rules out.",
-      "reviewed": "2026-09-28"
+      "reviewed": "2026-09-30",
+      "recheck": {
+        "manual": "read a recent CI `clippy, test` job log for `rustc <version>` and compare with this container's `cargo clippy --version`. On 2026-09-30: CI 1.98.1 (2026-09-01), here 1.94 (clippy 0.1.94, 2026-03-25) - four minor versions apart."
+      }
     },
     {
       "entry": "2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md",
@@ -12155,7 +12166,11 @@
       "key": "Nothing checks that a vendored `google/rpc` file still match",
       "verdict": "deliberate",
       "by": "this entry: the repository's copy of error_details.proto declares three messages where upstream declares ten, on purpose and written up in docs/orm-comparison.md, so a literal upstream comparison would be wrong by construction. What a correct check would compare is not obvious and is not invented here. Both copies are still compared to the canonical tree, which is the property the clients depend on.",
-      "reviewed": "2026-09-29"
+      "reviewed": "2026-09-30",
+      "recheck": {
+        "url": "https://raw.githubusercontent.com/googleapis/googleapis/master/google/rpc/error_details.proto",
+        "expect_text": "message ErrorInfo {\n  // The reason of the error."
+      }
     },
     {
       "entry": "2026-09-29-the-proto-roster-named-one-copy-of-three.md",
@@ -13013,6 +13028,41 @@
       "verdict": "closed",
       "reviewed": "2026-09-30",
       "by": "checked from the other side within the hour and the claim was stale: https://howlerops.github.io/slate-orm/ answers 200 and serves the docs site. Recorded in ledger/2026-09-14-main-and-the-documentation-sweep.md, whose Pages caveat is closed with it"
+    },
+    {
+      "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
+      "key": "A premise nobody's wording trips cannot be seen.",
+      "verdict": "deliberate",
+      "by": "the same cost scripts/check_retired_claims.py states about its registry, and for the same reason: classifying what a sentence is about is the undecidable problem this repository declines to approximate. What the markers buy is the next one written in the obvious words",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
+      "key": "`--run` proves a recipe still answers right, not that the ca",
+      "verdict": "deliberate",
+      "by": "a tripwire on the claim's most falsifiable part is what a fetch can be. Proving the claim would mean encoding the claim, which is the classifier again",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
+      "key": "Two of the ten are exempted by hand",
+      "verdict": "open",
+      "by": "the rot rule catches an exemption whose caveat moved; nothing catches one that was wrong when written. Two entries today, each one line of argument, and a reader has to disagree with the argument to find the error",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
+      "key": "Nothing re-checks the `manual` recipes.",
+      "verdict": "open",
+      "by": "two of the five live members have one, because no URL answers them - 'read a recent CI job log' cannot be a fetch. They are a note to the next reader and depend on one existing",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
+      "key": "The two exempted caveats were not themselves re-read.",
+      "verdict": "open",
+      "by": "they were classified as inside-the-tree and left at whatever verdict they carried. Out of this guard's scope is not the same as true, and neither was read against the tree today",
+      "checked": "2026-09-30"
     }
   ]
 }

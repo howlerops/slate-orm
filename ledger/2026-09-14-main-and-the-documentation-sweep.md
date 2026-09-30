@@ -118,6 +118,8 @@ failure and prints the one thing a reader needs, which is Settings → Pages →
 Source: GitHub Actions. The setting has to be changed once by a person with
 admin, and then any push to `main` publishes.
 
+~~`enablement: true` ... does not work here.~~ **Narrowed** — the observable half is false: `actions/configure-pages@v5` with `enablement: true` succeeds in every recent run and the step after it is skipped. Whether the token could *enable* Pages is now untestable, Pages being on. See `ledger/2026-09-30-a-premise-nobody-here-can-falsify.md`.
+
 `enablement: true` is kept rather than reverted, even though it does not work
 here. Where a token *is* permitted — a fork, or this repository with different
 Actions permissions — it removes the manual step entirely, and where it is not,
