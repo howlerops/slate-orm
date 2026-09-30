@@ -13098,9 +13098,10 @@
     {
       "entry": "2026-09-30-a-refusals-numbers-are-values-now.md",
       "key": "One refusal uses it.",
-      "verdict": "open",
-      "by": "status::refused is general and every other hand-built Status::new in service.rs still carries prose alone. Nothing sweeps for them, and a caller cannot tell from outside which refusals have a payload except by asking and finding {}",
-      "checked": "2026-09-30"
+      "verdict": "narrowed",
+      "by": "three do now: the two other refusals that state a bound - BATCH_TOO_LARGE and TRANSACTION_LIMIT - carry their numbers as values, each with a test reading them out of the details rather than the sentence. See ledger/2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "checked": "2026-09-30",
+      "residual": "every other hand-built Status::new in the server still carries prose alone, and nothing sweeps for the next one that states a bound"
     },
     {
       "entry": "2026-09-30-a-refusals-numbers-are-values-now.md",
@@ -13119,9 +13120,10 @@
     {
       "entry": "2026-09-30-a-refusals-numbers-are-values-now.md",
       "key": "The conformance runner has no case for it.",
-      "verdict": "open",
-      "by": "the three clients share one fixture, which is stronger than three fixtures and is still a decoder test rather than a live refusal through a real server in all three languages",
-      "checked": "2026-09-30"
+      "verdict": "narrowed",
+      "by": "`error.details` is in the demo's HTTP contract and all three adapters publish it, so the existing check-violation case compares a ten-key map across the three through a real server. MUST_CARRY_DETAILS makes an empty map a failure, and a mutation deleting the server's metadata is caught by it. See ledger/2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "checked": "2026-09-30",
+      "residual": "no live case compares a *bound* refusal's flat two-key map across the three; that shape is covered only by the three decoder tests over one fixture"
     },
     {
       "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
@@ -13139,17 +13141,17 @@
     },
     {
       "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
-      "key": "Nothing re-runs the mutation that started this.",
-      "verdict": "open",
-      "by": "it was invalid rather than survived, and re-running it correctly means run.sh building from source - about four minutes a case against ten seconds. The refusal makes the invalid version impossible; the finding it would have produced is unmeasured",
-      "checked": "2026-09-30"
-    },
-    {
-      "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
       "key": "`MUST_CARRY_DETAILS` has one row.",
       "verdict": "deliberate",
       "by": "it names the check-violation case, the richest map the server sends. A bound refusal's flat two-key map is compared by the three decoder tests over one fixture and by nothing live, which the entry says",
       "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "key": "`ledger/mutations/20260930T040901-crates-slate-server-src-st",
+      "verdict": "closed",
+      "reviewed": "2026-09-30",
+      "by": "re-run with `env -u SLATE_SERVERD`, so run.sh built from source, and the same mutation is caught by MUST_CARRY_DETAILS - the only thing that catches it, since all three adapters correctly agree on the empty map the server sent. ledger/mutations/20260930T040901-crates-slate-server-src-status-rs.json"
     }
   ]
 }

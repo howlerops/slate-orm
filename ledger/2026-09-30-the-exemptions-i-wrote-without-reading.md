@@ -131,11 +131,27 @@ mentions one. A harness that imports `prebuilt` and never calls it passes.
 That is the same cost `check_retired_claims.py` states about its registry, and
 the same answer: what it buys is the next harness, not this one.
 
-**Nothing re-runs the mutation that started this.** It was invalid, not
-survived, and re-running it correctly means `run.sh` building from source —
-about four minutes per case on this container against ten seconds with a
-prebuilt binary. The refusal now makes the invalid version impossible, which
-is the fix; the finding it would have produced is still unmeasured.
+~~**Nothing re-runs the mutation that started this.**~~ **Done**, before the
+entry was committed, and it is the measurement the rest of this rests on.
+Re-run with `env -u SLATE_SERVERD`, so `run.sh` built from source, the same
+mutation is **caught**:
+
+```
+ok   the server sends an ErrorInfo with no metadata, so all three agree on
+     nothing  ->  "a write the schema's CHECK refuses" agreed on an empty
+     `error.details`, so the three SDKs agree about nothing
+```
+
+`ledger/mutations/20260930T040901-crates-slate-server-src-status-rs.json`. It is caught by
+`MUST_CARRY_DETAILS` and by nothing else: the three adapters *do* all agree,
+because all three correctly report the empty map the server sent. Without
+that check the run is 140 green cases over a server that stopped saying
+anything. The original paragraph, kept because the four-minutes-a-case cost
+is still the reason this is not routine:
+
+> It was invalid, not survived, and re-running it correctly means `run.sh`
+> building from source — about four minutes per case on this container
+> against ten seconds with a prebuilt binary.
 
 **`MUST_CARRY_DETAILS` has one row.** It names the check-violation case,
 because that is the richest map the server sends. A bound refusal's flat

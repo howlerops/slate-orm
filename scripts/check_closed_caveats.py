@@ -832,6 +832,14 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # `checked` on a `deliberate` row is the distinction itself: the field means
  # read against the tree, and until 2026-09-30 a deliberate verdict was
  # refused one, so a read had nowhere to go but `reviewed`.
+ # The check that caught the re-run mutation, and the only thing that could:
+ # all three adapters agree on the empty map a metadata-less server sends, so
+ # the disagreement path cannot see it.
+ "details-agreed-on-nothing": (
+     "MUST_CARRY_DETAILS",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
  "deliberate-read-against-the-tree": (
      "`deliberate` is no longer in",
      "scripts/caveats.py",
@@ -1061,6 +1069,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-30-the-exemptions-i-wrote-without-reading.md',
+     '`ledger/mutations/20260930T040901-crates-slate-server-src-st'):
+        'details-agreed-on-nothing',
     ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
      'A `reviewed` stamp does not distinguish a read like this one'):
         'deliberate-read-against-the-tree',
