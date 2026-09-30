@@ -448,6 +448,38 @@ pub fn code_for(error: &KernelError) -> Code {
     }
 }
 
+/// A handler's own refusal, with a stable token and a machine-readable payload.
+///
+/// [`from_kernel`] covers everything the kernel raises. This is for the
+/// refusals a handler makes before or instead of calling it — a limit checked
+/// against the request, a shape the catalog cannot compose — which until now
+/// carried a prose message and nothing else. A caller needing the number in
+/// that sentence had to match the sentence, which is the string-matching this
+/// repository avoids everywhere it can.
+///
+/// `ledger/2026-09-17-a-path-of-relationships-on-the-wire.md` recorded that as
+/// a caveat about `max_relation_depth` and judged it a cross-cutting protocol
+/// change not worth making for one limit. It is much cheaper now: all three
+/// clients already decode `ErrorInfo.metadata` for `CHECK_VIOLATION`, so this
+/// is a map they can already read and a key they cannot yet see.
+#[must_use]
+pub fn refused(
+    code: Code,
+    message: impl Into<String>,
+    reason: &str,
+    metadata: HashMap<String, String>,
+) -> Status {
+    with_details(
+        code,
+        message.into(),
+        rpc::ErrorInfo {
+            reason: reason.to_owned(),
+            domain: DOMAIN.to_owned(),
+            metadata,
+        },
+    )
+}
+
 /// A status that also tells the caller which node to try instead.
 ///
 /// The hint is best effort — the lease may have moved again by the time it

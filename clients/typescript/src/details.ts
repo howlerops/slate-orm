@@ -125,6 +125,41 @@ export function reasonOf(blob: Uint8Array): string {
 }
 
 /** One `CHECK` a refused row violated. */
+/**
+ * The `ErrorInfo.metadata` map in a blob, or `{}`.
+ *
+ * A refusal that bounds something puts the bound here as well as in its
+ * sentence, so a caller can act on it without matching prose:
+ * `RELATION_DEPTH_EXCEEDED` carries `limit` and `asked`. Which keys are
+ * present depends on the `reason`, and reading one without checking that is
+ * reading a different failure's map.
+ *
+ * `{}` on anything that does not parse, for {@link reasonOf}'s reason:
+ * replacing the server's failure with this client's would lose why the call
+ * failed at all, which is worse than losing a number.
+ */
+export function detailsOf(blob: Uint8Array): Record<string, string> {
+  const loaded = types();
+  if (!loaded) return {};
+  try {
+    const decoded = loaded.status.decode(blob) as unknown as StatusMessage;
+    for (const detail of decoded.details ?? []) {
+      if (detail.type_url !== ERROR_INFO_URL || !detail.value) continue;
+      const info = loaded.info.decode(detail.value) as unknown as {
+        metadata?: Record<string, string>;
+      };
+      const out: Record<string, string> = {};
+      for (const [key, value] of Object.entries(info.metadata ?? {})) {
+        out[key] = String(value);
+      }
+      return out;
+    }
+  } catch {
+    return {};
+  }
+  return {};
+}
+
 export interface CheckFailure {
   /** The constraint's name, as the schema declares it. */
   readonly check: string;

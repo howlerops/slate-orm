@@ -1368,10 +1368,9 @@
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "`ErrorInfo.metadata` still is not surfaced",
-      "verdict": "narrowed",
-      "by": "the map is surfaced now, by all three clients, for CHECK_VIOLATION - violationsOf in clients/go/slate/error.go, dict(info.metadata) in clients/python/src/slate/_details.py, clients/typescript/src/details.ts. The residual is the specific half: max_relation_depth is not among the keys, so a refused path still reports the limit in prose. See ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
-      "checked": "2026-09-30",
-      "residual": "max_relation_depth is still not carried in the map, so a caller reads the limit out of the message text. Cheaper than when the caveat was written - all three clients already decode ErrorInfo.metadata - but still a server change plus three client changes"
+      "verdict": "closed",
+      "by": "narrowed and then closed the same day. The map was already surfaced for CHECK_VIOLATION, which is the narrowing in ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md; the residual - max_relation_depth not being among its keys - is closed by ledger/2026-09-30-a-refusals-numbers-are-values-now.md, which carries it as RELATION_DEPTH_EXCEEDED with `limit` and `asked` and exposes the whole map in all three clients",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
@@ -13090,6 +13089,34 @@
       "key": "Nothing checks that a draw actually came from `--unchecked`.",
       "verdict": "open",
       "by": "the next pass could sample the whole bucket again and stamp what it read; the count would move by the same amount while pooling nothing. Written in the docstring and in this entry, enforced nowhere",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-refusals-numbers-are-values-now.md",
+      "key": "One refusal uses it.",
+      "verdict": "open",
+      "by": "status::refused is general and every other hand-built Status::new in service.rs still carries prose alone. Nothing sweeps for them, and a caller cannot tell from outside which refusals have a payload except by asking and finding {}",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-refusals-numbers-are-values-now.md",
+      "key": "No client validates keys against the reason.",
+      "verdict": "deliberate",
+      "by": "details[\"limit\"] on a CHECK_VIOLATION returns nothing rather than saying the caller read the wrong map. A typed accessor per reason is what violations already is, and building one for every future refusal is the cost this map exists to avoid",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-refusals-numbers-are-values-now.md",
+      "key": "`asked` is redundant",
+      "verdict": "deliberate",
+      "by": "a caller that built the path from data does not necessarily have the count to hand where it catches the error, and one key costs nothing. Stated as a judgement in the entry rather than as a measurement",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-refusals-numbers-are-values-now.md",
+      "key": "The conformance runner has no case for it.",
+      "verdict": "open",
+      "by": "the three clients share one fixture, which is stronger than three fixtures and is still a decoder test rather than a live refusal through a real server in all three languages",
       "checked": "2026-09-30"
     }
   ]

@@ -1,6 +1,12 @@
 import { status as GrpcStatus, type ServiceError } from "@grpc/grpc-js";
 
-import { type CheckFailure, DETAILS_KEY, checkFailuresOf, reasonOf } from "./details.js";
+import {
+  type CheckFailure,
+  DETAILS_KEY,
+  checkFailuresOf,
+  detailsOf,
+  reasonOf,
+} from "./details.js";
 
 /** The trailer a redirect carries, naming the node to try instead. */
 export const LEADER_KEY = "slate-leader";
@@ -121,6 +127,22 @@ export class SlateError extends Error {
    * with three bad fields produces three entries and one round trip.
    */
   readonly violations: readonly CheckFailure[];
+  /**
+   * The refusal's own numbers, as the server sent them: `ErrorInfo.metadata`,
+   * verbatim.
+   *
+   * A refusal that bounds something puts the bound here as well as in its
+   * sentence, so a caller can act on it without matching prose.
+   * `RELATION_DEPTH_EXCEEDED` carries `limit` and `asked`. Which keys are
+   * present depends on `reason`, and reading one without checking that is
+   * reading a different failure's map.
+   *
+   * `{}` for a refusal carrying no `ErrorInfo`, which is most of them, and
+   * for one this client raised without reaching the server. `violations` is
+   * the one part of this map with a shape of its own, parsed rather than
+   * left as strings.
+   */
+  readonly details: Record<string, string>;
 
   constructor(
     kind: Kind,
@@ -131,12 +153,14 @@ export class SlateError extends Error {
     reason = "",
     requestId = "",
     violations: readonly CheckFailure[] = [],
+    details: Record<string, string> = {},
   ) {
     super(leader ? `${kind}: ${message} (leader ${leader})` : `${kind}: ${message}`);
     this.name = "SlateError";
     this.reason = reason;
     this.requestId = requestId;
     this.violations = violations;
+    this.details = details;
     this.kind = kind;
     this.code = code;
     this.trailers = trailers;
@@ -192,6 +216,7 @@ export function fromBatchError(failed: {
     failed.reason ?? "",
     "",
     failed.details ? checkFailuresOf(failed.details) : [],
+    failed.details ? detailsOf(failed.details) : {},
   );
 }
 
@@ -236,6 +261,7 @@ export function fromServiceError(error: ServiceError, requestId = ""): SlateErro
     reasonFromMetadata(error),
     requestId,
     violationsFromMetadata(error),
+    detailsFromMetadata(error),
   );
 }
 
@@ -269,4 +295,20 @@ function violationsFromMetadata(error: ServiceError): readonly CheckFailure[] {
     if (typeof value !== "string") return checkFailuresOf(value);
   }
   return [];
+}
+
+/**
+ * The `ErrorInfo.metadata` map in the call's trailers, or `{}`.
+ *
+ * A third pass over the same blob, for the reason the second one gives: the
+ * callers that want more than the token want different shapes out of it, and
+ * three cheap decodes of a blob that is usually absent beat one function
+ * returning a tuple every caller unpacks.
+ */
+function detailsFromMetadata(error: ServiceError): Record<string, string> {
+  const values = error.metadata?.get?.(DETAILS_KEY) ?? [];
+  for (const value of values) {
+    if (typeof value !== "string") return detailsOf(value);
+  }
+  return {};
 }

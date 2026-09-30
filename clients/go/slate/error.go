@@ -144,6 +144,20 @@ type Error struct {
 	// The server reports every failing check rather than the first, so a row
 	// with three bad fields produces three entries and one round trip.
 	Violations []CheckViolation
+	// Details is the refusal's own numbers, as the server sent them:
+	// ErrorInfo.metadata, verbatim.
+	//
+	// A refusal that bounds something puts the bound here as well as in its
+	// sentence, so a caller can act on it without matching prose.
+	// RELATION_DEPTH_EXCEEDED carries "limit" and "asked". Which keys are
+	// present depends on Reason, and reading one without checking that is
+	// reading a different failure's map.
+	//
+	// Nil for a refusal carrying no ErrorInfo, which is most of them, and for
+	// one this client raised without reaching the server. Violations is the
+	// one part of this map with a shape of its own, parsed rather than left
+	// as strings.
+	Details map[string]string
 	// RequestID is the id this client sent for the call that failed, or "".
 	//
 	// Not the server's — the server assigns none. This is what went out in
@@ -243,6 +257,7 @@ func fromRPCWithID(id string, err error) error {
 		Code:       st.Code(),
 		Reason:     reasonOf(st),
 		Violations: violationsOf(st),
+		Details:    detailsOf(st),
 		RequestID:  id,
 	}
 }
@@ -274,6 +289,31 @@ type CheckViolation struct {
 // A caller shown two failures for a row that broke three fixes two fields,
 // resubmits and is refused again — which is the round-trip-per-field
 // behaviour this exists to remove.
+// detailsOf returns the ErrorInfo.metadata map, or nil.
+//
+// A separate pass from reasonOf and violationsOf over the same details, for
+// the reason those two are separate from each other: most failures carry no
+// ErrorInfo, and the callers that want more than the token want different
+// shapes out of it.
+func detailsOf(st *status.Status) map[string]string {
+	for _, detail := range st.Details() {
+		info, ok := detail.(*errdetails.ErrorInfo)
+		if !ok {
+			continue
+		}
+		data := info.GetMetadata()
+		if len(data) == 0 {
+			return nil
+		}
+		out := make(map[string]string, len(data))
+		for key, value := range data {
+			out[key] = value
+		}
+		return out
+	}
+	return nil
+}
+
 func violationsOf(st *status.Status) []CheckViolation {
 	for _, detail := range st.Details() {
 		info, ok := detail.(*errdetails.ErrorInfo)

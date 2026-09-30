@@ -558,3 +558,35 @@ fn emit_a_check_violation_blob() {
         println!("\"{}\"", String::from_utf8_lossy(chunk));
     }
 }
+
+/// The same, for a handler's own refusal: `status::refused`'s payload.
+///
+/// A second emitter rather than a parameter on the first, because the two
+/// fixtures exist to show different things. The check-violation blob proves a
+/// client reads a *structured* map — indexed keys, absent fields. This one
+/// proves it reads a flat one it has never seen the keys of, which is the
+/// case every future `refused` will be and the one
+/// `ledger/2026-09-17-a-path-of-relationships-on-the-wire.md` asked for.
+#[test]
+#[ignore = "emits a fixture rather than asserting anything"]
+fn emit_a_relation_depth_blob() {
+    let status = slate_server::status::refused(
+        Code::InvalidArgument,
+        "a relationship path of 3 steps was asked for and the limit is 2; each step \
+         is a read, so the depth is how many reads one request performs. Shorten the \
+         path, or raise `[limits] max_relation_depth`",
+        "RELATION_DEPTH_EXCEEDED",
+        std::collections::HashMap::from([
+            ("limit".to_owned(), "2".to_owned()),
+            ("asked".to_owned(), "3".to_owned()),
+        ]),
+    );
+    let hex: String = status
+        .details()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    for chunk in hex.as_bytes().chunks(68) {
+        println!("\"{}\"", String::from_utf8_lossy(chunk));
+    }
+}

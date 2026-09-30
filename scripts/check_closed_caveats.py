@@ -811,6 +811,17 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # not a printed line: a roster listed in a constant is exactly what this
  # closure rejected, so the function that reads the halves off an empty tree
  # is the thing whose absence means the closure has come undone.
+ # --- a refusal's numbers are values now, 2026-09-30 ------------------------
+ #
+ # The caveat was that a refused relation path reported its limit in prose.
+ # The needle is the reason token at the refusal site rather than the builder
+ # it calls: `status::refused` could survive the depth refusal going back to a
+ # bare `Status::new`, and that reversion is exactly what this closed.
+ "relation-depth-in-metadata": (
+     "\"RELATION_DEPTH_EXCEEDED\"",
+     "crates/slate-server/src/service.rs",
+ ),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -1032,6 +1043,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-17-a-path-of-relationships-on-the-wire.md',
+     '`ErrorInfo.metadata` still is not surfaced'): 'relation-depth-in-metadata',
     ('2026-09-14-main-and-the-documentation-sweep.md',
      '`main` is not yet the **default** branch, and this session c'): '=setting',
     ('2026-09-14-main-and-the-documentation-sweep.md',

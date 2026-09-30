@@ -54,7 +54,7 @@ use crate::session::{
     GroupedExplanation, Limits, MultiCursor, MultiExplanation, MultiRow, Sessions,
 };
 use crate::status::reason_of;
-use crate::status::{from_kernel, redirect};
+use crate::status::{self, from_kernel, redirect};
 use crate::views::Views;
 use slate_kernel::{
     Action, ExecutionLimits, Expr, Freshness, Group, KernelError, KvReadStore, KvStore, Query,
@@ -64,6 +64,7 @@ use slate_kernel::{
 use slate_schema::{Catalog, Ordinal, Row, TableDef, TableId};
 use slate_tuple::Value;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -2239,7 +2240,11 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         if let Some(limit) = self.limits.max_relation_depth
             && steps.len() > limit
         {
-            return Err(Status::new(
+            // The limit goes in the metadata as well as the sentence. A
+            // caller that wants to shorten the path and retry needs the
+            // number, and reading it out of the prose is a contract nobody
+            // agreed to: see `status::refused`.
+            return Err(status::refused(
                 Code::InvalidArgument,
                 format!(
                     "a relationship path of {} steps was asked for and the limit is \
@@ -2248,6 +2253,11 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
                      `[limits] max_relation_depth`",
                     steps.len()
                 ),
+                "RELATION_DEPTH_EXCEEDED",
+                HashMap::from([
+                    ("limit".to_owned(), limit.to_string()),
+                    ("asked".to_owned(), steps.len().to_string()),
+                ]),
             ));
         }
 

@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-30T03:14:18+00:00",
+  "file": "clients/python/src/slate/_details.py",
+  "dialect": "pytest",
+  "command": [
+    "python3",
+    "-m",
+    "pytest",
+    "clients/python/tests/test_details.py",
+    "-q"
+  ],
+  "commit": "90ff601",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "details_of skips the type-url check and reads any detail",
+      "old": "            if detail.type_url == ERROR_INFO_URL:\n                info: Any = _ErrorInfo()\n                info.ParseFromString(detail.value)\n                return {str(k): str(v) for k, v in info.metadata.items()}",
+      "new": "            if True:\n                info: Any = _ErrorInfo()\n                info.ParseFromString(detail.value)\n                return {str(k): str(v) for k, v in info.metadata.items()}",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "details_of returns the reason instead of the map",
+      "old": "                return {str(k): str(v) for k, v in info.metadata.items()}",
+      "new": "                return {\"reason\": str(info.reason)}",
+      "verdict": "caught",
+      "caught_by": [
+        "clients/python/tests/test_details.py::test_a_refusals_numbers_come_back_without_parsing_prose"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
