@@ -155,6 +155,13 @@ await() {
 # one; here it also means the demo starts without a Rust toolchain present.
 if [ -n "${SLATE_SERVERD:-}" ]; then
   [ -x "$SLATE_SERVERD" ] || { echo "SLATE_SERVERD=$SLATE_SERVERD is not executable" >&2; exit 1; }
+  # And refuse one built before the source it came from. A prebuilt
+  # binary is a snapshot, and a stale one makes this whole stack test a
+  # server this tree did not produce -- which on 2026-09-30 cost a
+  # mutation of `slate-server` its finding, because the conformance
+  # runner scored it a survivor against a binary from before it.
+  python3 "$here/../../scripts/prebuilt.py" >/dev/null || {
+    python3 "$here/../../scripts/prebuilt.py" >&2; exit 1; }
   serverd="$SLATE_SERVERD"
   echo "using the slate-serverd at $serverd"
 else

@@ -1685,6 +1685,12 @@ def handler_for(adapter: Adapter):
                         }
                         for one in error.violations
                     ],
+                    # The refusal's own numbers, as the server sent them. A
+                    # bound in the sentence is a bound a caller has to parse;
+                    # this is the same value the three clients each read out
+                    # of `ErrorInfo.metadata`, so a disagreement between them
+                    # shows up as a diff here.
+                    "details": dict(error.details),
                 }})
                 return
             except Exception as error:  # noqa: BLE001

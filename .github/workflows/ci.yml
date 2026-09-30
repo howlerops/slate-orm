@@ -377,6 +377,11 @@ jobs:
       # said Pages could not be enabled, and Pages was enabled seventeen
       # minutes later, on the same commit. This asks each such caveat to say
       # how it can be re-checked.
+      # Every harness that takes a prebuilt binary must refuse a stale one.
+      # Three of six did not, and the conformance runner was one of them —
+      # which cost a mutation of `slate-server` its finding, because the
+      # mutated source never ran. `scripts/prebuilt.py` has the account.
+      - run: python3 scripts/test_prebuilt.py
       - run: python3 scripts/check_outside_premises.py
       - run: python3 scripts/test_check_outside_premises.py
       # …and, separately, actually fetches them. This one needs the network

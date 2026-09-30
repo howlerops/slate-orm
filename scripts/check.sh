@@ -126,6 +126,7 @@ example-runner-guard|.|python3 scripts/test_run_examples.py
 free-ports-guard|.|python3 scripts/test_free_ports.py
 example-roster|.|python3 scripts/check_examples_roster.py
 example-roster-guard|.|python3 scripts/test_check_examples_roster.py
+prebuilt-guard|.|python3 scripts/test_prebuilt.py
 outside-premises|.|python3 scripts/check_outside_premises.py
 outside-premises-guard|.|python3 scripts/test_check_outside_premises.py
 toolchain-pins|.|python3 scripts/check_toolchain_pins.py

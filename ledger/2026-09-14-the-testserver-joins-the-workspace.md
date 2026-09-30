@@ -69,6 +69,8 @@ parent lockfile in — and is left in place rather than deleted, because nothing
 in this commit verified who else calls it. *(Gone since; nothing referenced
 it.)*
 
+~~The demo's three backends ... no root-level command builds.~~ **Narrowed** — `scripts/check.sh` reaches all three now: `gofmt` and `go vet` on the Go module, `tsc --noEmit` on the npm package, `pytest` on the Python one. Being outside a workspace still holds; the rot that followed from it does not. See `ledger/2026-09-30-the-exemptions-i-wrote-without-reading.md`.
+
 The demo's three backends (`examples/explorer/backends/`) are outside any
 workspace in the same way: a Go module, an npm package and a Python package
 that no root-level command builds. They are examples rather than fixtures, and

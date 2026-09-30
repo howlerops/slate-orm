@@ -26,7 +26,9 @@ use slate_kernel::memory::MemoryStore;
 use slate_kernel::{CmpOp, Expr, Scalar};
 use slate_schema::Ordinal;
 use slate_server::convert::{Space, column_ref, expr_to_proto, scalar_to_proto};
+use prost::Message;
 use slate_server::proto as pb;
+use slate_server::proto::rpc;
 use slate_server::proto::records_client::RecordsClient;
 use slate_tuple::Value;
 use std::sync::Arc;
@@ -566,6 +568,17 @@ async fn a_batch_over_the_cap_is_refused() {
     assert_eq!(status.code(), Code::InvalidArgument);
     assert!(status.message().contains('2'), "{}", status.message());
     assert!(status.message().contains('3'), "{}", status.message());
+
+    // And both numbers are values, not substrings. A caller that splits and
+    // retries needs the cap; matching the sentence for it is the contract
+    // `ledger/2026-09-30-a-refusals-numbers-are-values-now.md` removed.
+    let details = rpc::Status::decode(status.details()).expect("a google.rpc.Status");
+    let any = details.details.first().expect("one detail");
+    assert_eq!(any.type_url, "type.googleapis.com/google.rpc.ErrorInfo");
+    let info = rpc::ErrorInfo::decode(any.value.as_slice()).expect("an ErrorInfo");
+    assert_eq!(info.reason, "BATCH_TOO_LARGE");
+    assert_eq!(info.metadata.get("limit").map(String::as_str), Some("2"));
+    assert_eq!(info.metadata.get("asked").map(String::as_str), Some("3"));
 
     // And nothing from the refused batch landed.
     assert_eq!(ids(&mut client).await, vec![1, 2]);

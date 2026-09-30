@@ -357,7 +357,14 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "security-probe": ("explain_join", "crates/slate-server/tests/security_probe.rs"),
  "site-claims": (None, "scripts/check_site_claims.py"),
  "site-css": ("styles.css", "scripts/check_site_css.py"),
- "stale-binary": ("older", "clients/python/tests/conftest.py"),
+ # Moved from `conftest.py` to `scripts/prebuilt.py` on 2026-09-30, when the
+ # same refusal turned out to be missing from three other harnesses that take
+ # the same variable. The needle follows it: the refusal is the witness, not
+ # the file it started in.
+ "stale-binary": ("was built before", "scripts/prebuilt.py"),
+ # The roster is a second witness for the same closure's wider form, and a
+ # separate one because it can go while the refusal stays.
+ "stale-binary-roster": ("MUST_REFUSE", "scripts/test_prebuilt.py"),
  "stored-schema": ("schema", "crates/slate-kernel/src/migrate.rs"),
  "table-provenance": (None, "scripts/check_table_provenance.py"),
  "through-wire": ("through", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -822,6 +829,14 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "crates/slate-server/src/service.rs",
  ),
 
+ # `checked` on a `deliberate` row is the distinction itself: the field means
+ # read against the tree, and until 2026-09-30 a deliberate verdict was
+ # refused one, so a read had nowhere to go but `reviewed`.
+ "deliberate-read-against-the-tree": (
+     "`deliberate` is no longer in",
+     "scripts/caveats.py",
+ ),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -886,6 +901,9 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-30-a-premise-nobody-here-can-falsify.md',
+     'The two exempted caveats were not themselves re-read.'):
+        'closed by reading both against the tree, which is the only method there is for a prose claim. One was stale and is narrowed with its own entry; the other holds and gained a `recheck`. The reading leaves nothing in the tree but the entry that records it -- a witness would have to be the `checked` date this guard already parses',
     ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
      'The sibling claim in the same entry could not be checked.'):
         'the same closure as the Pages caveat it is about, reached from the other side: `https://howlerops.github.io/slate-orm/` answers 200. It leaves nothing in the tree for the same reason that one does -- the publishing workflow was already here while the claim was true -- and adding a second witness for one fact would be a copy',
@@ -1043,6 +1061,11 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
+     'A `reviewed` stamp does not distinguish a read like this one'):
+        'deliberate-read-against-the-tree',
+    ('2026-09-30-a-premise-nobody-here-can-falsify.md',
+     'The two exempted caveats were not themselves re-read.'): '=read',
     ('2026-09-17-a-path-of-relationships-on-the-wire.md',
      '`ErrorInfo.metadata` still is not surfaced'): 'relation-depth-in-metadata',
     ('2026-09-14-main-and-the-documentation-sweep.md',

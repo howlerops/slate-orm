@@ -33,7 +33,9 @@ use slate_kernel::memory::MemoryStore;
 use slate_kernel::{CmpOp, Expr};
 use slate_schema::Ordinal;
 use slate_server::convert::{Space, column_ref, expr_to_proto, row_to_proto, value_to_proto};
+use prost::Message;
 use slate_server::proto as pb;
+use slate_server::proto::rpc;
 use slate_server::proto::records_client::RecordsClient;
 use slate_tuple::Value;
 use std::sync::Arc;
@@ -743,6 +745,18 @@ async fn a_node_will_not_open_more_transactions_than_its_limit() {
         .await
         .expect_err("the fourth must be refused");
     assert_eq!(error.code(), Code::ResourceExhausted);
+
+    // The node's own configuration, as a value. A caller backing off wants
+    // the number, and it is not one the caller supplied — so the sentence is
+    // the wrong carrier for it. See
+    // `ledger/2026-09-30-a-refusals-numbers-are-values-now.md`.
+    let details = rpc::Status::decode(error.details()).expect("a google.rpc.Status");
+    let any = details.details.first().expect("one detail");
+    assert_eq!(any.type_url, "type.googleapis.com/google.rpc.ErrorInfo");
+    let info = rpc::ErrorInfo::decode(any.value.as_slice()).expect("an ErrorInfo");
+    assert_eq!(info.reason, "TRANSACTION_LIMIT");
+    assert_eq!(info.metadata.get("limit").map(String::as_str), Some("3"));
+    assert_eq!(info.metadata.get("open").map(String::as_str), Some("3"));
 }
 
 #[tokio::test]

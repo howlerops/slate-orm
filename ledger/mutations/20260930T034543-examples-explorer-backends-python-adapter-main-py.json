@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-30T03:45:43+00:00",
+  "file": "examples/explorer/backends/python/adapter/__main__.py",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "23e3ce0",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": [
+    {
+      "name": "the python adapter drops the details map",
+      "old": "                    \"details\": dict(error.details),",
+      "new": "                    \"details\": {},",
+      "verdict": "caught",
+      "caught_by": [
+        "a reader may not explain a grouping (reader): the adapters disagree",
+        "a reader may not explain (reader): the adapters disagree",
+        "a stranger may not read (stranger): the adapters disagree",
+        "a stranger may not load a relationship (stranger): the adapters disagree",
+        "a page sorted into an order the key does not give (app): the adapters disagree",
+        "a reader may not write by predicate (reader): the adapters disagree",
+        "a reader may not batch (reader): the adapters disagree",
+        "the soft-delete column is not the caller's to write (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ]
+}

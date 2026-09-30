@@ -7760,7 +7760,10 @@
       "key": "`web/package.json` now depends on `playwright` for a demo, w",
       "verdict": "deliberate",
       "by": "this entry's own reasoning: justified because the browser is already present in this environment, and the cost is a download on a reader's first npm install. The alternative \u2014 no browser test for the demo \u2014 is what the entry was written to end.",
-      "reviewed": "2026-09-28"
+      "checked": "2026-09-30",
+      "recheck": {
+        "manual": "the premise is that a reader without a browser pays a download. CI's three `npx playwright install --with-deps chromium` steps are the standing evidence; if they go, re-read the claim."
+      }
     },
     {
       "entry": "2026-09-14-guards-against-the-recurring-mistakes.md",
@@ -8099,9 +8102,10 @@
     {
       "entry": "2026-09-14-the-testserver-joins-the-workspace.md",
       "key": "The demo's three backends (`examples/explorer/backends/`) ar",
-      "verdict": "deliberate",
-      "by": "a Go module, an npm package and a Python package cannot be Cargo workspace members, so the rot this entry cured for the testserver has no equivalent cure for them. What they have instead is CI: each of the three is built and run by the conformance runner on every push, which is what stopped the testserver rotting and is the property rather than the mechanism.",
-      "reviewed": "2026-09-28"
+      "verdict": "narrowed",
+      "by": "\"no root-level command builds them\" is false: scripts/check.sh runs gofmt and go vet in backends/go, tsc --noEmit in backends/node, and pytest over backends/python/adapter. See ledger/2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "checked": "2026-09-30",
+      "residual": "they are still outside any Cargo or npm workspace, so a `cargo build` and an `npm ci` at the root do not see them. What is checked is fmt, vet, types and the Python tests - not that the three adapters still build and serve"
     },
     {
       "entry": "2026-09-14-withdrawing-the-rename-caveat.md",
@@ -13003,9 +13007,9 @@
     {
       "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
       "key": "A `reviewed` stamp does not distinguish a read like this one",
-      "verdict": "open",
-      "by": "both a read against code and the 2026-09-26 reverse sweep's bulk prose stamp write the same field, so the tracker cannot say which kind a date is. caveats.py's own comment at CHECKED, REVIEWED already draws the checked/reviewed line and stops there",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "`checked` is allowed on a deliberate verdict now and means read against the tree, while `reviewed` keeps meaning the verdict's prose was re-read. Today's thirty were restamped. See ledger/2026-09-30-a-sample-that-pools-with-the-next-one.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
@@ -13059,9 +13063,9 @@
     {
       "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
       "key": "The two exempted caveats were not themselves re-read.",
-      "verdict": "open",
-      "by": "they were classified as inside-the-tree and left at whatever verdict they carried. Out of this guard's scope is not the same as true, and neither was read against the tree today",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "both read against the tree. One was stale - see ledger/2026-09-30-the-exemptions-i-wrote-without-reading.md - and the other holds and now carries a recheck of its own",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-a-sample-that-pools-with-the-next-one.md",
@@ -13118,6 +13122,34 @@
       "verdict": "open",
       "by": "the three clients share one fixture, which is stronger than three fixtures and is still a decoder test rather than a live refusal through a real server in all three languages",
       "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "key": "`prebuilt.py` compares one binary against the newest source ",
+      "verdict": "open",
+      "by": "the deployed example starts a head node and a replica; one verdict covers both, which is right while they come from the same build and wrong the moment they do not",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "key": "The roster cannot tell whether a file's refusal works",
+      "verdict": "deliberate",
+      "by": "only that it mentions one - a harness that imports prebuilt and never calls it passes. The same cost check_retired_claims.py states about its registry, and the same answer: what it buys is the next harness",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "key": "Nothing re-runs the mutation that started this.",
+      "verdict": "open",
+      "by": "it was invalid rather than survived, and re-running it correctly means run.sh building from source - about four minutes a case against ten seconds. The refusal makes the invalid version impossible; the finding it would have produced is unmeasured",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
+      "key": "`MUST_CARRY_DETAILS` has one row.",
+      "verdict": "deliberate",
+      "by": "it names the check-violation case, the richest map the server sends. A bound refusal's flat two-key map is compared by the three decoder tests over one fixture and by nothing live, which the entry says",
+      "reviewed": "2026-09-30"
     }
   ]
 }

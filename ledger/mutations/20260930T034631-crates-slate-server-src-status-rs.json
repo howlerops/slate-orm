@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-30T03:46:31+00:00",
+  "file": "crates/slate-server/src/status.rs",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "23e3ce0",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the server sends an ErrorInfo with no metadata, so all three agree on nothing",
+      "old": "fn error_info(error: &KernelError) -> rpc::ErrorInfo {\n    let mut metadata = HashMap::new();\n    let mut put = |key: &str, value: String| {\n        metadata.insert(key.to_owned(), value);\n    };",
+      "new": "fn error_info(error: &KernelError) -> rpc::ErrorInfo {\n    let metadata = HashMap::new();\n    let mut put = |_key: &str, _value: String| {};",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

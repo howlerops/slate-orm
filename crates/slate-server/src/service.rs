@@ -2141,12 +2141,19 @@ impl<S: KvStore + KvReadStore> Records for Head<S> {
         if let Some(limit) = self.limits.max_batch_operations
             && request.operations.len() > limit
         {
-            return Err(Status::new(
+            // The bound as a value, not only as a sentence: a caller that
+            // splits and retries needs the number. See `status::refused`.
+            return Err(status::refused(
                 Code::InvalidArgument,
                 format!(
                     "a batch may carry at most {limit} operations; this one carries {}",
                     request.operations.len()
                 ),
+                "BATCH_TOO_LARGE",
+                HashMap::from([
+                    ("limit".to_owned(), limit.to_string()),
+                    ("asked".to_owned(), request.operations.len().to_string()),
+                ]),
             ));
         }
 

@@ -42,6 +42,12 @@ elif [ ! -x "$serverd" ]; then
   exit 1
 fi
 
+# And refuse one built before the source it came from: a prebuilt binary is a
+# snapshot, and a stale one makes this example exercise a server this tree did
+# not produce. See `scripts/prebuilt.py` for the two times that cost something.
+python3 "$root/scripts/prebuilt.py" >/dev/null || {
+  python3 "$root/scripts/prebuilt.py" >&2; exit 1; }
+
 mkdir -p "$work/store"
 sed "s|{DIR}|$work/store|" "$here/head.toml" > "$work/head.toml"
 

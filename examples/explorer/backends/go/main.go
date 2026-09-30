@@ -190,7 +190,7 @@ func (s *server) handle(fn handler) http.HandlerFunc {
 			// fault and says so rather than borrowing a database kind.
 			var e *slate.Error
 			if errors.As(err, &e) {
-				writeSlateError(w, kindName(e.Kind), e.Message, e.Reason, e.Violations)
+				writeSlateError(w, kindName(e.Kind), e.Message, e.Reason, e.Violations, e.Details)
 				return
 			}
 			writeError(w, http.StatusBadRequest, "adapter", err.Error())
@@ -272,6 +272,7 @@ func writeError(w http.ResponseWriter, status int, kind, message string) {
 // Always present, [] included, for the reason reason is.
 func writeSlateError(
 	w http.ResponseWriter, kind, message, reason string, violations []slate.CheckViolation,
+	details map[string]string,
 ) {
 	// Rendered rather than handed to the encoder, so the JSON is this
 	// adapter's shape and not Go's idea of a Go struct: the Python client
@@ -285,10 +286,16 @@ func writeSlateError(
 			"check": one.Check, "column": one.Column, "message": one.Message,
 		})
 	}
+	// `details` the same way: nil and an empty map are one language's two
+	// spellings of "the server sent no numbers", and the contract has one.
+	if details == nil {
+		details = map[string]string{}
+	}
 	w.WriteHeader(http.StatusOK)
 	writeJSON(w, map[string]any{
 		"error": map[string]any{
 			"kind": kind, "message": message, "reason": reason, "violations": broke,
+			"details": details,
 		},
 	})
 }

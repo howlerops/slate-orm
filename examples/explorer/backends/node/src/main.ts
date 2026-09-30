@@ -1870,6 +1870,11 @@ async function main(): Promise<void> {
                 column: one.column,
                 message: one.message,
               })),
+              // The refusal's own numbers, as the server sent them. A bound
+              // in the sentence is a bound a caller has to parse; this is the
+              // same value the three clients each read out of
+              // `ErrorInfo.metadata`, so a disagreement shows up as a diff.
+              details: { ...error.details },
             },
           });
           return;

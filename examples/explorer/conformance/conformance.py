@@ -1090,6 +1090,56 @@ def silent_cases(
     ]
 
 
+#: Cases whose agreed answer must carry a non-empty `error.details`.
+#:
+#: Three adapters agreeing on `{}` is three adapters agreeing on nothing, and
+#: it is exactly what a `details` field wired into the envelope and nowhere
+#: else would produce. The same shape `MUST_DIFFER` exists for, one level in:
+#: a comparison is only worth its run if the thing compared is there.
+#:
+#: A check violation is the richest map the server sends — a `violations`
+#: count, a `check.N` and a `column.N` per failure — so it separates "reads
+#: the map" from "reads a map".
+MUST_CARRY_DETAILS: list[tuple[str, tuple[str, ...]]] = [
+    ("a write the schema's CHECK refuses", ("violations", "check.0", "table")),
+]
+
+
+def details_findings(agreed_by_name: dict[str, Any]) -> list[Finding]:
+    """Every `MUST_CARRY_DETAILS` case whose map is missing or bare.
+
+    `case=None` for the same reason `must_differ_findings` uses it: the case
+    itself passed — all three agreed — and what failed is a property of what
+    they agreed on. Blaming the case would take a passing one off the count.
+    """
+    findings: list[Finding] = []
+    for name, keys in MUST_CARRY_DETAILS:
+        if name not in agreed_by_name:
+            findings.append(Finding(None, [
+                f"FAIL  {name!r} is in MUST_CARRY_DETAILS and not in the agreed "
+                "answers: it failed, or it was renamed and this check went quiet",
+            ]))
+            continue
+        answer = agreed_by_name[name]
+        details = (answer or {}).get("error", {}).get("details")
+        if not details:
+            findings.append(Finding(None, [
+                f"FAIL  {name!r} agreed on an empty `error.details`, so the three "
+                "SDKs agree about nothing. Either the server stopped sending "
+                "`ErrorInfo.metadata` or all three adapters dropped it",
+                f"    {json.dumps(answer, sort_keys=True)[:400]}",
+            ]))
+            continue
+        missing = [key for key in keys if key not in details]
+        if missing:
+            findings.append(Finding(None, [
+                f"FAIL  {name!r}'s `error.details` is missing "
+                f"{', '.join(repr(k) for k in missing)}",
+                f"    {json.dumps(details, sort_keys=True)[:400]}",
+            ]))
+    return findings
+
+
 def must_differ_findings(agreed_by_name: dict[str, Any]) -> list[Finding]:
     """Every `MUST_DIFFER` pair that did not, as findings about no case.
 
@@ -1258,6 +1308,7 @@ def main() -> int:
     findings.extend(access_findings(agreed_by_name))
     findings.extend(silent_cases([c[0] for c in CASES], findings, agreed_by_name))
     findings.extend(must_differ_findings(agreed_by_name))
+    findings.extend(details_findings(agreed_by_name))
 
     print()
     # `FAIL  <what>` per finding and a closing `N passed, M failed`, which is
