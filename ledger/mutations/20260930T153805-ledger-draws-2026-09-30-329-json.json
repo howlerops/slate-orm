@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-30T15:38:05+00:00",
+  "file": "ledger/draws/2026-09-30-329.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_draws.py"
+  ],
+  "commit": "63a7178",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the recovered draw cites an entry that is not there",
+      "old": "\"recovered\": \"ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md\"",
+      "new": "\"recovered\": \"ledger/2026-09-30-no-such-entry.md\"",
+      "verdict": "caught",
+      "caught_by": [
+        "check_draws: 2026-09-30-329.json: `recovered` cites ledger/2026-09-30-no-such-entry.md, which is not a file. A recovered record's only evidence is the entry that wrote the seed down."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

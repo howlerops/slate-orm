@@ -147,6 +147,12 @@ FIXTURES: dict[str, str] = {
         "is what made this file visible, and all fourteen of its strings are "
         "that tree rather than this one"
     ),
+    "scripts/test_check_draws.py": (
+        "writes temporary ledgers containing `ledger/2026-01-01-e.md` and runs "
+        "the draw checker over them, including a case citing "
+        "`ledger/not-there.md` — which exists to prove that checker refuses a "
+        "recovered draw whose evidence is not a file, so the dead one is the point"
+    ),
     "scripts/test_check_caveat_citations.py": (
         "writes temporary `docs/caveat-status.json` files whose verdicts cite "
         "`ledger/a.md`, `ledger/b.md` and `ledger/c.md`; several cases exist "

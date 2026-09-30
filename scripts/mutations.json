@@ -348,6 +348,18 @@
           "new": "      \"checked\": \"2026-09-30\"\n"
         }
       ]
+    },
+    {
+      "guard": "check_draws",
+      "file": "ledger/draws/2026-09-30-329.json",
+      "why": "The directory of draw records is this guard's whole subject, and a fixture cannot show that the real one is being read: the guard globs `ledger/draws/*.json` and joins the records to `docs/caveat-status.json` by key, so a path that has drifted makes every record invisible while every fixture case still passes. Breaking the one record in the tree is the only thing that proves the glob resolves.",
+      "cases": [
+        {
+          "name": "the recovered draw cites an entry that is not there",
+          "old": "\"recovered\": \"ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md\"",
+          "new": "\"recovered\": \"ledger/2026-09-30-no-such-entry.md\""
+        }
+      ]
     }
   ],
   "unmutated": {

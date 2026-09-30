@@ -97,26 +97,26 @@ driven, is worse than one and better than three undriven.
 
 Seven mutations, all caught, all recorded under `ledger/mutations/`:
 
-- `20260930T152908-scripts-check-draws-py.json` — the reproduction check never
+- `ledger/mutations/20260930T152908-scripts-check-draws-py.json` — the reproduction check never
   fires; a stamp may name a draw that did not draw it; the recovery hatch never
   closes. Caught by three named cases in `test_check_draws.py`.
-- `20260930T152918-scripts-caveats-py.json` — the frame is the whole bucket
+- `ledger/mutations/20260930T152918-scripts-caveats-py.json` — the frame is the whole bucket
   rather than the unread part; a checked deliberate row need not name its draw;
   a draw wider than the frame is padded. Caught by five named cases.
-- `20260930T152925-examples-retention-run-sh.json` — **the one that matters.**
+- `ledger/mutations/20260930T152925-examples-retention-run-sh.json` — **the one that matters.**
   `python3 "$root/scripts/prebuilt.py" >/dev/null || { … exit 1; }` replaced by
   `… || true`: the file still names `scripts/prebuilt.py`, so the roster's grep
   half stays green, and the refusal no longer refuses. Caught by
   `examples/retention/run.sh refuses a stale prebuilt binary when driven`, and
   by nothing else in the report.
-- `20260930T153044-clients-python-tests-conftest-py.json` — the same shape in
+- `ledger/mutations/20260930T153044-clients-python-tests-conftest-py.json` — the same shape in
   Python: `_refuse_if_stale(path, …)` replaced by `_ = _refuse_if_stale`, so
   the import and the mention survive and the call does not. Caught by the
   Python drive.
-- `20260930T153102-clients-go-slate-harness-test-go.json` — the Go harness
+- `ledger/mutations/20260930T153102-clients-go-slate-harness-test-go.json` — the Go harness
   stats the binary and forgets to refuse a stale one. Caught by
   `TestAStalePrebuiltBinaryIsRefused`.
-- `20260930T153111-clients-typescript-test-harness-ts.json` — the same in
+- `ledger/mutations/20260930T153111-clients-typescript-test-harness-ts.json` — the same in
   TypeScript, `refuseIfStale(named)` replaced by `void refuseIfStale`. Caught
   by `a prebuilt binary older than the source is refused`.
 
