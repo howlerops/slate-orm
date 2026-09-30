@@ -374,6 +374,11 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # The draw's provenance. The needle is the reproduction, not the file: a
  # `check_draws.py` that stopped re-running the sample would still be there.
  "draw-reproduces": ("does not reproduce", "scripts/check_draws.py"),
+ # The check that replaced `site/check/playground.py` when the landing page
+ # became the workbench. Both closures are of caveats about assertions in that
+ # deleted file, and the witness is the file that took its job: an absence
+ # cannot be witnessed, and this is the nearest thing in the tree to one.
+ "workbench-check": ("tree-columns", "site/check/workbench.py"),
  "stored-schema": ("schema", "crates/slate-kernel/src/migrate.rs"),
  "table-provenance": (None, "scripts/check_table_provenance.py"),
  "through-wire": ("through", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -1078,6 +1083,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ("2026-09-14-a-playground-nobody-could-find.md", "The ordering assertion only pins `#playground` before `#what"): "workbench-check",
+    ("2026-09-14-a-playground-nobody-could-find.md", "The default-column assertion checks the *option label* ends "): "workbench-check",
     ("2026-09-30-a-sample-that-pools-with-the-next-one.md", "Nothing checks that a draw actually came from `--unchecked`."): "draw-reproduces",
     ("2026-09-30-the-exemptions-i-wrote-without-reading.md", "The roster cannot tell whether a file's refusal works"): "stale-binary-driven",
     ('2026-09-30-the-exemptions-i-wrote-without-reading.md',

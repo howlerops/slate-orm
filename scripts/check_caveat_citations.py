@@ -122,6 +122,33 @@ DEFINES = (
 )
 
 
+#: A path a verdict cites *because it is gone*, and why that is the citation.
+#:
+#: A caveat closed by a deletion has nowhere else to point. Two verdicts on
+#: 2026-09-30 described assertions in `site/check/playground.py`, which was
+#: deleted with the landing page it checked; the whole content of both closures
+#: is that the file is not there, and rewording the `by` to avoid naming it
+#: would make the closure unfollowable to hide it from this rule.
+#:
+#: Keyed by `(entry, path)` rather than by path, like `check_cited_docs.py`'s
+#: `NOT_A_FILE`, so the exemption is per-claim and a second verdict citing the
+#: same dead path has to argue for itself. Two rot rules below: an entry whose
+#: path has come *back* is refused, because the citation is then ordinary and
+#: the exemption hides a live check; and an entry nothing cites any more is
+#: refused, because a roster nobody is forced to edit is a roster that goes
+#: stale — the argument `EXTERNAL` and `NOT_A_FILE` both make.
+GONE: dict[tuple[str, str], str] = {
+    (
+        "2026-09-14-a-playground-nobody-could-find.md",
+        "site/check/playground.py",
+    ): (
+        "deleted in 5ffc331 when the landing page became the workbench, which "
+        "is what closed both of that entry's deliberate caveats: they describe "
+        "assertions in that file"
+    ),
+}
+
+
 def defined(root: Path) -> set[str]:
     """Every function and test name this repository defines."""
     names: set[str] = set()
@@ -228,11 +255,16 @@ def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
 
     hidden = ignored(root)
     dead: list[str] = []
+    excused: set[tuple[str, str]] = set()
     counted = 0
     for verdict in verdicts:
         by = verdict.get("by") or ""
         for cited in citations(by):
             counted += 1
+            at = (verdict.get("entry", "?"), cited)
+            if at in GONE:
+                excused.add(at)
+                continue
             if not resolves(cited, hidden, root):
                 dead.append(f"{verdict.get('entry', '?')}: {cited}")
 
@@ -255,6 +287,29 @@ def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
         f"{counted} paths and {len(wanted)} names across {len(verdicts)} verdicts",
     )
     record("every cited path resolves", not dead, "\n      ".join(dead))
+
+    # The two rot rules on `GONE`. Without them it is a list that only grows,
+    # and an exemption for a path that has come back is an exemption hiding a
+    # rule that would now pass on its own.
+    back = [
+        f"{entry}: {cited} resolves again"
+        for (entry, cited) in sorted(GONE)
+        if resolves(cited, hidden, root)
+    ]
+    record(
+        "no GONE entry names a path that is back in the tree",
+        not back,
+        "\n      ".join(back),
+    )
+    unused = [
+        f"{entry}: {cited}" for (entry, cited) in sorted(set(GONE) - excused)
+    ]
+    record(
+        "every GONE entry is one some verdict still cites",
+        not unused,
+        "\n      ".join(unused) and
+        "\n      ".join(unused) + "\n      drop the row; the verdict stopped citing it",
+    )
 
     # `defined()` walks the workspace, which is seconds of I/O, so it runs only
     # when something cited a name.
