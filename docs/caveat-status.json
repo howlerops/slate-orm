@@ -7876,7 +7876,7 @@
       "key": "The `narrowed` residual is the measurement, and nothing sche",
       "verdict": "open",
       "by": "read and found stale. The reason recorded was \"the alternative is a scheduler, and there is none -- no cron, no queue, nothing that runs between sessions\", which was true on 2026-09-27 and stopped being true two days later: .github/workflows/mutations.yml carries a `schedule:` and runs Mondays at 07:11 UTC. So this is ordinary undone work rather than an impossibility, which is what `open` means and `deliberate` does not.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-27-two-verdicts-rested-on-premises-that-had-moved.md",
@@ -8711,7 +8711,7 @@
       "key": "It does not distinguish a caller who can read every row of a",
       "verdict": "open",
       "by": "nothing yet. Doing it properly needs per-tenant statistics \u2014 knowing whether a caller's row filter is a tautology \u2014 which is unbuilt. The grant is the blunt instrument standing in for it.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-13-explain-is-privileged.md",
@@ -8817,7 +8817,7 @@
       "key": "The three defaults (1M groups, 1M distinct values, 5M sorted",
       "verdict": "open",
       "by": "still chosen rather than measured. Nothing establishes where a real node falls over, so the numbers are a guard rail rather than a calibration; docs/performance.md measures throughput and not the failure point.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-13-per-request-ceilings.md",
@@ -9060,7 +9060,7 @@
       "key": "The wasm is not reproducible: two builds of one commit diffe",
       "verdict": "open",
       "by": "still not reproducible, and nothing needs it to be. --remap-path-prefix and a pinned toolchain were named as most of the way there and have not been attempted; the question they would answer \u2014 is the deployed bundle the audited one \u2014 has not been asked yet.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-14-a-playground-that-runs-the-kernel.md",
@@ -9084,14 +9084,14 @@
       "key": "Nothing catches a clock wrong by a constant factor *inside* ",
       "verdict": "open",
       "by": "still true, and only a second implementation would catch it. `performance.now()` is the one clock the browser offers that is not the wall clock, so the second source would have to be the wall clock \u2014 coarse enough that a 0.6x error on a millisecond measurement hides inside it.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-14-a-timer-that-can-be-wrong.md",
       "key": "The `+ N ms JSON` figure the status bar shows is still a sub",
       "verdict": "open",
       "by": "still a subtraction and still unprofiled. It is labelled as marshalling, is mostly serde_json, and nothing has measured what the rest is.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-14-ci-that-had-never-run.md",
@@ -9135,14 +9135,14 @@
       "key": "`AggregateExplainResponse.display` is the sub-plan's text wi",
       "verdict": "open",
       "by": "still ordinals and a Debug form. Naming columns needs the display side to hold a TableDef, which JoinExplanation's does not, and nothing has been done about that.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-14-explaining-a-grouped-read.md",
       "key": "`decodes` is per input, and for a chain it is per step \u2014 but",
       "verdict": "open",
       "by": "still unreported. A reader comparing a group key to `decodes` still does the ordinal shift by hand, which is the arithmetic ColumnRef exists to avoid everywhere else.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-14-explaining-a-grouped-read.md",
@@ -9214,7 +9214,7 @@
       "key": "The join is inner. Left, right and full outer exist in the k",
       "verdict": "open",
       "by": "the binding still offers an inner join only. Left, right and full outer exist in the kernel and would mostly demonstrate the placeholder the row renderer already carries, which is why this has stayed unbuilt rather than been decided against.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md",
@@ -9317,7 +9317,7 @@
       "key": "Nothing caches across visits beyond what the browser's HTTP ",
       "verdict": "open",
       "by": "still unchecked. The browser's HTTP cache is probably enough for a Pages-served asset and nobody has looked at the headers Pages actually sends.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-14-ports-below-the-ephemeral-range.md",
@@ -9643,7 +9643,7 @@
       "key": "The measurement is loopback against an in-memory store, whic",
       "verdict": "open",
       "by": "still loopback. examples/deployed is where a real-network ratio would come from and it does not exercise Batch, so the 9.4x remains the least favourable case and the favourable one is unmeasured.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-16-a-batch-is-a-round-trip-a-transaction-is-a-guarantee.md",
@@ -9674,7 +9674,7 @@
       "key": "Nothing measures how far behind a replica can get, so \"one c",
       "verdict": "open",
       "by": "still inferred rather than observed: 'one chunk' comes from 18,000 against 20,000 with a 2,000-row batch, not from a measurement of replica lag.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-16-a-durability-check-that-cried-data-loss.md",
@@ -9843,14 +9843,14 @@
       "key": "`RETURNING` is all-or-nothing: the rows as written, never a ",
       "verdict": "open",
       "by": "still all-or-nothing. A caller that wants one column of the written rows gets whole rows, bounded now by the returning ceiling rather than projected.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-16-predicate-writes-on-the-wire-and-eight-errors-that-read-as-a-crash.md",
       "key": "The rows are materialised whether or not `returning` is set,",
       "verdict": "open",
       "by": "still true and still unmeasured. `delete_where` collects every matched row before writing anything, so a DELETE over a huge table is bounded by memory whatever `returning` says, and nothing establishes where that bound is.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-16-regenerate-the-stubs-the-proto-change-invalidated.md",
@@ -9916,7 +9916,7 @@
       "key": "The three clients now key their group lookups on a serialise",
       "verdict": "open",
       "by": "still unasserted. The three would only disagree over a field their encoders order differently, which a flat oneof does not have \u2014 so the risk is conditional on `Value` growing a map, and the conformance runner is where that should be caught.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-16-the-three-sdks-compared-on-relations-and-a-refusal-that-was-not-one.md",
@@ -10029,14 +10029,14 @@
       "key": "The wire carries no scale, ever.",
       "verdict": "open",
       "by": "still true, and the entry calls it a real hole: a client renders a decimal from the scale it declared locally, the fingerprint deliberately does not hash the scale because a scale addresses no column, and nothing checks the two agree. A client with the scale wrong reaches the right column and prints the wrong number. Re-read 2026-09-30: crates/slate-kernel/src/migrate.rs stores a column's scale in StoredColumn, and `fingerprint` still does not hash it - it hashes type_code, is_nullable and is_dropped only - so the claim holds where it matters.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
       "key": "A conditional update is one round trip per row.",
       "verdict": "open",
       "by": "still a read per row where update_many reads in one wave, and still arithmetic rather than a measurement \u2014 no benchmark exercises it.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
@@ -10166,7 +10166,7 @@
       "key": "Nothing exports the kernel.",
       "verdict": "open",
       "by": "still head-node request counters only. Rows read, bytes fetched from the object store, compaction and lease renewals have no counters in the kernel to export.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-a-number-you-cannot-subtract-is-not-a-measurement.md",
@@ -10259,7 +10259,7 @@
       "key": "No client surface.",
       "verdict": "open",
       "by": "still true: the three Scalar builders express arithmetic and none knows a decimal's scale, so a client can build an expression the server refuses. The refusal is clear and arrives before any rows, and it arrives from the server.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md",
@@ -10281,7 +10281,7 @@
       "key": "Aggregates other than `SUM` were not audited",
       "verdict": "open",
       "by": "still unaudited. SUM is tested, MIN and MAX pass values through and are very likely fine, AVG is the known float \u2014 'very likely' is the part nobody has checked.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
@@ -10306,7 +10306,7 @@
       "key": "A conditional update is one round trip per row.",
       "verdict": "open",
       "by": "still a read per row where update_many reads in one wave, still arithmetic rather than a measurement.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-decimals-and-conditional-updates-in-three-clients.md",
@@ -10340,7 +10340,7 @@
       "key": "No SQL surface.",
       "verdict": "open",
       "by": "the front end has no `DELETE \u2026 WHERE \u2026 AS OF` and the entry proposes none.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-deleting-a-row-somebody-else-just-edited.md",
@@ -10378,7 +10378,7 @@
       "key": "A chain's computed value renders with no scale",
       "verdict": "open",
       "by": "narrow and not nothing, as the entry says: the kernel refuses a computed decimal whose scale is not one a column already declares, so a computed decimal in a chain shows as its units.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md",
@@ -10453,7 +10453,7 @@
       "key": "It does not give Go or TypeScript a per-read freshness.",
       "verdict": "open",
       "by": "the asymmetry is recorded in the example's README and at both call sites, and left for its own item.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-pin-the-deployed-run-to-one-snapshot.md",
@@ -10522,7 +10522,7 @@
       "key": "One catalog is generated from.",
       "verdict": "open",
       "by": "still the explorer's. examples/deployed and examples/batchbench have their own head.toml and hand-written or absent declarations; nothing stops the generator being pointed at them and nothing does.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md",
@@ -10536,7 +10536,7 @@
       "key": "Nothing generates the catalog itself.",
       "verdict": "open",
       "by": "migrations from a schema diff is still the harder half and still open. This reads a catalog somebody wrote.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-the-docs-catch-up-with-two-shipped-items.md",
@@ -10739,7 +10739,7 @@
       "key": "`#[derive(Record)]` cannot declare either field. A check wri",
       "verdict": "open",
       "by": "still true. A check written in Rust goes through CheckDef and can call the builders; one written through the derive macro's attribute cannot say `column = \"...\"`.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-a-default-cannot-hold-now.md",
@@ -10760,7 +10760,7 @@
       "key": "The conformance purge case runs as `app`, which holds everyt",
       "verdict": "open",
       "by": "the refusals are covered in Rust only, so the three clients are not compared on what a refused purge looks like the way they are for include_deleted.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-a-real-enum-and-a-real-soft-delete.md",
@@ -10824,7 +10824,7 @@
       "key": "Nothing returns a typed row. A query still answers `Value`s ",
       "verdict": "open",
       "by": "a query still answers Values and the caller passes them to the decoder. Handing back a typed row is a client change in three languages and is not started.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-a-row-with-names-on-it.md",
@@ -10885,7 +10885,7 @@
       "key": "Foreign keys still fail one at a time, and so does the uniqu",
       "verdict": "open",
       "by": "still one at a time, and so does the unique-index check: a row can be refused for a check, fixed, and refused again for a duplicate key. Widening the same treatment is a change into the write path's ordering.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-forgetting-a-retired-row.md",
@@ -10907,7 +10907,7 @@
       "key": "It is untested against SlateDB and against a replica \u2014 only ",
       "verdict": "open",
       "by": "still MemoryStore only. The erase path is the one hard deletes have always used, so the risk is low and it is still untested at that layer.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-look-before-the-restart.md",
@@ -10941,7 +10941,7 @@
       "key": "It does not stop the next step that needs the built client f",
       "verdict": "open",
       "by": "the convention relies on somebody reading run.sh, and this entry is the second place that says so. A `prepare` script would have enforced it.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-the-build-step-the-new-test-needed.md",
@@ -11014,7 +11014,7 @@
       "key": "`message` is still a plain string with no translation story,",
       "verdict": "open",
       "by": "three separate gaps in one sentence, all still open: no translation story, no `column` or `message` in the derive attribute, and a generated CHECKS map keyed by a name with no compile-time guarantee it matches one the server sends.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-what-a-write-actually-touched.md",
@@ -11066,14 +11066,14 @@
       "key": "No prediction elsewhere was re-examined.",
       "verdict": "open",
       "by": "site/docs/roadmap.html and README.md's gap table both carry forward-looking statements and only the gap table has been re-read.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-the-arm-the-refusal-never-reaches.md",
       "key": "No other arm was re-examined for the same problem.",
       "verdict": "open",
       "by": "the other six go through the same `applied` call and are pinned by four tests, and 'pinned by a test that can fail' was verified by mutation only for the arms those tests name.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-the-arm-the-refusal-never-reaches.md",
@@ -11148,7 +11148,7 @@
       "key": "It builds nothing",
       "verdict": "open",
       "by": "the recurrence is still unguarded and the three instances stand as three instances.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-the-guard-i-did-not-build.md",
@@ -11214,7 +11214,7 @@
       "key": "Nothing checks the message at the *wire* boundary.",
       "verdict": "open",
       "by": "the builder is the only constructor TableDef exposes, which is a strong hint no bypass exists \u2014 and the entry is explicit that a hint is not a check. Nobody has looked for such a path.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-20-a-view-cannot-be-a-privilege-boundary.md",
@@ -11226,7 +11226,7 @@
       "key": "Still no fix",
       "verdict": "open",
       "by": "whether restoring requires ReadDeleted is a policy decision nobody has made, so the five paths still disagree about a retired row.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-20-four-say-absent-one-says-present.md",
@@ -11347,7 +11347,7 @@
       "key": "`transaction.delete` can still fail in ways no test produces",
       "verdict": "open",
       "by": "a storage error, a fence, a cascade over the limit. The arm's error branch is exercised, which is what the counting rule needed; the arm is not proved correct under every error the kernel can raise.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-20-the-child-that-made-the-arm-reachable.md",
@@ -11395,7 +11395,7 @@
       "key": "No estimate from a persisted count.",
       "verdict": "open",
       "by": "named as the direction and not taken; it needs a format change to TableState.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-20-the-estimate-a-preview-cannot-make.md",
@@ -11421,7 +11421,7 @@
       "key": "The backfill estimate is still missing.",
       "verdict": "open",
       "by": "the item with the most value left in it, and a real change to the planner's output rather than a harness change. A table's statistics could answer it and --plan does not ask them.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-20-the-exit-code-a-deployment-now-uses.md",
@@ -11451,7 +11451,7 @@
       "key": "No new table is covered by construction.",
       "verdict": "open",
       "by": "a sixth table in head.toml gets a generated decoder and no live row until somebody edits three handlers. The three unit suites have a coverage guard; this route has none, and building one means the adapters reading their generated module reflectively.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-20-the-other-three-decoders.md",
@@ -11646,7 +11646,7 @@
       "key": "Nothing stops the next mutation run adding more unlabelled s",
       "verdict": "open",
       "by": "noticing is still a person's job and this is the second time it has fallen to one. A guard would need mutate.py snapshotting the file around each case \u2014 plausible, not attempted, and worth doing if it recurs a third time.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-21-ci-rustfmt-split-a-builder-chain.md",
@@ -11708,14 +11708,14 @@
       "key": "It tests one shape of unmigrated.",
       "verdict": "open",
       "by": "a missing index, the case that returns no rows. A follower disagreeing about a column is refused earlier by the fingerprint; a follower mid-backfill on a partly-built index is a third case and is not constructed.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-the-read-only-window-demonstrated.md",
       "key": "Nothing exercises the recovery.",
       "verdict": "open",
       "by": "no test watches the node become correct on its own. It needs the leader restarted with the wider catalog and the follower re-read, which is a longer test and a different claim.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-the-read-only-window-demonstrated.md",
@@ -11764,7 +11764,7 @@
       "key": "The demo's UI does not show these groupings.",
       "verdict": "open",
       "by": "they are in the corpus and the contract; the web front end's grouping picker lists the older ones, so a reader clicking through will not meet a decimal expression.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md",
@@ -11845,7 +11845,7 @@
       "key": "The probe covered `paged` and `returning`. Every other field",
       "verdict": "open",
       "by": "every other field \u2014 the access hints, build_limit, the freshness token \u2014 is unprobed, and each answer costs a full run. The runner says how to find out and nobody has.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-which-guard-covers-which-field.md",
@@ -11859,7 +11859,7 @@
       "key": "The join tests use a self-join on one table, because the fix",
       "verdict": "open",
       "by": "the fixture has exactly one soft-deleting table, so a join between two of them \u2014 where each side's flag could be crossed with the other's \u2014 is untested.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-19-who-may-see-a-deleted-row.md",
@@ -11922,14 +11922,14 @@
       "key": "The planner still prefers a table scan",
       "verdict": "open",
       "by": "docs/full-text.md's finding, unchanged, and the reason every test here hints.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-21-contains-on-the-wire.md",
       "key": "The Go and TypeScript hints are untested beyond this file.",
       "verdict": "open",
       "by": "nothing checks that a hint naming an index the table does not have produces a warning, which Python's test_explain.py does check. The Python case is clients/python/tests/test_explain.py; the Go and TypeScript suites have no equivalent (2026-09-30).",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-21-contains-on-the-wire.md",
@@ -12139,7 +12139,7 @@
       "entry": "2026-09-28-the-invisible-backlog-is-triaged.md",
       "key": "The 22 `moment` verdicts in this batch are the weakest.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "nothing re-reads them. 'Nothing was measured' is a moment when there was nothing to measure and an open caveat when there was, and each was judged one at a time by one reader on one day."
     },
     {
@@ -12154,7 +12154,7 @@
       "entry": "2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md",
       "key": "Nothing here has seen either ceiling bind.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "narrowed from 'untested end to end' to 'untestable from a client without a knob nobody should ship'. Observing either bind needs a way to block a handler: tonic polls the handler before the timeout's sleep, and concurrency_limit_per_connection releases its permit when the response future resolves, which for a streaming RPC is before any row is read."
     },
     {
@@ -12210,7 +12210,7 @@
       "entry": "2026-09-28-the-scale-hole-was-closed-ten-days-ago.md",
       "key": "Nothing stops the fourth time.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "the habit this wants \u2014 when a caveat says a thing is unbuilt, grep for it before writing the verdict \u2014 is a habit, and the three wrong verdicts were written by somebody who would have said they had it. No guard is proposed, because matching a prose caveat to the commit that closed it is the existence-not-aptness problem ledger/2026-09-26-the-citation-nobody-could-follow.md already records."
     },
     {
@@ -12263,7 +12263,7 @@
       "key": "It checks one claim, not the class.",
       "verdict": "open",
       "by": "nothing yet. Whether any other entry states something a later commit reversed is unexamined, and that count is what would decide whether a forward pointer is worth its cost.",
-      "checked": "2026-09-28"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-28-the-four-entries-that-were-true-when-they-were-written.md",
@@ -12278,7 +12278,7 @@
       "entry": "2026-09-28-two-reads-counted-rather-than-argued.md",
       "key": "It does not measure a round trip.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "nothing yet. examples/deployed is where a network round trip would be measured and it does not exercise a relation load; it needs MinIO, which this container does not have."
     },
     {
@@ -12324,14 +12324,14 @@
       "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
       "key": "It does not establish when the handler pends.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "nothing yet. Core count, tokio's scheduler under load, socket readiness and timer resolution are all candidates and none was investigated; the limits page's advice is conservative because of it."
     },
     {
       "entry": "2026-09-28-a-measurement-that-reversed-under-ci.md",
       "key": "It does not check the other measurements from this session f",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "nothing yet. crates/slate-orm/tests/read_counts.rs counts calls rather than timing and has no race of this kind, but no other single-machine number in the ledger was re-examined for whether it would reverse on a second machine."
     },
     {
@@ -12458,7 +12458,7 @@
       "entry": "2026-09-28-the-guard-i-proposed-an-hour-ago-does-not-work.md",
       "key": "The three-of-twenty-three verification is thin.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "nothing yet. Three shows the flags are not obviously stale and does not show the other twenty are sound; twenty more reads would price the flagged stratum, and this entry argues they are better spent at random."
     },
     {
@@ -12566,7 +12566,7 @@
       "entry": "2026-09-28-the-census-finished-and-three-more-were-already-answered.md",
       "key": "Nothing acts on the cause this entry identifies.",
       "verdict": "open",
-      "checked": "2026-09-28",
+      "checked": "2026-09-30",
       "by": "nothing yet. The mechanical version was measured here and flags 65 of 193 to find 4, with recall 2 of 3; what is left is a convention in ledger/README.md, which is not a check."
     },
     {
@@ -12608,7 +12608,7 @@
       "entry": "2026-09-29-the-days-own-caveats-read-and-a-phrase-that-did-not-survive-counting.md",
       "key": "Two of the 33 that hold are about this entry's own subject a",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. Latency and bytes on the wire needs MinIO; a conformance case comparing the three clients' request counts is tracked and not started."
     },
     {
@@ -12639,7 +12639,7 @@
       "entry": "2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md",
       "key": "No client refuses a long list before sending it.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. The refusal arrives from the server after the request is encoded and decoded, so the bytes are spent; none of the three clients checks the length before sending."
     },
     {
@@ -12662,7 +12662,7 @@
       "entry": "2026-09-29-the-deliberate-verdicts-priced.md",
       "key": "Reading remains the only method.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet, and two guards were designed, measured and withdrawn to establish it. The design that would work needs a `depends` field per verdict and a backfill of 900 rows, each of which is the reading it would replace."
     },
     {
@@ -12712,14 +12712,14 @@
       "entry": "2026-09-29-the-panels-the-endpoints-were-already-serving.md",
       "key": "The subquery fix is a dedup, not a join.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. IN (SELECT ...) still materialises in crates/slate-wasm/src/lib.rs's resolve_subqueries; a subquery whose distinct values exceed max_in_values is refused, and the refusal's own advice \u2014 put them in a table and join to it \u2014 is advice the front end could take itself."
     },
     {
       "entry": "2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md",
       "key": "It still counts calls, not work.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet, and inherited unchanged from the two entries this closes the other half of: four rows in a batch are still four schema claims and four value encodings in the client, and no count can see that."
     },
     {
@@ -12796,14 +12796,14 @@
       "key": "Nothing rosters the rest of an `EXPLAIN`.",
       "verdict": "open",
       "by": "nothing yet. `indexOnly`, `sorts`, `residual` and `display` are compared across the three adapters and asserted against nothing, exactly as `access` was. The same roster would hold them; this stopped at the field the caveat named.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
       "key": "The other field in that entry's pair of caveats is untouched",
       "verdict": "open",
       "by": "nothing yet. Inherited from 2026-09-19-which-guard-covers-which-field.md: the access hints, `build_limit` and the freshness token are unprobed, and each answer costs a full run.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-pair-that-differs-for-the-wrong-reason-passes.md",
@@ -12851,7 +12851,7 @@
       "key": "Two of the twelve groupings are refusals or near it.",
       "verdict": "open",
       "by": "still true and worth knowing when reading 'every grouping': `badPrice` is refused at plan time and carries no groups, so the sum is compared on eleven.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
@@ -12907,14 +12907,14 @@
       "key": "The money measure is one column at one scale.",
       "verdict": "open",
       "by": "still true: books.price is the demo's only decimal, the UI holds the scale as a literal the way the three adapters hold theirs, and nothing checks it against the catalog \u2014 the generated catalog.ts carries column names only. (`git grep -c scale -- examples/explorer/web/src/catalog.ts` finds none: the generated catalog carries column names only, 2026-09-30)",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
       "key": "The e2e's mutation-readability is fixed, not tested.",
       "verdict": "open",
       "by": "nothing yet. Re-indenting those lines puts the runner back to scoring UNREADABLE, which interrupts rather than passing quietly, but nothing fails. A guard holding every runner here to one output format is the version that scales; scripts/test_check_sh.py is the precedent for where it would live.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
@@ -13232,13 +13232,13 @@
       "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
       "key": "Nothing measures what the restored floor costs.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-read-your-writes-is-not-monotonic-reads.md",
       "key": "The `monotonic` field is now consulted in exactly one place ",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
@@ -13253,7 +13253,7 @@
       "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
       "key": "Nothing checks the order a visitor actually sees.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-fifth-table-list-is-derived-now.md",
@@ -13269,7 +13269,7 @@
       "key": "It does not prove the fingerprint reaches the server.",
       "verdict": "open",
       "by": "true and the strongest remaining half. Rule 2 checks that a named call appears in a named file; an adapter calling `Declaring` on an empty map, or building a second client that skips it, stays green. The run-time version belongs in examples/explorer/run.sh --conformance, which still has no way to express 'this case should break'.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
@@ -13294,14 +13294,14 @@
       "key": "The import shape is approximate.",
       "verdict": "open",
       "by": "true. Both arms are regexes over lines, and a re-export chain satisfies rule 1 for the right reason today while continuing to satisfy it after the middle link stops re-exporting. Nothing in the five real files is a re-export, so this is a hazard rather than a defect.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-guard-that-was-green-on-the-word-schema.md",
       "key": "Nothing checks the other four caveats in that entry.",
       "verdict": "open",
       "by": "true: `One catalog is generated from` and `Nothing generates the catalog itself` are untouched and still open in this file.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
@@ -13317,7 +13317,7 @@
       "key": "No other error message in the parser was reviewed for the sa",
       "verdict": "open",
       "by": "true. This one was fixed because an entry recorded what it cost; `expected a column name, found ...` and the operand-type refusals may have the same shape and were not read.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
@@ -13333,7 +13333,7 @@
       "key": "It does not add a guard that a correction reaches the rest o",
       "verdict": "open",
       "by": "true and the sharper half. check_retired_claims.py catches a restatement anywhere once the phrase is listed, but nothing makes listing it part of withdrawing a claim -- which is precisely how this instance survived ten days. A guard would have to read a ledger entry's withdrawal and demand a list entry, which is a real rule and is not written.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-caveat-closed-by-a-line-through-it.md",
@@ -13378,21 +13378,21 @@
       "key": "It adds no rule that would have caught either.",
       "verdict": "open",
       "by": "true and the sharper half. check_closed_caveats.py witnesses a *closed* caveat against the tree; nothing witnesses an open one against the thing it says is absent. A rule that did would have caught the bar chart the day the e2e assertion landed.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
       "key": "It leaves the entry's other caveat open.",
       "verdict": "open",
       "by": "true, and it is now that entry's only open one: nothing fails if a future Catalog grows a second name-to-TableDef lookup a view could satisfy. check_handlers.py rule 1 covers the handlers, not the catalog.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-bytes-do-not-need-a-network.md",
       "key": "It measures no latency, and that half is still blocked.",
       "verdict": "open",
       "by": "true, and deliberately not faked. A loopback duration against an in-memory store is mostly scheduling; examples/deployed is where it would be timed and needs MinIO, which this container has none of.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-bytes-do-not-need-a-network.md",
@@ -13430,14 +13430,14 @@
       "key": "It measures no latency, in any client.",
       "verdict": "open",
       "by": "true and unchanged: a loopback duration against an in-memory store is mostly scheduling, and examples/deployed needs MinIO.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
       "key": "It compares the three by hand.",
       "verdict": "open",
       "by": "true. The deltas agreeing at +82 is a fact two tests report and a person noticed; nothing asserts the relation. A runner that did would need one shared workload with identical rows across the three adapters, which is a real change to /api/round-trips.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-same-framing-cost-in-three-clients.md",
@@ -13470,7 +13470,7 @@
       "key": "No join, no aggregate.",
       "verdict": "open",
       "by": "true, and the reason differs between them: a join's fair comparison is one Join against two Query calls, which is worth measuring; the aggregate's request side is uninformative because both requests are small and the saving is in the response. The join is the piece of work left.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-batching-saves-bytes-when-the-header-is-shared.md",
@@ -13486,14 +13486,14 @@
       "key": "Three parents, one shape.",
       "verdict": "open",
       "by": "true. The saving is roughly the header times n-1 so it grows with the fan-out, and nothing measures the slope the way the write path's five sizes did.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-convention-i-inferred-from-one-entry.md",
       "key": "It does not check the majority convention either.",
       "verdict": "open",
       "by": "true, and it is the rule worth having: an entry that strikes a caveat and writes no closure inside the strike says a claim was answered and names nothing that answered it -- the mirror of the `by`-is-required rule for `closed`. This entry found the wrong rule and stopped rather than building the right one in the same breath.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-convention-i-inferred-from-one-entry.md",
@@ -13515,7 +13515,7 @@
       "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
       "key": "`BOUNDARY` is a heuristic, not a parser.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
@@ -13528,7 +13528,7 @@
       "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
       "key": "The roster of test names is still weaker than a roster of do",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md",
@@ -13640,7 +13640,7 @@
       "entry": "2026-09-29-a-guard-whose-roster-was-itself.md",
       "key": "The cost-prose marker's granularity is unchanged.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
@@ -13654,13 +13654,13 @@
       "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
       "key": "The scope rule only sees `<root> / \"\u2026\"` paths.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
       "key": "Nothing checks the two sentences beyond their tree lists.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-scope-claim-that-understates-reads-as-exhaustive.md",
@@ -13699,7 +13699,7 @@
       "entry": "2026-09-29-the-mutations-run-again-now.md",
       "key": "The eleven reasons will rot.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
@@ -13728,7 +13728,7 @@
       "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
       "key": "The measurement was taken once.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-every-guard-now-has-one.md",
@@ -13742,7 +13742,7 @@
       "entry": "2026-09-29-every-guard-now-has-one.md",
       "key": "One mutation per guard is one sample.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-every-guard-now-has-one.md",
@@ -13796,8 +13796,9 @@
     {
       "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
       "key": "Seventy-six open caveats last checked on 2026-09-28 were not",
-      "verdict": "open",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "2026-09-30-the-open-frame-read-against-the-tree.md: every open caveat was re-read in one pass and stamped, and the mechanical half - resolving each backticked token against git ls-files and git grep - found none whose subject has left the tree",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
@@ -13810,13 +13811,13 @@
       "entry": "2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md",
       "key": "Nothing stops this recurring.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-correction-reached-the-caveats-and-not-the-summaries.md",
       "key": "It does not find the next one.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. Whether any other entry restates a claim a later commit corrected is unexamined; the count that would decide whether a rule is worth building is how many caveats quote a claim sourced elsewhere, and nothing measures it."
     },
     {
@@ -13900,7 +13901,7 @@
       "entry": "2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md",
       "key": "It does not stop the next filtered summary.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. The remedy is to read check.sh's last line or its exit code, which is a habit and not a check; a hook refusing a commit whose session never ran check.sh to completion is the mechanical version and is not built."
     },
     {
@@ -13923,7 +13924,7 @@
       "entry": "2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md",
       "key": "A mutation that breaks the teardown cannot verify its own re",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. The `set +m` run left listeners by construction, so mutate.py's restore check hit the port pre-flight and reported the tree unclean while `git diff` on run.sh was empty. Nothing distinguishes a dirty machine from a dirty tree."
     },
     {
@@ -13969,14 +13970,14 @@
       "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
       "key": "The 20,000 rows are calibrated against a default window.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. Neither tonic's nor hyper's initial HTTP/2 window is pinned here, so a version that raises it past half a megabyte would let the whole response through and turn the test's refusal into a pass by accident. The margin is eight windows and is not a guarantee; a handler that blocks on command would be, and shipping that knob was rejected in ledger/2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md."
     },
     {
       "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
       "key": "Nothing measures what the layer costs.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. An Arc clone, an atomic decrement and a body wrapper per request; observe.rs's equivalent wrapper is 4.7 ns a frame and this one does strictly less, so the cost is very likely smaller \u2014 an inference from a neighbouring measurement, not a measurement of this."
     },
     {
@@ -13991,7 +13992,7 @@
       "entry": "2026-09-29-four-loose-ends-this-session-tied-off.md",
       "key": "The log-tail path was not re-exercised end to end after the ",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. It runs only for a start that gets past the port pre-flight and then fails to reach readiness, which is now hard to produce on purpose. Both halves were verified separately \u2014 run.sh prints the line, the line parses to the real directory with its four logs \u2014 and the join between them is read, not run."
     },
     {
@@ -14015,7 +14016,7 @@
       "entry": "2026-09-29-four-loose-ends-this-session-tied-off.md",
       "key": "`--help` prints a declared string, not a verified behaviour.",
       "verdict": "open",
-      "checked": "2026-09-29",
+      "checked": "2026-09-30",
       "by": "nothing yet. scripts/test_mutate.py checks that mutate_guard.py's DIALECT names a dialect that exists, not that its output is readable by that dialect. The two come apart if the adapter's summary line changes, and what would catch it is a mutation run against a guard."
     },
     {
@@ -14113,7 +14114,7 @@
       "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
       "key": "It does not check that the credited entry is the *right* one",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
@@ -14137,7 +14138,7 @@
       "entry": "2026-09-29-describing-the-work-is-not-citing-it.md",
       "key": "A strike that paraphrases still pairs with nothing.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-one-allocator-instead-of-two.md",
@@ -14177,7 +14178,7 @@
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
       "key": "Nothing has been published.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
@@ -14207,13 +14208,13 @@
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
       "key": "The version guard reads two manifests.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
       "key": "Nothing checks the release workflow's own shape.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
@@ -14228,7 +14229,7 @@
       "entry": "2026-09-29-three-could-be-anothers-counted.md",
       "key": "It counts four, and there are a hundred and twenty-two.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-three-could-be-anothers-counted.md",
@@ -14243,7 +14244,7 @@
       "entry": "2026-09-29-three-could-be-anothers-counted.md",
       "key": "The `NOT IN` work is named, not done.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
@@ -14255,7 +14256,7 @@
       "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
       "key": "No nullable column, so nothing here is SQL's `NOT IN`.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
@@ -14270,7 +14271,7 @@
       "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
       "key": "The conformance runner does not compare the three.",
       "verdict": "open",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-three-doors-and-nobody-walking-through-them.md",
@@ -14319,7 +14320,7 @@
       "key": "The per-frame cost is inherited, not re-measured.",
       "verdict": "open",
       "by": "the 4.7 ns a frame comes from ledger/2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md and predates the two atomics this change adds to that path. Re-timing it is a benchmark nobody has run.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-seventy-two-deliberate-verdicts-read.md",
@@ -14336,7 +14337,7 @@
       "key": "It does not change how `deliberate` is maintained.",
       "verdict": "open",
       "by": "unchanged, and the standing gap both audit entries point at: no `checked` field on a deliberate row, no sweep, no guard. ledger/2026-09-28-the-invisible-backlog-is-triaged.md argues the general version cannot be automated; a date field is not the general version and is not written.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-seventy-two-deliberate-verdicts-read.md",
@@ -14376,9 +14377,9 @@
     {
       "entry": "2026-09-29-the-deliberate-sample-carried-to-168.md",
       "key": "It did not look for stale reasons systematically.",
-      "verdict": "open",
-      "by": "the one found was noticed because it happened to count something. Nothing swept for the class. A `by` that argues rather than counts cannot be swept for at all, but the counting subclass could be, and was not.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md: the whole frame was read rather than sampled, which is the systematic version of exactly this. Two verdicts were false and both are now closed",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-deliberate-sample-carried-to-168.md",
@@ -14394,7 +14395,7 @@
       "key": "Nothing schedules the next sample.",
       "verdict": "open",
       "by": "no third reading planned, no `checked` field on a deliberate row, nothing that notices a year passing. The same gap as 'It does not change how `deliberate` is maintained', from the other end.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-two-rows-for-one-gap.md",
@@ -14425,7 +14426,7 @@
       "key": "It does not measure time to the first row.",
       "verdict": "open",
       "by": "the residual this entry writes onto three other rows, stated here as its own work. Reading crates/slate-server/src/service.rs established where the head falls -- after the cursor opens, before any row -- so what is unmeasured is narrower than it looked: the per-row start, not the whole setup. Unconfounded by the consumer, unlike time to the last row, and therefore worth measuring rather than refused.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-three-rows-that-asked-two-questions-at-once.md",
@@ -14441,14 +14442,14 @@
       "key": "Nothing re-runs it.",
       "verdict": "open",
       "by": "the sweep is fifteen lines in a scratch directory, run twice today and committed nowhere. The next duplicate pair arrives unnoticed. Same gap as 'Nothing stops the next duplicate' in ledger/2026-09-29-two-rows-for-one-gap.md, from the mechanical end rather than the judgement end -- that one argues no guard can decide two claims are one gap, and this one is only about running the shortlist.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-fourteen-checks-that-ran-only-here.md",
       "key": "It does not prove the fourteen were passing.",
       "verdict": "open",
       "by": "the next CI run is what says. Nine of the fourteen have never run on CI's kernel, Python or Go, and CLAUDE.md records four separate instances of a check green here and red there \u2014 the clippy, rustfmt, ruff and ty toolchain gaps. Until a run reports on them this is an untested claim about fourteen checks.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-fourteen-checks-that-ran-only-here.md",
@@ -14463,7 +14464,7 @@
       "key": "Nothing checks the third direction.",
       "verdict": "open",
       "by": "a guard in scripts/ that is in neither check.sh nor a workflow is invisible to both rules, which compare two lists to each other and never to the directory. That is how a guard written and never wired would hide. check_mutations_roster.py is the closest thing to a rule about it and is not that rule.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-fourteen-checks-that-ran-only-here.md",
@@ -14477,9 +14478,9 @@
     {
       "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
       "key": "CLAUDE.md's half is still a loop over every word before \"job",
-      "verdict": "open",
-      "by": "ordinary undone work, and this change made it likelier rather than less: extending COUNTED down to `one` means `four` and `six` now resolve, so prose like 'the four jobs that build binaries' would be compared against the job total. The check.sh half is anchored on the claim; the CLAUDE.md half is not, and the same anchoring would do it.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/test_check_sh.py's CLAUDE_MD_COUNTS: both of CLAUDE.md's job counts are now read by their own anchored pattern, so a message names which sentence drifted and no ordinary English is compared against the total. ledger/2026-09-30-the-open-frame-read-against-the-tree.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
@@ -14495,7 +14496,7 @@
       "key": "Only two files were swept.",
       "verdict": "open",
       "by": "the sweep was two greps, for `test_check_sh` and for `seventeen`. A third file describing the guard in words matching neither is exactly as stale as these two were, and nothing looked.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
@@ -14511,7 +14512,7 @@
       "key": "`check.sh` has the same hidden prerequisite and still claims",
       "verdict": "open",
       "by": "ordinary undone work, and a live wrong sentence: check.sh's header says it needs no built binary, and its ts-adapter-types step needs the declarations clients/typescript/package.json points `types` at, which only its build produces. On a clean checkout that step fails the way CI just did. Either the sentence gains a fifth exception or the script builds, and neither is chosen.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-first-run-said-red-and-it-was-ordering.md",
@@ -14535,7 +14536,7 @@
       "key": "The ratio is one shape at one size.",
       "verdict": "open",
       "by": "one whole-table read of 60 narrow rows. A point read answers less than it asks, an aggregate answers a handful of bytes whatever it scans, and a write inverts the direction. None is measured, and the same harness would measure them.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-read-answers-a-hundred-and-forty-one-times-what-it-asks.md",
@@ -14551,7 +14552,7 @@
       "key": "It is one direction of one client.",
       "verdict": "open",
       "by": "the comparison lives in the daemon's suite because that is the only place both numbers are reachable -- the three SDKs weigh their own requests and none can see the server counter. So a client author looking for it does not find it, which is ordinary undone work rather than a decision.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-read-answers-a-hundred-and-forty-one-times-what-it-asks.md",
@@ -14608,9 +14609,9 @@
     {
       "entry": "2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md",
       "key": "747 remain unread.",
-      "verdict": "open",
-      "by": "a quarter of the bucket is read and the lower bound of 4 still admits that most false verdicts are in the unread part. Task #329, in_progress.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md: all 1016 were read in one pass and the frame is empty. `scripts/caveats.py --unchecked` now reports 26, and those 26 are verdicts written after that pass, not survivors of it",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md",
@@ -14643,14 +14644,14 @@
       "key": "It does not measure a partial index",
       "verdict": "open",
       "by": "the caveat's own entry proposes a partial index as the fix for exactly this cost, and `by_kind` in the bench is a plain index by construction. 'A partial index fixes it' is an argument in two entries and a measurement in none.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-what-a-retired-row-costs-a-read.md",
       "key": "It does not break the 141 ns down.",
       "verdict": "open",
       "by": "one extra conjunct, one more live column and a possible plan difference are three explanations and the measurement separates none. scan_row_breakdown in the same file is the shape that would.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-what-a-retired-row-costs-a-read.md",
@@ -14675,7 +14676,7 @@
       "key": "`PINNED` still matches any `@v<digit>` token",
       "verdict": "open",
       "by": "the sibling caveat in ledger/2026-09-29-a-guard-whose-roster-was-itself.md, untouched here. Nothing in the tree triggers it today, which is why it is a hazard rather than a defect.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
@@ -14723,16 +14724,17 @@
     {
       "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
       "key": "It says nothing about the 110 `narrowed` rows or the 1018 `d",
-      "verdict": "open",
-      "by": "the sweep covered the 137 open rows only, because that is the set the caveat named. A duplicate spanning open and narrowed, or sitting inside the 1018 deliberate, would not have been found.",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "by": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md: the deliberate rows were read in full and the frame is empty",
+      "checked": "2026-09-30",
+      "residual": "The narrowed rows are still unswept: each carries a residual and nothing has read them against the tree as a group"
     },
     {
       "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
       "key": "The 1.6 figure is one day.",
       "verdict": "open",
       "by": "46 entries dated 2026-09-29, which are unusually dense in guards and measurements -- both shapes that name their own limits freely. No day of feature work has been counted, so the rate is one sample.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-shape-that-says-which-shape-it-is.md",
@@ -14748,7 +14750,7 @@
       "key": "The demo's three adapters do not check the format.",
       "verdict": "open",
       "by": "examples/explorer/backends/{go,node} and web/src/api.ts read the generated output rather than the printed schema, so they sit downstream of codegen.py's refusal. Nothing checks that stays true, and a fourth adapter reading --print-schema directly would not be seen.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-a-shape-that-says-which-shape-it-is.md",
@@ -14764,7 +14766,7 @@
       "key": "Nothing publishes the format anywhere a human reads it.",
       "verdict": "open",
       "by": "docs/validation.md and docs/views.md describe what --print-schema contains and neither mentions the version, so a reader meets it through the refusal or the source.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
@@ -14780,7 +14782,7 @@
       "key": "The renderer's spellings are still its own.",
       "verdict": "open",
       "by": "crates/slate-wasm/tests/sql.rs's renderer matches on the operator and panics on one it has no spelling for, which pins renderer to strategy at run time rather than at compile time. Deriving the renderer from COMPARISONS' spellings is the same move again and was not made here.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
@@ -14794,21 +14796,21 @@
       "key": "The two rosters are held to the parser, not to `value_for`.",
       "verdict": "open",
       "by": "STRING_ONLY says which operators need column 2 and nothing checks column 2 is still the string column, so renaming the fixture's columns would leave it silently wrong. (STRING_ONLY lives in crates/slate-wasm/tests/sql.rs, which is the only code copy - `git grep -ln STRING_ONLY`, 2026-09-30)",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
       "key": "It says nothing about concurrent writes",
       "verdict": "open",
       "by": "the caveat's other half verbatim, carried as this row's residual too. It needs the concurrency harness -- a writer contending with a purge's transaction -- rather than a criterion group.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
       "key": "A million rows is extrapolated, not run.",
       "verdict": "open",
       "by": "two sizes an order of magnitude apart show the per-row cost falling and nothing says it keeps falling. ledger/2026-09-23-the-cliff-does-not-reproduce-and-the-knob-does-place-it.md's loader cliff is this repository's own example of a curve that bends at a size nobody had reached.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
@@ -14823,7 +14825,7 @@
       "key": "One index set.",
       "verdict": "open",
       "by": "three secondary indexes on the fixture, so three entries erased per row plus the row. A table with ten costs more and nothing says by how much -- the most obviously linear knob and the cheapest follow-up.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-what-a-sweep-costs-per-row.md",
@@ -14848,7 +14850,7 @@
       "key": "Three routes is not every route.",
       "verdict": "open",
       "by": "clustering by the file a reason cites, and asking which open rows no longer have a subject in the tree, are both unmeasured. The second is the more promising: a gap in deleted code is a gap that closed itself.",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-open-list-is-real.md",
@@ -14973,9 +14975,10 @@
     {
       "entry": "2026-09-29-twelve-limits-read-the-day-they-were-written.md",
       "key": "`moment` and `deliberate` are not audited by anything.",
-      "verdict": "open",
-      "by": "closed and narrowed each have a mechanical check - a witness in the tree, a residual a reader can compare - and the other two rest on prose nothing re-reads. A moment row goes stale by definition and nothing dates it out. Reading them is the only method that works and 264 of 1034 deliberate verdicts have been read; moment has had none",
-      "checked": "2026-09-29"
+      "verdict": "narrowed",
+      "by": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md and scripts/caveats.py --unchecked: deliberate is audited now - the whole frame was read and --unchecked <days> keeps it re-readable",
+      "checked": "2026-09-30",
+      "residual": "`moment` still is not. Nothing reads a moment verdict again, by design - it described a moment - but nothing checks that a row marked moment really was one"
     },
     {
       "entry": "2026-09-29-twelve-limits-read-the-day-they-were-written.md",
@@ -15007,7 +15010,7 @@
       "key": "Nothing holds the renderer to the table.",
       "verdict": "open",
       "by": "the sibling caveat of the same entry, untouched here: crates/slate-wasm/tests/sql.rs matches on the operator and panics on one it has no spelling for, pinning the two at run time rather than at compile time. Tracked on the entry that recorded it, 2026-09-29-the-parsers-vocabulary-is-the-parser.md",
-      "checked": "2026-09-29"
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md",
@@ -15497,7 +15500,8 @@
     {
       "entry": "2026-09-30-a-group-read-by-name.md",
       "key": "`Helpdesk::analyze` is not scheduled.",
-      "verdict": "open"
+      "verdict": "open",
+      "checked": "2026-09-30"
     },
     {
       "entry": "2026-09-30-a-group-read-by-name.md",
@@ -15512,6 +15516,36 @@
       "verdict": "deliberate",
       "by": "this entry: the sample is two rows and no arithmetic makes it a rate. What changed is that docs/labelled-verdicts.json is where the next one goes and scripts/test_read_deliberate.py re-scores from it, so the number grows without anybody remembering to re-measure",
       "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-open-frame-read-against-the-tree.md",
+      "key": "It re-read, it did not re-derive.",
+      "verdict": "open",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-open-frame-read-against-the-tree.md",
+      "key": "135 open caveats are still open.",
+      "verdict": "open",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-open-frame-read-against-the-tree.md",
+      "key": "The 124 narrowed rows were not swept as a group.",
+      "verdict": "open",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-open-frame-read-against-the-tree.md",
+      "key": "`moment` is still audited by nothing.",
+      "verdict": "open",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-open-frame-read-against-the-tree.md",
+      "key": "One pass by one reader.",
+      "verdict": "deliberate",
+      "by": "this entry: the ceiling every reading-based closure here carries, and the reason the mechanical half of the pass exists at all"
     }
   ]
 }

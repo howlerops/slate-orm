@@ -507,6 +507,21 @@ COUNTED = {
 A_JOB = re.compile(r"^  ([a-z][a-z0-9-]*):\s*$", re.M)
 
 
+#: Where CLAUDE.md states the job count, and how to read each one.
+#:
+#: `(what, pattern)`, one per occurrence, each capturing the spelled number.
+#: A list rather than one pattern because the two sentences are different
+#: sentences — "twenty-four jobs covering formatting…" in *What runs, and
+#: where*, and "A push starts twenty-four jobs and nothing in this container
+#: reports how they ended" in the practical notes — and the drift this exists
+#: for hit *one* of two occurrences twice. Checking them separately names
+#: which one is wrong.
+CLAUDE_MD_COUNTS: list[tuple[str, str]] = [
+    ("`What runs, and where` sentence", r"\*\* — ([a-z]+(?:-[a-z]+)?) jobs covering"),
+    ("`Read the run's conclusion` note", r"A push starts\s+([a-z]+(?:-[a-z]+)?) jobs"),
+]
+
+
 def jobs_holding_a_static_check(steps: list[tuple[str, str]]) -> int:
     """How many `ci.yml` jobs run at least one step `check.sh` also runs.
 
@@ -559,24 +574,40 @@ def job_count_matches(steps: list[tuple[str, str]]) -> list[str]:
 
     prose = (ROOT / "CLAUDE.md").read_text()
     said = []
-    spelled = re.findall(r"\b([a-z]+(?:-[a-z]+)?) jobs\b", prose)
-    if not spelled:
-        said.append(
-            "CLAUDE.md no longer says how many jobs CI runs, so this check has "
-            "nothing to hold to the workflow. Either the sentence moved — put "
-            "this back on it — or it is gone and so is the reason for this."
-        )
-    for word in spelled:
+    # Anchored, like `check.sh`'s half below and unlike this half's first
+    # version, which looped over every `<word> jobs` in the file.
+    # `ledger/2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md`
+    # recorded that asymmetry as a caveat: the loop has no way to tell a count
+    # from ordinary English, so the day CLAUDE.md writes "the jobs that find
+    # the interesting failures" the guard reports `'the'` as a number it does
+    # not recognise. A guard that cries wolf is one people stop reading.
+    #
+    # Every anchor must match. A reworded sentence therefore fails *loudly* —
+    # "the sentence moved, put this back on it" — rather than silently
+    # checking nothing, which is the failure mode the unanchored loop could
+    # not have and is the price of anchoring. Both halves now behave the same
+    # way, which is the point.
+    for what, pattern in CLAUDE_MD_COUNTS:
+        found = re.search(pattern, prose)
+        if not found:
+            said.append(
+                f"CLAUDE.md's {what} no longer matches, so this check has "
+                f"nothing to hold to the workflow. Either the sentence was "
+                f"reworded — update the pattern in CLAUDE_MD_COUNTS — or it "
+                f"is gone and so is the reason for this."
+            )
+            continue
+        word = found.group(1)
         if word not in COUNTED:
             said.append(
-                f"CLAUDE.md says {word!r} jobs, which is not a number COUNTED "
-                f"knows; add it if CI really has that many"
+                f"CLAUDE.md's {what} says {word!r} jobs, which is not a number "
+                f"COUNTED knows; add it if CI really has that many"
             )
         elif COUNTED[word] != jobs:
             said.append(
-                f"CLAUDE.md says {word!r} jobs and ci.yml has {jobs}. The count "
-                f"has drifted twice before; correct every occurrence, not the "
-                f"first."
+                f"CLAUDE.md's {what} says {word!r} jobs and ci.yml has {jobs}. "
+                f"The count has drifted twice before; correct every "
+                f"occurrence, not the first."
             )
 
     # `check.sh`'s own header carries the same two numbers and nothing read

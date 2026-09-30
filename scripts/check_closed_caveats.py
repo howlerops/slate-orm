@@ -899,6 +899,11 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/caveats.py",
  ),
 
+  # Anchored per sentence rather than looped over the file, so the message can
+ # say which of CLAUDE.md's two job counts drifted. The needle is the roster,
+ # because the loop it replaced would leave the rest of the check standing.
+ "claude-md-counts-anchored": ("CLAUDE_MD_COUNTS", "scripts/test_check_sh.py"),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -1117,6 +1122,15 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
         'closed by reading the four entries and their commit timestamps against '
         "35d9182's. All four predate the fix, so each was true when written and "
         'nothing needed striking. A null result changes no file by construction',
+    ('2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md',
+     'Seventy-six open caveats last checked on 2026-09-28 were not'):
+        'closed by reading all 141 open caveats against the tree in one pass, which is a count of the tracker\'s own state: every open verdict now carries `checked: 2026-09-30` and `caveats.py --unread` reports zero. The witness would be the `checked` dates in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md',
+     '747 remain unread.'):
+        'closed by the `deliberate` frame being empty: `caveats.py --unchecked` reports 26 and all 26 are verdicts written after the pass that emptied it. Like every unread count, it is answered by the file reaching a different number, and a witness pointing at that file would be circular',
+    ('2026-09-29-the-deliberate-sample-carried-to-168.md',
+     'It did not look for stale reasons systematically.'):
+        'closed by running the mechanical half systematically -- every backticked token in all 141 open claims resolved against `git ls-files` and `git grep` -- rather than by sampling. Zero failed to resolve, and a null result over a frame leaves nothing in the tree: the code that does the resolving is `scripts/read_deliberate.py`, which was already here while the claim was true, so it witnesses nothing',
 }
 
 #: Every `closed` caveat, and the witness that must still be in the tree.
@@ -2606,6 +2620,26 @@ WITNESSED: dict[tuple[str, str], str] = {
      'The image has never been built.'): 'image-built-in-ci',
     ('2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md',
      'No client can express it.'): 'not-in-through-a-client',
+
+    # --- 2026-09-30, the open frame read against the tree -------------------
+    #
+    # Three closures from one pass, all three exempt and for two different
+    # reasons. Two are counts of the tracker's own state, answered by the file
+    # reaching a different count; the third is a reading, and its output is
+    # the entry.
+    ('2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md',
+     'Seventy-six open caveats last checked on 2026-09-28 were not'):
+        '=stamped',
+    ('2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md',
+     '747 remain unread.'): '=stamped',
+    ('2026-09-29-the-deliberate-sample-carried-to-168.md',
+     'It did not look for stale reasons systematically.'): '=read',
+    # The one open caveat that pass closed by fixing rather than by reading.
+    # The needle is the roster itself: an anchored pattern per sentence is the
+    # whole change, and reverting to the old loop deletes it.
+    ('2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md',
+     'CLAUDE.md\'s half is still a loop over every word before "job'):
+        'claude-md-counts-anchored',
 }
 
 
