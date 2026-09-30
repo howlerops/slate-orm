@@ -133,6 +133,11 @@ def resolve(token: str, files: set[str], root: Path) -> str:
     return f"symbol: {len(where)} files, e.g. {', '.join(sorted(where)[:2])}"
 
 
+def plain(text: str) -> str:
+    """Lowercased, with emphasis and code marks dropped and spaces collapsed."""
+    return " ".join(text.replace("*", "").replace("`", "").lower().split())
+
+
 def later_entries(claim: str, entry: str, bodies: dict[str, str]) -> list[str]:
     """Entries dated after `entry` that share the claim's distinctive words.
 
@@ -145,9 +150,19 @@ def later_entries(claim: str, entry: str, bodies: dict[str, str]) -> list[str]:
     rare = {w for w in words if sum(w in b for b in bodies.values()) < len(bodies) // 6}
     if len(rare) < 2:
         return []
+    # An entry that quotes the claim verbatim is an audit entry writing the
+    # caveat down, not a later change that overtook it — and it matches every
+    # rare word by construction, so it crowds out the entry that did. Measured:
+    # of the two false verdicts this found on 2026-09-30, one had the entry
+    # that closed it as its single hit and the other had that entry pushed off
+    # the list by the audit entry quoting it.
+    # Compared with emphasis and backticks removed from both sides: an audit
+    # entry quoting a caveat in a table cell drops the `*` and the backticks,
+    # so a literal comparison misses exactly the case this is for.
+    quoted = plain(claim)[:60]
     hits = []
     for name, body in bodies.items():
-        if name <= entry:
+        if name <= entry or quoted in plain(body):
             continue
         got = sum(w in body for w in rare)
         if got >= max(2, len(rare) * 0.6):

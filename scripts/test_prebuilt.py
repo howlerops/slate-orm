@@ -289,6 +289,27 @@ def main() -> int:
         prebuilt.newest_source(ROOT) is not None,
     )
 
+    # Executable, because that is the shape `unknown_binaries` looks for: a
+    # `SLATE_*` variable whose value is a program rather than a setting.
+    binary.chmod(0o755)
+    # A second binary variable nobody added to `KNOWN`. One verdict covering
+    # a head node and a replica is right while there is one binary to name,
+    # and the moment a harness names two the second is unchecked and silent —
+    # which is what this refuses.
+    check(
+        "a second `SLATE_*` variable naming an executable is reported",
+        prebuilt.unknown_binaries({"SLATE_REPLICA": str(binary)}) == ["SLATE_REPLICA"],
+        f"got {prebuilt.unknown_binaries({'SLATE_REPLICA': str(binary)})}",
+    )
+    check(
+        "a known one is not reported twice",
+        prebuilt.unknown_binaries({"SLATE_SERVERD": str(binary)}) == [],
+    )
+    check(
+        "a `SLATE_*` variable that is not a path is not a binary",
+        prebuilt.unknown_binaries({"SLATE_LOG": "debug"}) == [],
+    )
+
     # --- the roster, which is why this file exists ------------------------
     for name, row in MUST_REFUSE.items():
         path = ROOT / name

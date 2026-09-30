@@ -379,6 +379,21 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # deleted file, and the witness is the file that took its job: an absence
  # cannot be witnessed, and this is the nearest thing in the tree to one.
  "workbench-check": ("tree-columns", "site/check/workbench.py"),
+ # Every `INSIDE_AFTER_ALL` reason must name a path that is here, which is the
+ # one claim an exemption of that kind makes.
+ "exemption-names-a-path": (
+     "names no path here that exists",
+     "scripts/check_outside_premises.py",
+ ),
+ # A second prebuilt binary nobody added to `KNOWN` is refused by name.
+ "prebuilt-unknown": ("unknown_binaries", "scripts/prebuilt.py"),
+ # An expectation that would also pass against a report its case never
+ # produced. The needle is the check's own name, not the rule's code: the
+ # rule could be rewritten and the property is what matters.
+ "expectation-is-about-one-report": (
+     "is about one report and not another",
+     "scripts/test_check_toolchain_pins.py",
+ ),
  "stored-schema": ("schema", "crates/slate-kernel/src/migrate.rs"),
  "table-provenance": (None, "scripts/check_table_provenance.py"),
  "through-wire": ("through", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -923,6 +938,9 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-30-two-imports-a-script-put-where-the-text-was.md',
+     "It does not check the session's other scripted edits for the"):
+        'closed by reading the diff — 1774 added lines over 34 files outside `ledger/` — for the class the caveat names: a replacement applied at several sites, one of whose contexts differs. There is none in that range, and a reading of a diff leaves nothing in the tree but the entry that records what it looked for',
     ('2026-09-30-a-premise-nobody-here-can-falsify.md',
      'The two exempted caveats were not themselves re-read.'):
         'closed by reading both against the tree, which is the only method there is for a prose claim. One was stale and is narrowed with its own entry; the other holds and gained a `recheck`. The reading leaves nothing in the tree but the entry that records it -- a witness would have to be the `checked` date this guard already parses',
@@ -1083,6 +1101,11 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ("2026-09-30-a-premise-nobody-here-can-falsify.md", "Two of the ten are exempted by hand"): "exemption-names-a-path",
+    ("2026-09-30-the-exemptions-i-wrote-without-reading.md", "`prebuilt.py` compares one binary against the newest source "): "prebuilt-unknown",
+    ("2026-09-30-a-draw-that-reproduces-and-a-roster-that-runs.md", "`prebuilt.py` still compares one binary against the newest s"): "prebuilt-unknown",
+    ("2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md", "Substring matching is the whole harness's idiom: a case's ex"): "expectation-is-about-one-report",
+    ("2026-09-30-two-imports-a-script-put-where-the-text-was.md", "It does not check the session's other scripted edits for the"): "=read",
     ("2026-09-14-a-playground-nobody-could-find.md", "The ordering assertion only pins `#playground` before `#what"): "workbench-check",
     ("2026-09-14-a-playground-nobody-could-find.md", "The default-column assertion checks the *option label* ends "): "workbench-check",
     ("2026-09-30-a-sample-that-pools-with-the-next-one.md", "Nothing checks that a draw actually came from `--unchecked`."): "draw-reproduces",

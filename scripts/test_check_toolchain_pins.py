@@ -94,7 +94,8 @@ CASES: list[tuple[str, dict[str, str | None], str]] = [
         # that never named the variable inherited the change.
         "a pinned workflow and an installer that inherits is reported",
         {".github/workflows/ci.yml": PINNED, "scripts/gen.py": INHERITS},
-        "never sets `GOTOOLCHAIN`",
+        "scripts/gen.py runs a pinned `go install` (example.com/cmd/x@v1.2.3) "
+        "and never sets `GOTOOLCHAIN`",
     ),
     (
         # `local` is a decision too. The rule is about inheriting, not about
@@ -124,7 +125,8 @@ CASES: list[tuple[str, dict[str, str | None], str]] = [
                 "subprocess.run(",
             ),
         },
-        "never sets `GOTOOLCHAIN`",
+        "scripts/gen.py runs a pinned `go install` (example.com/cmd/x@v1.2.3) "
+        "and never sets `GOTOOLCHAIN`",
     ),
     (
         # The other half of the same finding: the pin and the invocation are
@@ -140,7 +142,8 @@ CASES: list[tuple[str, dict[str, str | None], str]] = [
                 + 'subprocess.run(["go", "install", PKG])\n'
             ),
         },
-        "never sets `GOTOOLCHAIN`",
+        "scripts/gen.py runs a pinned `go install` (example.com/cmd/x@v1.2.3) "
+        "and never sets `GOTOOLCHAIN`",
     ),
     (
         # Comment-stripping alone would have caught the real defect, because
@@ -156,7 +159,8 @@ CASES: list[tuple[str, dict[str, str | None], str]] = [
                 '"""Install the generators. We leave GOTOOLCHAIN alone."""\n' + INHERITS
             ),
         },
-        "never sets `GOTOOLCHAIN`",
+        "scripts/gen.py runs a pinned `go install` (example.com/cmd/x@v1.2.3) "
+        "and never sets `GOTOOLCHAIN`",
     ),
     (
         # This guard and its own test carry the pattern's documentation and
@@ -268,6 +272,32 @@ def main() -> int:
     # text from that report and not from another — and observed it, so a case
     # edited into asking for something else stops counting rather than keeps
     # covering by name.
+    # And the idiom's own hazard, which
+    # `ledger/2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md`
+    # recorded: a case's expectation is `in`-tested against the report, so an
+    # expectation broadened to a common fragment still passes — demonstrated
+    # there by a mutation that changed one to `go install` and left every
+    # check green. What makes an expectation *about* its case is that it does
+    # not also match a different case's report. Checked here rather than by
+    # making the match exact, because the reports carry paths and counts a
+    # case has no reason to restate.
+    every: set[str] = {one for _, got in asked for one in got}
+    for want, got in asked:
+        if not want or not got:
+            continue
+        # A report this case never produced. Two cases legitimately observing
+        # the same report is not the failure — each may be about a different
+        # part of it — so the comparison is against the reports outside this
+        # case's own, which is what "would also pass against something else"
+        # means.
+        elsewhere = sorted(one for one in every - set(got) if want in one)
+        ok = not elsewhere
+        failed += not ok
+        ran += 1
+        print(f"{'ok  ' if ok else 'FAIL'}  {want!r} is about one report and not another")
+        if not ok:
+            print(f"        it also matches: {elsewhere[0][:120]}")
+
     halves = never_fires()
     # The regress stops here. Deriving the roster from a tree rather than a
     # constant moves the hazard up one level: a `never_fires` that came back

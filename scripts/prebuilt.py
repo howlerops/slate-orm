@@ -111,10 +111,41 @@ def refuse_if_stale(binary: Path | str, variable: str, root: Path = ROOT) -> Non
         raise RuntimeError(said)
 
 
+#: The variables this knows how to check.
+#:
+#: `ledger/2026-09-30-the-exemptions-i-wrote-without-reading.md` recorded the
+#: hazard in the pair being hard-coded: *"`prebuilt.py` compares one binary
+#: against the newest source in two trees … one verdict covers both, which is
+#: right while they come from the same build and wrong the moment they do
+#: not."* One verdict covers both because there is one binary to name; a third
+#: variable naming a second binary would be unchecked and silent, which is the
+#: shape `test_prebuilt.py`'s roster exists to make loud one level up.
+#:
+#: So `main` checks these and then *reports* any other `SLATE_*` variable
+#: whose value is an executable file — the shape a binary variable has. It
+#: refuses rather than checking it, because what to compare an unknown binary
+#: against is a judgement, and a silent pass is the failure this whole file is
+#: about.
+KNOWN = ("SLATE_SERVERD", "SLATE_TESTSERVER")
+
+
+def unknown_binaries(environ: dict[str, str] | None = None) -> list[str]:
+    """Every `SLATE_*` variable naming an executable file that `KNOWN` omits."""
+    env = os.environ if environ is None else environ
+    out = []
+    for variable, value in sorted(env.items()):
+        if not variable.startswith("SLATE_") or variable in KNOWN or not value:
+            continue
+        path = Path(value)
+        if path.is_file() and os.access(path, os.X_OK):
+            out.append(variable)
+    return out
+
+
 def main() -> int:
     """Check every `SLATE_*` binary variable that is set. For shell callers."""
     checked = 0
-    for variable in ("SLATE_SERVERD", "SLATE_TESTSERVER"):
+    for variable in KNOWN:
         value = os.environ.get(variable)
         if not value:
             continue
@@ -123,6 +154,15 @@ def main() -> int:
         if said is not None:
             print(said)
             return 1
+    stray = unknown_binaries()
+    if stray:
+        print(
+            f"{', '.join(stray)} names an executable file and is not one this "
+            f"checks. A second prebuilt binary that nothing compares against its "
+            f"source is the failure this file exists for; add it to `KNOWN` in "
+            f"scripts/prebuilt.py, or unset it."
+        )
+        return 1
     # Not an error: building from source is the default and needs no check.
     # Said out loud so a caller cannot read silence as "the binary is fresh".
     print(f"ok    {checked} prebuilt binaries checked, none stale")

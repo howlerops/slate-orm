@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-30T16:02:39+00:00",
+  "file": "scripts/prebuilt.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_prebuilt.py"
+  ],
+  "commit": "c92a1c8",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a second binary variable is passed over",
+      "old": "        if path.is_file() and os.access(path, os.X_OK):\n            out.append(variable)",
+      "new": "        if False:\n            out.append(variable)",
+      "verdict": "caught",
+      "caught_by": [
+        "a second `SLATE_*` variable naming an executable is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a known variable is reported as unknown too",
+      "old": "        if not variable.startswith(\"SLATE_\") or variable in KNOWN or not value:",
+      "new": "        if not variable.startswith(\"SLATE_\") or not value:",
+      "verdict": "caught",
+      "caught_by": [
+        "a known one is not reported twice"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -9173,7 +9173,10 @@
       "by": "this entry's own reasoning: justified because the browser is already present in this environment, and the cost is a download on a reader's first npm install. The alternative \u2014 no browser test for the demo \u2014 is what the entry was written to end.",
       "checked": "2026-09-30",
       "recheck": {
-        "manual": "the premise is that a reader without a browser pays a download. CI's three `npx playwright install --with-deps chromium` steps are the standing evidence; if they go, re-read the claim."
+        "tree": ".github/workflows/ci.yml",
+        "expect_text": "playwright install --with-deps chromium",
+        "count": 3,
+        "why": "the manual recipe named CI's three install steps as the standing evidence; counting them is what reading them was for."
       },
       "draw": "2026-09-30-329"
     },
@@ -9238,7 +9241,10 @@
       "checked": "2026-09-30",
       "residual": "whether the workflow token could enable Pages if it were off is still untested and now untestable: Pages is on, so the step has nothing to do. The claim that it cannot is the part that was never demonstrated",
       "recheck": {
-        "manual": "read the newest Pages run's `Run actions/configure-pages@v5` step. If it succeeds and the step after it is skipped, the observable half stays false."
+        "tree": ".github/workflows/pages.yml",
+        "expect_text": "enablement: true",
+        "count": 4,
+        "why": "the observable half is that the workflow still asks Pages to turn itself on. Three comments and the step itself; if the step goes the count drops and the claim is read again."
       }
     },
     {
@@ -15015,9 +15021,9 @@
     {
       "entry": "2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md",
       "key": "Substring matching is the whole harness's idiom: a case's ex",
-      "verdict": "open",
-      "by": "the fourth mutation in this entry demonstrates it: broadening a case's expectation to `go install` left every check green. It is the harness's idiom throughout the file, not something this change introduced",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "a case now fails if its expectation also matches a report that case never produced, and the mutation the entry demonstrated - one expectation replaced by `never sets GOTOOLCHAIN` - is caught. Four under-discriminating expectations were lengthened. ledger/2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md",
@@ -15089,16 +15095,17 @@
     {
       "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
       "key": "Two of the ten are exempted by hand",
-      "verdict": "open",
-      "by": "the rot rule catches an exemption whose caveat moved; nothing catches one that was wrong when written. Two entries today, each one line of argument, and a reader has to disagree with the argument to find the error",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "every INSIDE_AFTER_ALL reason must now name a path that exists here, which is the one claim an exemption of this kind makes. One of the two did not and was corrected. ledger/2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
       "key": "Nothing re-checks the `manual` recipes.",
-      "verdict": "open",
-      "by": "two of the five live members have one, because no URL answers them - 'read a recent CI job log' cannot be a fetch. They are a note to the next reader and depend on one existing",
-      "checked": "2026-09-30"
+      "verdict": "narrowed",
+      "by": "two of the three became `tree` recipes - a needle counted in a named file, re-checked on every run with no network - because their evidence was in .github/ rather than on the network. ledger/2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "checked": "2026-09-30",
+      "residual": "one recipe is still `manual`: it asks a reader to compare a CI job log's rustc version with this container's, and no file here carries CI's"
     },
     {
       "entry": "2026-09-30-a-premise-nobody-here-can-falsify.md",
@@ -15128,9 +15135,9 @@
     {
       "entry": "2026-09-30-a-sample-that-pools-with-the-next-one.md",
       "key": "A `checked` stamp is still a claim about a person's attentio",
-      "verdict": "open",
-      "by": "ledger/2026-09-25-the-open-caveats-nobody-re-reads.md measured it at right about six times in seven on the open backlog, and nothing here makes it worth more. A rubber-stamped row leaves the frame exactly like a read one",
-      "checked": "2026-09-30"
+      "verdict": "deliberate",
+      "by": "re-triaged from `open`: nothing can close it and it is not work. ledger/2026-09-25-the-open-caveats-nobody-re-reads.md measures the stamp at right about six times in seven, and the alternative - evidence per re-read, a hash of the cited code - is the second tracker scripts/caveats.py's own docstring rejects. A ceiling with a measurement behind it is a decision, not a backlog item",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-a-sample-that-pools-with-the-next-one.md",
@@ -15176,9 +15183,9 @@
     {
       "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
       "key": "`prebuilt.py` compares one binary against the newest source ",
-      "verdict": "open",
-      "by": "the deployed example starts a head node and a replica; one verdict covers both, which is right while they come from the same build and wrong the moment they do not",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "prebuilt.py now refuses any other `SLATE_*` variable whose value is an executable file, so a second binary nothing compares against its source fails by name rather than being run. ledger/2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-exemptions-i-wrote-without-reading.md",
@@ -15215,9 +15222,9 @@
     {
       "entry": "2026-09-30-two-imports-a-script-put-where-the-text-was.md",
       "key": "It does not check the session's other scripted edits for the",
-      "verdict": "open",
-      "by": "several files were edited by script today. rustfmt covers the Rust and ruff the Python, both green - but that is two formatters agreeing rather than a reading, and the &-in-a-format-argument case CLAUDE.md records is one no formatter would catch",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "read: git diff 19fb33f..db5a316 outside ledger/, 1774 added lines over 34 files. The class needs a replacement applied at several sites and there is none in that range - the deletions are one block move and the rest are whole-block insertions. The two anchor-placed edits are the failure already found. ledger/2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-a-draw-that-reproduces-and-a-roster-that-runs.md",
@@ -15258,9 +15265,9 @@
     {
       "entry": "2026-09-30-a-draw-that-reproduces-and-a-roster-that-runs.md",
       "key": "`prebuilt.py` still compares one binary against the newest s",
-      "verdict": "open",
-      "by": "carried forward from ledger/2026-09-30-the-exemptions-i-wrote-without-reading.md unchanged; the deployed example starts a head node and a replica from one verdict",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "carried forward and closed with it: an unknown `SLATE_*` binary variable is refused by name. ledger/2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md",
@@ -15279,9 +15286,10 @@
     {
       "entry": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md",
       "key": "`read_deliberate.py`'s later-entry signal is unvalidated.",
-      "verdict": "open",
-      "by": "the two known-false rows from the 2026-09-30 draw are worded in ways the overlap does not match, so whether the signal would have found today's two is unknown. It was used to decide where to look harder, which is all it claims",
-      "checked": "2026-09-30"
+      "verdict": "narrowed",
+      "by": "measured against the only two rows this repository has labelled false-and-found: it names the entry that closed the first and not the second. Measuring it found and fixed a defect - an audit entry quoting a caveat crowded out the entry that closed it. ledger/2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "checked": "2026-09-30",
+      "residual": "one of two is not a rate; the next false verdict found is the third data point"
     },
     {
       "entry": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md",
@@ -15303,6 +15311,41 @@
       "verdict": "deliberate",
       "by": "the cost every roster in scripts/ states about itself, and the two rot rules are what a tool can hold - the row is used, and it names something absent. Reading the sentence is the undecidable half",
       "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "key": "The `tree` recipe counts a needle; it does not read the work",
+      "verdict": "deliberate",
+      "by": "a tripwire on the claim's most falsifiable part is what a recipe can be; reading the workflow is the classifier ledger/2026-09-30-a-premise-nobody-here-can-falsify.md declines. Four occurrences is three comments and one step, and the count does not know which",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "key": "An exemption can still name a path and argue something else.",
+      "verdict": "deliberate",
+      "by": "the rule holds the reason to the one claim these exemptions are allowed to make - the subject is a file here. Grading the sentence around it is the undecidable half every roster in scripts/ states",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "key": "The toolchain-pin rule only sees reports some case produced.",
+      "verdict": "deliberate",
+      "by": "an expectation broadened to a fragment of a report no case observes has nothing to compare against; that is the never-fires half, and the halves check beside it is what covers it",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "key": "Reading a diff is a claim about attention.",
+      "verdict": "deliberate",
+      "by": "ledger/2026-09-25-the-open-caveats-nobody-re-reads.md prices it at right about six times in seven, and nothing mechanical moves that. The reading is recorded with what it looked for, so a reader can disagree with the method",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-four-caveats-that-had-a-check-in-them.md",
+      "key": "One of two is not a validation rate.",
+      "verdict": "open",
+      "by": "the later-entry signal has two labelled rows in this repository's history and scores 1 on them. The next false verdict found is the third data point, and nothing before then says what it would do",
+      "checked": "2026-09-30"
     }
   ]
 }

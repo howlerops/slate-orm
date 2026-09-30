@@ -140,7 +140,7 @@ CASES: list[tuple[str, dict[str, str], list[dict[str, object]], dict, str]] = [
         {"a": URL},
         [verdict("a", URL, "open", recheck={"note": "somebody should look"})],
         {},
-        "neither a `url` nor a `manual`",
+        "neither a `url`, a `tree` nor a `manual`",
     ),
     (
         "an empty manual is reported, because it says nothing",
@@ -159,8 +159,67 @@ CASES: list[tuple[str, dict[str, str], list[dict[str, object]], dict, str]] = [
             verdict("a", OUTSIDE, "deliberate"),
             verdict("b", URL, "deliberate", recheck={"manual": "look"}),
         ],
-        {("a.md", guard.caveats.key(OUTSIDE)): "the subject is a directory here"},
+        {("a.md", guard.caveats.key(OUTSIDE)): "the subject is docs/caveat-status.json, here"},
         "",
+    ),
+    (
+        # The other half the entry that added `INSIDE_AFTER_ALL` recorded as
+        # missing: the rot rule catches an exemption whose caveat moved, and
+        # nothing caught one that was wrong when written. Every exemption makes
+        # the same argument — the subject is a path here — so it has to name
+        # one, and the path has to exist.
+        "an exemption whose reason names no path here is reported",
+        {"a": OUTSIDE, "b": URL},
+        [
+            verdict("a", OUTSIDE, "deliberate"),
+            verdict("b", URL, "deliberate", recheck={"manual": "look"}),
+        ],
+        {("a.md", guard.caveats.key(OUTSIDE)): "it is really about this repository"},
+        "names no path here that exists",
+    ),
+    (
+        "an exemption naming a path that is not there is reported too",
+        {"a": OUTSIDE, "b": URL},
+        [
+            verdict("a", OUTSIDE, "deliberate"),
+            verdict("b", URL, "deliberate", recheck={"manual": "look"}),
+        ],
+        {("a.md", guard.caveats.key(OUTSIDE)): "the subject is scripts/not-there.py"},
+        "names no path here that exists",
+    ),
+    (
+        # The third kind of recipe. Two of the three `manual` recipes in this
+        # repository named evidence that is *in* it, so counting a needle in a
+        # file re-checks them on every run with no network.
+        "a tree recipe whose count is right passes",
+        {"a": OUTSIDE},
+        [verdict("a", OUTSIDE, "deliberate", recheck={
+            "tree": "docs/caveat-status.json", "expect_text": "verdicts", "count": 2})],
+        {},
+        "",
+    ),
+    (
+        "a tree recipe whose count is wrong is reported",
+        {"a": OUTSIDE},
+        [verdict("a", OUTSIDE, "deliberate", recheck={
+            "tree": "docs/caveat-status.json", "expect_text": "verdicts", "count": 7})],
+        {},
+        "carries it 2",
+    ),
+    (
+        "a tree recipe naming a file that is not there is reported",
+        {"a": OUTSIDE},
+        [verdict("a", OUTSIDE, "deliberate", recheck={
+            "tree": "scripts/absent.py", "expect_text": "x", "count": 1})],
+        {},
+        "which is not a file",
+    ),
+    (
+        "a tree recipe with no expect_text is reported",
+        {"a": OUTSIDE},
+        [verdict("a", OUTSIDE, "deliberate", recheck={"tree": "docs/caveat-status.json"})],
+        {},
+        "needs a `tree` path and an `expect_text`",
     ),
     (
         # The rot in `ledger/2026-09-29-the-skip-list-that-excused-nothing.md`,
@@ -179,7 +238,7 @@ CASES: list[tuple[str, dict[str, str], list[dict[str, object]], dict, str]] = [
         "a tree where every match is exempted is reported, and says so",
         {"a": OUTSIDE},
         [verdict("a", OUTSIDE, "deliberate")],
-        {("a.md", guard.caveats.key(OUTSIDE)): "exempted, and it is the only one"},
+        {("a.md", guard.caveats.key(OUTSIDE)): "exempted; it is docs/caveat-status.json"},
         "applies to nothing",
     ),
     (
@@ -221,7 +280,7 @@ def main() -> int:
         + run(
             {"a": OUTSIDE},
             [verdict("a", OUTSIDE, "deliberate")],
-            {("a.md", guard.caveats.key(OUTSIDE)): "the only one, exempted"},
+            {("a.md", guard.caveats.key(OUTSIDE)): "the only one; docs/caveat-status.json"},
         )
     )
     failed += not halves

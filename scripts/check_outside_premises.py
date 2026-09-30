@@ -99,14 +99,21 @@ OUTSIDE: dict[str, re.Pattern[str]] = {
 INSIDE_AFTER_ALL: dict[tuple[str, str], str] = {
     ('2026-09-14-frontend-tests-and-configurable-ports.md',
      '`web/package.json` now depends on `playwright` for a demo, w'):
-        'the subject is a devDependency in this repository and the download a reader '
-        'pays for on first install. `npm` names the tool, not a registry this claim '
-        'asserts anything about',
+        'the subject is a devDependency in examples/explorer/web/package.json and the '
+        'download a reader pays for on first install. `npm` names the tool, not a '
+        'registry this claim asserts anything about',
     ('2026-09-14-the-testserver-joins-the-workspace.md',
      "The demo's three backends (`examples/explorer/backends/`) ar"):
         '"an npm package" here is `examples/explorer/backends/`, a directory in this '
         'tree that no root-level command builds. Nothing about the registry',
 }
+
+#: A path inside this repository, as an exemption's reason spells one. The
+#: same shape `check_caveat_citations.py` reads, widened by the two roots an
+#: exemption is likely to name.
+INSIDE_PATH = re.compile(
+    r"(?<![\w/.\-])((?:examples|clients|crates|scripts|site|docs|\.github)/[\w./\-]*[\w/])"
+)
 
 #: Verdicts that make a caveat's claim a live one. `closed` is answered and
 #: `moment` says in its own definition that it described a moment, so neither
@@ -149,6 +156,55 @@ def stale_exemptions(
     ]
 
 
+def tree_recipe(entry: str, key: str, recipe: dict, root: Path) -> list[str]:
+    """Run a `tree` recipe: a needle counted in a file in this repository.
+
+    # Why a third kind of recipe
+
+    `ledger/2026-09-30-a-premise-nobody-here-can-falsify.md` recorded that the
+    `manual` recipes are the ones nothing re-checks:
+
+      > **Nothing re-checks the `manual` recipes.** Two of the five live
+      > members have one, because no URL answers them.
+
+    No URL answers them, and for two of the three that was the wrong
+    conclusion: their evidence is *in this repository*. "CI's three
+    `npx playwright install --with-deps chromium` steps are the standing
+    evidence" is three lines of `ci.yml`, and "`enablement: true` is kept" is
+    one line of `pages.yml`. A needle and a count over a named file re-checks
+    both on every run, with no network — which is what `--run` cannot be and
+    what makes this worth a third kind rather than a better sentence.
+
+    What it cannot do is the third recipe, which wants a CI job log. That one
+    stays `manual`, and the entry says so.
+    """
+    said = []
+    where = recipe.get("tree")
+    needle = recipe.get("expect_text")
+    if not where or not needle:
+        return [
+            f"{entry}: `{key}`'s `tree` recipe needs a `tree` path and an "
+            f"`expect_text` to count in it: {recipe}"
+        ]
+    path = root / str(where)
+    if not path.is_file():
+        return [f"{entry}: `{key}`'s `tree` recipe names {where}, which is not a file."]
+    seen = path.read_text(encoding="utf-8", errors="replace").count(str(needle))
+    want = recipe.get("count")
+    if want is None:
+        if seen == 0:
+            said.append(
+                f"{entry}: `{key}` expects {where} to carry {needle!r} and it does "
+                f"not. Read the claim."
+            )
+    elif seen != want:
+        said.append(
+            f"{entry}: `{key}` expects {where} to carry {needle!r} {want} times "
+            f"and it carries it {seen}. Read the claim."
+        )
+    return said
+
+
 def problems(
     root: Path = ROOT, exempt: dict[tuple[str, str], str] | None = None
 ) -> list[str]:
@@ -156,6 +212,23 @@ def problems(
     exempt = INSIDE_AFTER_ALL if exempt is None else exempt
     rows = matching(root)
     said: list[str] = stale_exemptions(rows, exempt)
+    # And the other half, which the entry that added `INSIDE_AFTER_ALL`
+    # recorded as missing: "the rot rule catches an exemption whose caveat
+    # moved; nothing catches one that was wrong when written." Every exemption
+    # here makes the *same* argument — the subject is a path in this tree
+    # rather than a registry or a service — so the argument has to name that
+    # path, and the path has to be here. An exemption arguing anything else
+    # cannot satisfy it, which is the point: this rule is not a spell-check on
+    # the prose, it is the one claim these reasons are allowed to make.
+    for (entry, key), why in sorted(exempt.items()):
+        named = [c for c in INSIDE_PATH.findall(why) if (root / c).exists()]
+        if not named:
+            said.append(
+                f"{entry}: `{key}` is exempted as being about this tree after all, "
+                f"and its reason names no path here that exists. The exemption's "
+                f"whole argument is that the subject is a file or a directory in "
+                f"this repository; name it."
+            )
     if said:
         return said
     # The never-fires halves, and there are three of them because there are
@@ -212,13 +285,17 @@ def problems(
                 "what a person has to do."
             )
             continue
+        if "tree" in recipe:
+            said.extend(tree_recipe(entry, key, recipe, root))
+            continue
         if "manual" in recipe:
             if not str(recipe["manual"]).strip():
                 said.append(f"{entry}: `{key}` has an empty `manual` recheck, which says nothing.")
             continue
         if "url" not in recipe:
             said.append(
-                f"{entry}: `{key}`'s `recheck` has neither a `url` nor a `manual`: {recipe}"
+                f"{entry}: `{key}`'s `recheck` has neither a `url`, a `tree` nor a "
+                f"`manual`: {recipe}"
             )
         elif "expect_status" not in recipe and "expect_text" not in recipe:
             said.append(

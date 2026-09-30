@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-30T15:59:38+00:00",
+  "file": "scripts/check_outside_premises.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_outside_premises.py"
+  ],
+  "commit": "c92a1c8",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an exemption need not name a path here",
+      "old": "        named = [c for c in INSIDE_PATH.findall(why) if (root / c).exists()]",
+      "new": "        named = [c for c in INSIDE_PATH.findall(why) or [1]]",
+      "verdict": "caught",
+      "caught_by": [
+        "an exemption whose reason names no path here is reported",
+        "an exemption naming a path that is not there is reported too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a tree recipe's count is not compared",
+      "old": "    elif seen != want:",
+      "new": "    elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree recipe whose count is wrong is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a tree recipe may name a file that is not there",
+      "old": "    if not path.is_file():\n        return [f\"{entry}: `{key}`'s `tree` recipe names {where}, which is not a file.\"]",
+      "new": "    if False:\n        return []",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree recipe naming a file that is not there is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
