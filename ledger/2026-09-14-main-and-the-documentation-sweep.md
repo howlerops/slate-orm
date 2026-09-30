@@ -100,6 +100,14 @@ with no path filter.
 
 ## What this does not do
 
+~~**Pages is not enabled, and cannot be enabled from here.**~~ **Closed** —
+somebody with admin enabled it. `https://howlerops.github.io/slate-orm/`
+answers 200 and serves the docs site. The 2026-09-30 audit could not check
+this one, because `GET /repos/howlerops/slate-orm/pages` is refused by that
+container's proxy; fetching the published URL is the route that works, and
+costs nothing. See
+`ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md`.
+
 **Pages is not enabled, and cannot be enabled from here.** `enablement: true`
 was tried and refused: `Create Pages site failed. Error: Resource not
 accessible by integration`. Same wall as the default branch — repository

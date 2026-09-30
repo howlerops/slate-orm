@@ -149,9 +149,9 @@
     {
       "entry": "2026-09-14-main-and-the-documentation-sweep.md",
       "key": "Pages is not enabled, and cannot be enabled from here.",
-      "verdict": "deliberate",
-      "by": "this entry: not takeable from here. `enablement: true` was tried and answered `Resource not accessible by integration` \u2014 repository settings are not writable by this session or the workflow token. The remedy is an owner enabling Pages in the repository's settings.",
-      "reviewed": "2026-09-27"
+      "verdict": "closed",
+      "reviewed": "2026-09-30",
+      "by": "somebody with admin enabled it: https://howlerops.github.io/slate-orm/ answers 200 and serves the docs site. The same shape as the default-branch claim beside it, and stale for the same reason. See ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md"
     },
     {
       "entry": "2026-09-14-the-home-page-is-a-workbench.md",
@@ -12995,13 +12995,6 @@
     },
     {
       "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
-      "key": "The sibling claim in the same entry could not be checked.",
-      "verdict": "open",
-      "by": "GET /repos/howlerops/slate-orm/pages is refused by this container's proxy with 403, \"Access to this GitHub API path is not permitted through this proxy\". The claim is the same shape as the default-branch one this entry closed, so it is likely stale and is left deliberate rather than guessed at",
-      "checked": "2026-09-30"
-    },
-    {
-      "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
       "key": "Two per thirty is four events short of a rate.",
       "verdict": "deliberate",
       "by": "the interval is reported rather than a point estimate, and the entry says the move from 1.85% to 6.7% is inside what thirty draws do by chance. Reading more is the next pass's job, not a defect in this one",
@@ -13013,6 +13006,13 @@
       "verdict": "deliberate",
       "by": "one draw's worth of weak evidence against a hypothesis resting on four events is what thirty reads buy; the entry reports the five negative existentials it drew and that all five held, which is the tally the previous entry asked for",
       "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "key": "The sibling claim in the same entry could not be checked.",
+      "verdict": "closed",
+      "reviewed": "2026-09-30",
+      "by": "checked from the other side within the hour and the claim was stale: https://howlerops.github.io/slate-orm/ answers 200 and serves the docs site. Recorded in ledger/2026-09-14-main-and-the-documentation-sweep.md, whose Pages caveat is closed with it"
     }
   ]
 }

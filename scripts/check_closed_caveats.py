@@ -875,6 +875,12 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
+     'The sibling claim in the same entry could not be checked.'):
+        'the same closure as the Pages caveat it is about, reached from the other side: `https://howlerops.github.io/slate-orm/` answers 200. It leaves nothing in the tree for the same reason that one does -- the publishing workflow was already here while the claim was true -- and adding a second witness for one fact would be a copy',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     'Pages is not enabled, and cannot be enabled from here.'):
+        'closed by somebody with admin enabling Pages: `https://howlerops.github.io/slate-orm/` answers 200 and serves the site, where the entry recorded the deploy job failing on `Resource not accessible by integration`. The workflow that publishes is already in the tree and was already there while this was false, so it witnesses nothing; the published URL is the only evidence, and it is not a file',
     ('2026-09-14-main-and-the-documentation-sweep.md',
      '`main` is not yet the **default** branch, and this session c'):
         'closed by somebody with admin changing the setting: `GET /repos/howlerops/slate-orm` answers `"default_branch": "main"`, where the caveat recorded it opening on a feature branch. Nothing in the tree moved, and nothing in the tree could -- the entry says in the same breath that this session cannot write the setting -- so a witness would be a file asserting what the API answers',
@@ -1025,6 +1031,10 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-main-and-the-documentation-sweep.md',
      '`main` is not yet the **default** branch, and this session c'): '=setting',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     'Pages is not enabled, and cannot be enabled from here.'): '=setting',
+    ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
+     'The sibling claim in the same entry could not be checked.'): '=setting',
     ('2026-09-29-the-skip-list-that-excused-nothing.md',
      'Nothing checks that the never-fires halves still fire.'):
         'never-fires-halves-derived',

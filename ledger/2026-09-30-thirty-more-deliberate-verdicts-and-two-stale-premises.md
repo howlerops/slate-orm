@@ -59,6 +59,12 @@ reproduces the 216-row entry's published 4.7% upper bound):
 | **this 30** | **2** | **6.7%** | **0.8% – 22.1%** | **8 – 229** |
 | pooled, 246 | 6 | 2.4% | 0.9% – 5.2% | 9 – 54 |
 
+The Pages claim, closed after this table was written, is **not** counted in it:
+it was not in the draw, it was read because it sat beside one that was, and
+adding a found-by-looking row to a random sample would bias the rate upward.
+It is a thirty-first claim examined and a third false one, and it belongs to
+the shape below rather than to the arithmetic above.
+
 **The pooled row is an upper bound on precision, not a real pooling**: the two
 draws are independent, so an unknown number of these thirty were among the 216
 and any overlap is double-counted. "Tens, not hundreds" survives either way.
@@ -121,6 +127,18 @@ cheapest half.
 reverse sweep's bulk stamp.** Both write the same field. The twenty-eight
 stamped today were read against code, which is a stronger claim than the field
 can carry, and nothing in the tracker records which kind a date is.
+
+~~**The sibling claim in the same entry could not be checked.**~~ **Closed
+within the hour, by the reader**, and recorded in
+`ledger/2026-09-14-main-and-the-documentation-sweep.md` beside its sibling. The
+claim was stale: `https://howlerops.github.io/slate-orm/` answers 200 and
+serves the site. So **three** false of thirty-one claims examined, not two of
+thirty, and the shape named above is 3 for 3 in one draw. The lesson is smaller
+and sharper than the paragraph below it: I reached for the API the caveat's own
+author had been refused, and stopped when that was refused too. Fetching the
+published URL costs nothing and needs no token. A premise about the outside
+world is checkable from more than one side, and giving up on the first is how
+it stays stale. The original, kept for the record:
 
 **The sibling claim in the same entry could not be checked.** "Pages is not
 enabled, and cannot be enabled from here" is the same shape as the
