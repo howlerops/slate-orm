@@ -15,7 +15,7 @@
 )]
 
 use slate_helpdesk::{Agent, Helpdesk, HelpdeskError, Indexed, Ticket, caller};
-use slate_orm::{Record, Records, SecurityContext, Value, memory::MemoryStore};
+use slate_orm::{Aggregate, Record, Records, SecurityContext, Value, memory::MemoryStore};
 use uuid::Uuid;
 
 const ACME: Uuid = Uuid::from_u128(1);
@@ -621,4 +621,249 @@ async fn a_write_a_policy_forbids_says_two_different_things() {
     desk.log_time(&boss, "ACME-70", 10)
         .await
         .expect("a supervisor works any ticket");
+}
+
+#[tokio::test]
+async fn reordering_the_aggregate_list_does_not_change_what_the_roll_up_reads() {
+    // The finding behind `Records::grouped_records`, demonstrated from both
+    // sides. `group_records` answers positionally, so swapping the two
+    // aggregates swaps the two numbers and nothing says so; `grouped_records`
+    // is asked by name and answers the same either way.
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    desk.open_ticket(&dana, ticket(ACME, 700, "ACME-80", "Billable", 2))
+        .await
+        .expect("opening");
+    desk.assign(&dana, "ACME-80", DANA).await.expect("taking");
+    desk.log_time(&dana, "ACME-80", 275).await.expect("logging");
+
+    let query = slate_orm::Query::all();
+    let by = [Ticket::COLUMNS.assignee_id];
+    let count_first = [
+        Aggregate::Count,
+        Aggregate::Sum(Ticket::COLUMNS.hours_logged),
+    ];
+    let sum_first = [
+        Aggregate::Sum(Ticket::COLUMNS.hours_logged),
+        Aggregate::Count,
+    ];
+
+    let txn = desk.store().begin().await.expect("begin");
+
+    // Positionally: `values[0]` is a count under one list and a sum under the
+    // other. This is what a call site reading `values[0]` would get, and the
+    // assertion is what makes the hazard a demonstration rather than a claim.
+    let one = txn
+        .group_records::<Indexed>(&dana, &query, &by, &count_first)
+        .await
+        .expect("grouping");
+    let other = txn
+        .group_records::<Indexed>(&dana, &query, &by, &sum_first)
+        .await
+        .expect("grouping");
+    assert_eq!(one[0].values[0], Value::I64(1), "position 0 is the count");
+    assert_eq!(other[0].values[0], Value::I64(275), "and now it is the sum");
+
+    // By name: the same question, the same answer, either order.
+    for list in [count_first, sum_first] {
+        let rolled = txn
+            .grouped_records::<Indexed>(&dana, &query, &by, &list)
+            .await
+            .expect("grouping");
+        assert_eq!(rolled[0].get(Aggregate::Count), Some(&Value::I64(1)));
+        assert_eq!(
+            rolled[0].get(Aggregate::Sum(Ticket::COLUMNS.hours_logged)),
+            Some(&Value::I64(275))
+        );
+        assert_eq!(
+            rolled[0].key(Ticket::COLUMNS.assignee_id),
+            Some(&Value::Uuid(DANA))
+        );
+        // An aggregate nobody asked for is `None`, never a neighbour's value.
+        assert_eq!(
+            rolled[0].get(Aggregate::Max(Ticket::COLUMNS.priority)),
+            None
+        );
+        assert_eq!(rolled[0].key(Ticket::COLUMNS.status), None);
+    }
+}
+
+#[tokio::test]
+async fn an_ambiguous_grouped_request_is_refused_before_it_is_read() {
+    // `[Count, Count]` makes `get(Count)` ambiguous, and every way of
+    // resolving it hides the mistake further from where it was made. The
+    // refusal happens at the request, which is the only place the caller can
+    // see both entries.
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    let txn = desk.store().begin().await.expect("begin");
+
+    let said = txn
+        .grouped_records::<Indexed>(
+            &dana,
+            &slate_orm::Query::all(),
+            &[Ticket::COLUMNS.assignee_id],
+            &[Aggregate::Count, Aggregate::Count],
+        )
+        .await
+        .expect_err("a duplicated aggregate was accepted")
+        .to_string();
+    assert!(
+        said.contains("requested twice") && said.contains("ambiguous"),
+        "refused, but not for the reason this test is about: {said}"
+    );
+
+    // And the same for a grouping column.
+    let said = txn
+        .grouped_records::<Indexed>(
+            &dana,
+            &slate_orm::Query::all(),
+            &[Ticket::COLUMNS.assignee_id, Ticket::COLUMNS.assignee_id],
+            &[Aggregate::Count],
+        )
+        .await
+        .expect_err("a duplicated grouping column was accepted")
+        .to_string();
+    assert!(
+        said.contains("requested twice"),
+        "refused, but not for the reason this test is about: {said}"
+    );
+
+    // The plain `group_records` still takes both, which is correct: the
+    // kernel can compute them, and it is this layer that cannot say which
+    // one a lookup meant.
+    let both = txn
+        .group_records::<Indexed>(
+            &dana,
+            &slate_orm::Query::all(),
+            &[Ticket::COLUMNS.assignee_id],
+            &[Aggregate::Count, Aggregate::Count],
+        )
+        .await
+        .expect("the kernel is happy to count twice");
+    assert!(both.iter().all(|g| g.values.len() == 2));
+}
+
+#[tokio::test]
+async fn the_priority_index_wins_somewhere_between_12k_and_13k_rows() {
+    // `most_urgent` sorts by `(priority ASC, opened_at DESC)`, which is
+    // exactly the order `tickets_by_priority` stores — and the docstring
+    // used to say the planner "can serve it without a sort". Nothing checked
+    // that, the ledger recorded it as a gap, and checking it found the claim
+    // true only above a size this application will probably never reach.
+    //
+    // Three plans, measured rather than asserted from reading. Asked through
+    // `Helpdesk::explain_most_urgent`, which builds its query from the same
+    // `urgent()` the method calls — a test that rebuilt the query would
+    // assert about a query nobody runs.
+    let mut desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    let boss = caller(DANA, ACME, "supervisor");
+    let root = SecurityContext::superuser();
+
+    async fn raise(desk: &Helpdesk<MemoryStore>, who: &SecurityContext, from: u128, to: u128) {
+        for n in from..to {
+            desk.open_ticket(
+                who,
+                ticket(
+                    ACME,
+                    1000 + n,
+                    &format!("ACME-P{n}"),
+                    "Planned",
+                    i64::try_from(n % 3).expect("small") + 1,
+                ),
+            )
+            .await
+            .expect("opening");
+        }
+    }
+
+    // 1. No statistics at all. This is a *fresh store*, and it is the half
+    //    that was the finding: nothing gathers statistics for you, so the
+    //    planner costs everything against `TableStats::assumed` — no rows —
+    //    and a scan of a table it believes is empty is free.
+    raise(&desk, &dana, 0, 30).await;
+    let cold = desk.explain_most_urgent(&boss, 5).await.expect("a plan");
+    assert_eq!(cold.access, slate_orm::AccessSummary::TableScan, "{cold}");
+    assert!(cold.sorts, "{cold}");
+    // 0.0162 rows, printed as `rows=0`: `assumed` times the filter's
+    // selectivity. A bound rather than a literal — the exact product is the
+    // cost model's business, not this test's.
+    assert!(
+        cold.estimated_rows < 1.0,
+        "the planner already believes there are rows here, so the plan above \
+         is not explained by missing statistics: {cold}"
+    );
+
+    // 2. Analysed, at 30 rows. Still a sort, and this is *correct*: walking
+    //    an index and then doing a point read per row costs more than
+    //    scanning thirty rows and sorting them. The index does not earn its
+    //    keep at this size and the planner is right to say so.
+    desk.analyze(&root).await.expect("gathering statistics");
+    let small = desk.explain_most_urgent(&boss, 5).await.expect("a plan");
+    assert_eq!(small.access, slate_orm::AccessSummary::TableScan, "{small}");
+    assert!(small.sorts, "{small}");
+    assert!(
+        small.estimated_rows >= 1.0,
+        "statistics did not land: {small}"
+    );
+
+    // 3. Analysed, at 13,000 rows. Now the index wins and the sort is gone.
+    //    Measured crossover: table scan at 12,000, index scan at 13,000. The
+    //    index plan's cost is flat at 6.00 because a `LIMIT 5` walk stops
+    //    after five entries whatever the table holds, while the scan-and-sort
+    //    grows with the table — 1.01 at 30 rows, 2.07 at 3,000, 5.75 at
+    //    12,000. 13,000 rather than 12,500 so the test is not sitting on the
+    //    boundary; a cost-model change that moves it will be a loud failure
+    //    here rather than a silent regression in production.
+    raise(&desk, &dana, 30, 13_000).await;
+    desk.analyze(&root).await.expect("re-gathering statistics");
+    let large = desk.explain_most_urgent(&boss, 5).await.expect("a plan");
+    assert_eq!(
+        large.access,
+        slate_orm::AccessSummary::IndexScan {
+            index: "tickets_by_priority".to_owned()
+        },
+        "the index stores exactly this order and the planner still will not \
+         use it at 13,000 rows: {large}"
+    );
+    assert!(
+        !large.sorts,
+        "the index gives the order and the executor is sorting anyway: {large}"
+    );
+    assert_eq!(large.limit, Some(5));
+
+    // And the plan describes the read that actually happens.
+    let urgent = desk.most_urgent(&boss, 5).await.expect("the urgent list");
+    assert_eq!(urgent.len(), 5);
+    assert!(
+        urgent.windows(2).all(|w| w[0].priority <= w[1].priority),
+        "worst first: {:?}",
+        urgent.iter().map(|t| t.priority).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn an_agent_may_not_ask_for_a_plan() {
+    // The other half of the grant above, and a finding about the kernel's
+    // own design rather than about this application: `Action::ALL` is
+    // `[Read, Insert, Update, Delete]` — four, not five. An `agent` holds
+    // `Action::ALL` on tickets and still cannot ask for a plan, because a
+    // plan is costed against statistics gathered over the whole table and so
+    // leaks the shape of rows the row policy hides.
+    //
+    // Worth a test rather than a comment: "ALL" reads as *all*, and the one
+    // thing it does not include is the one an application reaches for when
+    // it wants to know why a read is slow.
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    let said = desk
+        .explain_most_urgent(&dana, 5)
+        .await
+        .expect_err("`Action::ALL` has quietly grown a fifth action")
+        .to_string();
+    assert!(
+        said.contains("explain"),
+        "refused, but not over the explain grant: {said}"
+    );
 }

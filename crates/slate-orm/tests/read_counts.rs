@@ -304,6 +304,18 @@ impl<S: Records + Sync + ?Sized> Records for Counting<'_, S> {
             .await
     }
 
+    async fn grouped_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<slate_orm::Grouped>> {
+        self.inner
+            .grouped_records::<R>(context, query, group, aggregates)
+            .await
+    }
+
     fn explain_records<R: Record>(
         &self,
         context: &SecurityContext,

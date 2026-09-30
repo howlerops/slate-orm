@@ -36,6 +36,7 @@ pub mod error;
 pub mod ext;
 pub mod factory;
 pub mod field;
+pub mod grouped;
 #[cfg(feature = "json")]
 pub mod json;
 pub mod record;
@@ -45,6 +46,7 @@ pub use error::{OrmError, Result};
 pub use ext::{Page, Records};
 pub use factory::{Factory, FactoryError, seeding_context};
 pub use field::{Field, FieldError, Timestamp, Units};
+pub use grouped::Grouped;
 #[cfg(feature = "json")]
 pub use json::{Json, JsonError};
 pub use record::{Record, RecordError};

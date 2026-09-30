@@ -1,0 +1,24 @@
+{
+  "at": "2026-09-30T20:49:59+00:00",
+  "file": "scripts/read_deliberate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_read_deliberate.py"
+  ],
+  "commit": "8767159",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the printed cut widens from three to ten",
+      "old": "SHOWN = 3",
+      "new": "SHOWN = 10",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "Correct, and it is the measurement rather than a gap: both labelled rows' closing entries rank at 16 and nowhere, so they are outside a cut of 10 exactly as they are outside a cut of 3. A two-row labelled set cannot resolve the cut, which is what the rank measurement is for and what the RANKS docstring says. A third row ranked between 3 and 10 would make this mutation fail, and that is the number to move."
+    }
+  ],
+  "restored_clean": true
+}

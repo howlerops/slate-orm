@@ -2353,7 +2353,7 @@
       "entry": "2026-09-20-a-path-in-a-string-literal-compiles.md",
       "key": "It does not check anchors.",
       "verdict": "deliberate",
-      "by": "this entry: nothing in the tree uses an anchor today",
+      "by": "this entry: nothing in the tree uses an anchor today (`git grep -c 'md#' -- '*.rs' '*.py' '*.go' '*.ts'` finds none, 2026-09-30)",
       "reviewed": "2026-09-26",
       "checked": "2026-09-30",
       "draw": "2026-09-30-20260930"
@@ -6499,7 +6499,7 @@
       "entry": "2026-09-25-the-web-apps-schema-copy-is-generated-now.md",
       "key": "The `EXPECTED_REFUSALS` idiom now has a fourth copy.",
       "verdict": "deliberate",
-      "by": "this entry: the idiom's value is that a list you are forced to edit stays true, and tracking how many such lists exist is a roster of rosters whose own reasons nothing checks either. The repetition is the idiom working, not a duplication to remove.",
+      "by": "this entry: the idiom's value is that a list you are forced to edit stays true, and tracking how many such lists exist is a roster of rosters whose own reasons nothing checks either. The repetition is the idiom working, not a duplication to remove. (`git grep -ln EXPECTED_REFUSALS` lists the copies: four in code - crates/slate-orm/tests/factory.rs, examples/explorer/conformance/conformance.py, examples/explorer/web/src/api.ts and the scripts/ guards - and the rest ledger prose, 2026-09-30)",
       "reviewed": "2026-09-27",
       "checked": "2026-09-30",
       "draw": "2026-09-30-20260930"
@@ -10028,7 +10028,7 @@
       "entry": "2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md",
       "key": "The wire carries no scale, ever.",
       "verdict": "open",
-      "by": "still true, and the entry calls it a real hole: a client renders a decimal from the scale it declared locally, the fingerprint deliberately does not hash the scale because a scale addresses no column, and nothing checks the two agree. A client with the scale wrong reaches the right column and prints the wrong number.",
+      "by": "still true, and the entry calls it a real hole: a client renders a decimal from the scale it declared locally, the fingerprint deliberately does not hash the scale because a scale addresses no column, and nothing checks the two agree. A client with the scale wrong reaches the right column and prints the wrong number. Re-read 2026-09-30: crates/slate-kernel/src/migrate.rs stores a column's scale in StoredColumn, and `fingerprint` still does not hash it - it hashes type_code, is_nullable and is_dropped only - so the claim holds where it matters.",
       "checked": "2026-09-28"
     },
     {
@@ -11577,7 +11577,7 @@
       "entry": "2026-09-20-the-write-side-of-the-same-mistake.md",
       "key": "Only one write path uses them.",
       "verdict": "deliberate",
-      "by": "one converted path makes the encoders live; converting every write in the demo is churn with no new coverage, since the coverage guard already fails on a generated encoder no test calls.",
+      "by": "one converted path makes the encoders live; converting every write in the demo is churn with no new coverage, since the coverage guard already fails on a generated encoder no test calls. (scripts/test_codegen.py is the coverage guard; `git grep -ln 'encode_row\\|to_row_values' -- clients/ examples/` finds the one converted path, 2026-09-30)",
       "reviewed": "2026-09-28",
       "checked": "2026-09-30",
       "draw": "2026-09-30-20260930"
@@ -11928,7 +11928,7 @@
       "entry": "2026-09-21-contains-on-the-wire.md",
       "key": "The Go and TypeScript hints are untested beyond this file.",
       "verdict": "open",
-      "by": "nothing checks that a hint naming an index the table does not have produces a warning, which Python's test_explain.py does check.",
+      "by": "nothing checks that a hint naming an index the table does not have produces a warning, which Python's test_explain.py does check. The Python case is clients/python/tests/test_explain.py; the Go and TypeScript suites have no equivalent (2026-09-30).",
       "checked": "2026-09-28"
     },
     {
@@ -12906,7 +12906,7 @@
       "entry": "2026-09-29-two-controls-and-an-assertion-that-was-a-fixture-coincidence.md",
       "key": "The money measure is one column at one scale.",
       "verdict": "open",
-      "by": "still true: books.price is the demo's only decimal, the UI holds the scale as a literal the way the three adapters hold theirs, and nothing checks it against the catalog \u2014 the generated catalog.ts carries column names only.",
+      "by": "still true: books.price is the demo's only decimal, the UI holds the scale as a literal the way the three adapters hold theirs, and nothing checks it against the catalog \u2014 the generated catalog.ts carries column names only. (`git grep -c scale -- examples/explorer/web/src/catalog.ts` finds none: the generated catalog carries column names only, 2026-09-30)",
       "checked": "2026-09-29"
     },
     {
@@ -14793,7 +14793,7 @@
       "entry": "2026-09-29-the-parsers-vocabulary-is-the-parser.md",
       "key": "The two rosters are held to the parser, not to `value_for`.",
       "verdict": "open",
-      "by": "STRING_ONLY says which operators need column 2 and nothing checks column 2 is still the string column, so renaming the fixture's columns would leave it silently wrong.",
+      "by": "STRING_ONLY says which operators need column 2 and nothing checks column 2 is still the string column, so renaming the fixture's columns would leave it silently wrong. (STRING_ONLY lives in crates/slate-wasm/tests/sql.rs, which is the only code copy - `git grep -ln STRING_ONLY`, 2026-09-30)",
       "checked": "2026-09-29"
     },
     {
@@ -15343,9 +15343,9 @@
     {
       "entry": "2026-09-30-four-caveats-that-had-a-check-in-them.md",
       "key": "One of two is not a validation rate.",
-      "verdict": "open",
-      "by": "the later-entry signal has two labelled rows in this repository's history and scores 1 on them. The next false verdict found is the third data point, and nothing before then says what it would do",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "2026-09-30-a-group-read-by-name.md: docs/labelled-verdicts.json is the labelled set and scripts/test_read_deliberate.py scores the signal against it by rank. The rate is still two rows; what is closed is that the next false verdict is a row somebody adds rather than a measurement somebody re-does - and the harness immediately showed the score had moved from 1 of 2 to 0 of 2 as the ledger grew",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-two-documents-this-session-made-wrong.md",
@@ -15413,18 +15413,22 @@
     {
       "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
       "key": "The roll-up decodes positionally.",
-      "verdict": "open"
+      "verdict": "closed",
+      "by": "2026-09-30-a-group-read-by-name.md: crates/slate-orm/src/grouped.rs and Records::grouped_records. `Grouped::get` takes the aggregate, so a mismatch is None rather than a wrong number, and reordering_the_aggregate_list_does_not_change_what_the_roll_up_reads demonstrates both sides",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
       "key": "Nothing asserts which plan runs.",
-      "verdict": "open"
+      "verdict": "closed",
+      "by": "2026-09-30-a-group-read-by-name.md: Helpdesk::explain_most_urgent, asserted in the_priority_index_wins_somewhere_between_12k_and_13k_rows at three sizes. It falsified the docstring: the index wins above ~12,500 rows and the planner is right to sort below that",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-image-that-copies-part-of-the-tree.md",
       "key": "It does not read `.dockerignore`.",
       "verdict": "closed",
-      "by": "2026-09-30-the-caveat-that-came-true-in-an-hour.md: the reason recorded here - 'nothing currently excludes such a directory' - was a claim about a file nobody had opened, and it was false. .dockerignore is an allow-list, the very next CI run failed on '/examples/helpdesk': not found, and check_workspace.py now reads both files",
+      "by": "2026-09-30-the-caveat-that-came-true-in-an-hour.md: the reason recorded here - 'nothing currently excludes such a directory' - was a claim about a file nobody had opened, and it was false. .dockerignore is an allow-list, the very next CI run failed on '/examples/helpdesk': not found, and check_workspace.py now reads both files The file is `.dockerignore` and the rule is in scripts/check_workspace.py; the CI job that caught it is the `container image` job in .github/workflows/ci.yml.",
       "reviewed": "2026-09-30"
     },
     {
@@ -15451,7 +15455,9 @@
     {
       "entry": "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
       "key": "It checks that a member is admitted, not that it is admitted",
-      "verdict": "open"
+      "verdict": "closed",
+      "by": "2026-09-30-a-group-read-by-name.md: scripts/check_workspace.py `re_excluded` refuses a tracked file inside a member that a `**/\u2026/` line takes back out; checked against git ls-files rather than the filesystem",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
@@ -15463,7 +15469,49 @@
     {
       "entry": "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
       "key": "The correction is not a guard against the class it belongs t",
+      "verdict": "closed",
+      "by": "2026-09-30-a-group-read-by-name.md: scripts/check_caveat_citations.py `ABSENCE` - a verdict whose reason claims something is missing from the tree must cite a path or the search that was run. It found eleven, eight unanchored, including this entry's own",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-group-read-by-name.md",
+      "key": "`Grouped` is a lookup, not a type.",
+      "verdict": "deliberate",
+      "by": "this entry: `get` removes the positional coupling, which was the finding; the Value-to-i64 mapping is a different problem and closing it means a derive over an aggregate struct, weighed and rejected in Alternatives. crates/slate-orm/src/grouped.rs says so in its module docs",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-group-read-by-name.md",
+      "key": "Nothing uses `Grouped` outside the helpdesk.",
+      "verdict": "deliberate",
+      "by": "this entry: `get` removes the positional coupling, which was the finding; the Value-to-i64 mapping is a different problem and closing it means a derive over an aggregate struct, weighed and rejected in Alternatives. crates/slate-orm/src/grouped.rs says so in its module docs",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-group-read-by-name.md",
+      "key": "The crossover is one query on one backend.",
+      "verdict": "deliberate",
+      "by": "this entry: the number is labelled with its backend and its query in both the test and the docstring table, and MemoryStore's BTreeMap walk is not what crates/slate-slatedb's calibrated constants describe. A crossover measured on object storage is a benchmark, not a unit test",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-group-read-by-name.md",
+      "key": "`Helpdesk::analyze` is not scheduled.",
       "verdict": "open"
+    },
+    {
+      "entry": "2026-09-30-a-group-read-by-name.md",
+      "key": "The absence rule reads a reason, not a claim.",
+      "verdict": "deliberate",
+      "by": "this entry, and the limitation scripts/check_cited_docs.py and scripts/check_caveat_citations.py both already state: a citation guard checks that a claim is checkable, never that it is true. Judging the sentence is the reading, and the reading is what the guard makes possible",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-a-group-read-by-name.md",
+      "key": "One of two is still not a validation rate.",
+      "verdict": "deliberate",
+      "by": "this entry: the sample is two rows and no arithmetic makes it a rate. What changed is that docs/labelled-verdicts.json is where the next one goes and scripts/test_read_deliberate.py re-scores from it, so the number grows without anybody remembering to re-measure",
+      "reviewed": "2026-09-30"
     }
   ]
 }

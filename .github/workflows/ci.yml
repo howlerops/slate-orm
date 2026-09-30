@@ -333,6 +333,7 @@ jobs:
       - run: python3 scripts/test_check_caveat_citations.py
       - run: python3 scripts/check_closed_caveats.py
       - run: python3 scripts/test_check_closed_caveats.py
+      - run: python3 scripts/test_read_deliberate.py
       - run: python3 scripts/check_draws.py
       - run: python3 scripts/test_check_draws.py
       # The tracker itself, which `scripts/check.sh` has always run and

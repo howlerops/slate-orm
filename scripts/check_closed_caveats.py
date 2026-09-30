@@ -91,6 +91,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # roster line, because the roster line is one `!` in a file and the rule is
  # the thing that has to still exist.
  "dockerignore-admits-members": ("def admitted", "scripts/check_workspace.py"),
+ # --- 2026-09-30, the five caveats today's entries left open ----------------
+ #
+ # Each needle is the thing a reader would go and look at, not the entry that
+ # claims it.
+ "grouped-by-name": ("fn get(&self, aggregate: Aggregate)", "crates/slate-orm/src/grouped.rs"),
+ "plan-measured": ("explain_most_urgent", "examples/helpdesk/src/lib.rs"),
+ "dockerignore-admits-whole": ("def re_excluded", "scripts/check_workspace.py"),
+ "absence-claims-anchored": ("ABSENCE = re.compile", "scripts/check_caveat_citations.py"),
+ "labelled-verdicts": ("RANKS", "scripts/test_read_deliberate.py"),
  "helpdesk-on-slatedb": ("SlateStore::open_s3", "examples/helpdesk/examples/over_slatedb.rs"),
  "helpdesk-real-policy": (
      "agents_work_their_own_tickets",
@@ -1121,6 +1130,26 @@ WITNESSED: dict[tuple[str, str], str] = {
         "2026-09-30-the-image-that-copies-part-of-the-tree.md",
         "It does not read `.dockerignore`.",
     ): "dockerignore-admits-members",
+    (
+        "2026-09-30-the-helpdesk-on-slatedb.md",
+        "The roll-up decodes positionally.",
+    ): "grouped-by-name",
+    (
+        "2026-09-30-the-helpdesk-on-slatedb.md",
+        "Nothing asserts which plan runs.",
+    ): "plan-measured",
+    (
+        "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+        "It checks that a member is admitted, not that it is admitted",
+    ): "dockerignore-admits-whole",
+    (
+        "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+        "The correction is not a guard against the class it belongs t",
+    ): "absence-claims-anchored",
+    (
+        "2026-09-30-four-caveats-that-had-a-check-in-them.md",
+        "One of two is not a validation rate.",
+    ): "labelled-verdicts",
     (
         "2026-09-30-an-application-written-against-the-rust-surface.md",
         "It is one slice.",

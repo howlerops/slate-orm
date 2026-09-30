@@ -37,9 +37,9 @@
 #![warn(missing_docs)]
 
 use slate_orm::{
-    Action, Aggregate, Catalog, Direction, Expr, Grant, Group, IndexDef, IndexId, Managed,
-    MigrationReport, Policy, Principal, Query, Record, RecordError, RecordStore, Records, Row,
-    ScanOrder, SecurityCatalog, SecurityContext, SortKey, TableDef, TableId, Value, ValueType,
+    Action, Aggregate, Catalog, Direction, Explanation, Expr, Grant, Grouped, IndexDef, IndexId,
+    Managed, MigrationReport, Policy, Principal, Query, Record, RecordError, RecordStore, Records,
+    Row, ScanOrder, SecurityCatalog, SecurityContext, SortKey, TableDef, TableId, Value, ValueType,
     migrate,
 };
 use std::sync::LazyLock;
@@ -400,6 +400,13 @@ pub fn security() -> SecurityCatalog {
         .grant(Grant::new("agent", AGENTS, read))
         .grant(Grant::new("agent", TENANTS, read))
         .grant(Grant::new("supervisor", TICKETS, Action::ALL))
+        // `Action::ALL` is four actions and deliberately not five: `Explain`
+        // is excluded, because a plan is costed against whole-table
+        // statistics and so describes rows the caller's row policy hides. An
+        // application therefore has to *decide* who may see one, and this is
+        // the decision: a supervisor sizing the queue may, an agent working
+        // it may not. `an_agent_may_not_ask_for_a_plan` is the other half.
+        .grant(Grant::new("supervisor", TICKETS, [Action::Explain]))
         .grant(Grant::new("supervisor", COMMENTS, Action::ALL))
         .grant(Grant::new("supervisor", AGENTS, read))
         .grant(Grant::new("supervisor", TENANTS, read))
@@ -752,24 +759,102 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
     /// The most urgent live tickets, worst first, at most `limit` of them.
     ///
     /// Sorted rather than paged, for the reason [`Helpdesk::inbox`] gives.
-    /// `tickets_by_priority` is `(priority, opened_at DESC)`, so this is the
-    /// order the index already stores and the planner can serve it without a
-    /// sort — though nothing here asserts that it does, which would need
-    /// [`Records::explain_records`] and is a different claim.
+    ///
+    /// # What the index actually buys, measured
+    ///
+    /// `tickets_by_priority` is `(priority, opened_at DESC)`, which is
+    /// exactly this order — and an earlier version of this comment went on
+    /// to say the planner "can serve it without a sort". **That was a claim
+    /// nobody had checked, and checking it made it smaller.** Measured in
+    /// `the_priority_index_wins_somewhere_between_12k_and_13k_rows`:
+    ///
+    /// | tickets | plan |
+    /// |---|---|
+    /// | any, before [`Helpdesk::analyze`] | `Sort -> Table Scan`, `rows=0` |
+    /// | 30 | `Sort -> Table Scan`, cost 1.01 |
+    /// | 3,000 | `Sort -> Table Scan`, cost 2.07 |
+    /// | 12,000 | `Sort -> Table Scan`, cost 5.75 |
+    /// | 13,000 | `Index Scan using tickets_by_priority`, cost 6.00 |
+    ///
+    /// The index plan's cost is flat because a `LIMIT 5` walk stops after
+    /// five entries however large the table is; the scan-and-sort grows with
+    /// it. Below the crossover the planner sorts, and it is *right* to —
+    /// a point read per row costs more than sorting thirty rows.
+    ///
+    /// So the honest version: the index earns its keep on a queue of tens of
+    /// thousands, and on a small one it is maintained on every write and
+    /// never read. Which of those a deployment has is not something this
+    /// crate knows.
     ///
     /// # Errors
     /// If the read is refused.
     pub async fn most_urgent(&self, who: &SecurityContext, limit: usize) -> Result<Vec<Ticket>> {
-        let query = Query::all()
-            .filter(live())
-            .sort_by([
-                SortKey::asc(Ticket::COLUMNS.priority),
-                SortKey::desc(Ticket::COLUMNS.opened_at),
-            ])
-            .limit(limit);
         let txn = self.store.begin().await?;
-        let found: Vec<Indexed> = txn.query_records(who, &query).await?;
+        let found: Vec<Indexed> = txn.query_records(who, &urgent(limit)).await?;
         Ok(found.into_iter().map(|Indexed(t)| t).collect())
+    }
+
+    /// Gather statistics for all four tables and hand them to the planner.
+    ///
+    /// # This is a step an application has to take, and nothing does it for
+    /// you
+    ///
+    /// Until it runs, the planner costs every query against
+    /// [`slate_orm::TableStats::assumed`] — *no rows*. Measured here, on
+    /// thirty tickets: `most_urgent` planned as `Sort -> Table Scan on
+    /// tickets (rows=0 cost=1.00)`, materialising and sorting an order
+    /// `tickets_by_priority` already stores, because a scan of a table the
+    /// planner believes is empty is free and an index walk is not.
+    ///
+    /// The kernel is not hiding this — `analyze_records` and
+    /// `set_statistics` are both public and documented. What is missing is
+    /// anybody *saying* that a fresh store plans every query wrong until an
+    /// application calls them, which is why this method exists and why
+    /// `most_urgent_is_served_from_the_priority_index` asserts the plan on
+    /// both sides of it.
+    ///
+    /// `&mut self` because the statistics live on the `RecordStore`, which
+    /// is what makes this a decision an application schedules rather than
+    /// something a read does for itself: re-analysing on every query would
+    /// scan the table to plan the scan.
+    ///
+    /// # Errors
+    /// If the caller may not read a table. A superuser is the usual caller —
+    /// statistics are whole-table by design, so gathering them under a row
+    /// policy would describe the policy rather than the table.
+    pub async fn analyze(&mut self, who: &SecurityContext) -> Result<()> {
+        let mut stats = slate_orm::Statistics::new();
+        let txn = self.store.begin().await?;
+        stats.set(TENANTS, txn.analyze_records::<Tenant>(who).await?);
+        stats.set(AGENTS, txn.analyze_records::<Agent>(who).await?);
+        stats.set(TICKETS, txn.analyze_records::<Indexed>(who).await?);
+        stats.set(COMMENTS, txn.analyze_records::<Comment>(who).await?);
+        drop(txn);
+        self.store.set_statistics(stats);
+        Ok(())
+    }
+
+    /// The plan [`Helpdesk::most_urgent`] would run under, without running it.
+    ///
+    /// Exposed so a test can assert the plan against the *same* query the
+    /// method issues. A test that rebuilds the query itself asserts about a
+    /// query nobody runs, and drifts the moment the method changes — which is
+    /// the failure mode that kept "the planner should serve this from the
+    /// index" a claim rather than a result
+    /// (`ledger/2026-09-30-the-helpdesk-on-slatedb.md` recorded it as one).
+    ///
+    /// # Errors
+    /// If the caller may not ask for a plan: [`Action::Explain`] is a
+    /// separate grant from [`Action::Read`], deliberately, because a plan is
+    /// costed against whole-table statistics and so describes rows the caller
+    /// may not read.
+    pub async fn explain_most_urgent(
+        &self,
+        who: &SecurityContext,
+        limit: usize,
+    ) -> Result<Explanation> {
+        let txn = self.store.begin().await?;
+        Ok(txn.explain_records::<Indexed>(who, &urgent(limit))?)
     }
 
     /// How much live work each agent is holding, and the unassigned pile.
@@ -783,14 +868,25 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
     /// That is worth knowing: an application that maps the key straight to a
     /// `Uuid` loses the row it most wants to see.
     ///
+    /// # Reading a group by name, not by position
+    ///
+    /// [`Records::grouped_records`] rather than `group_records`. The
+    /// difference is the whole of what this crate's first roll-up found
+    /// wrong: `group_records` returns `Vec<Value>` in request order, so the
+    /// only thing tying `values[1]` to `Sum(hours_logged)` is that the same
+    /// list was passed four lines earlier, and reordering the list silently
+    /// changes what every call site reads. `Grouped::get` takes the
+    /// aggregate, so a mismatch is `None` rather than a wrong number.
+    /// Written up in `ledger/2026-09-30-a-group-read-by-name.md`.
+    ///
     /// # Errors
     /// If the read is refused, or if a group comes back in a shape this does
-    /// not recognise — which would mean the aggregate list and the decoding
-    /// below had drifted apart.
+    /// not recognise — which is now only a *type* mismatch, since the
+    /// positions can no longer drift.
     pub async fn workload(&self, who: &SecurityContext) -> Result<Vec<Workload>> {
         let txn = self.store.begin().await?;
-        let groups: Vec<Group> = txn
-            .group_records::<Indexed>(
+        let groups: Vec<Grouped> = txn
+            .grouped_records::<Indexed>(
                 who,
                 &Query::all().filter(live()),
                 &[Ticket::COLUMNS.assignee_id],
@@ -826,6 +922,23 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
     }
 }
 
+/// The query behind [`Helpdesk::most_urgent`] and its plan.
+///
+/// One function, two callers, so the plan a test asserts is the plan the
+/// service runs. The sort is `(priority ASC, opened_at DESC)`, which is the
+/// order `tickets_by_priority` already stores — whether the planner *uses*
+/// it is what `most_urgent_is_served_from_the_priority_index` measures
+/// rather than assumes.
+fn urgent(limit: usize) -> Query {
+    Query::all()
+        .filter(live())
+        .sort_by([
+            SortKey::asc(Ticket::COLUMNS.priority),
+            SortKey::desc(Ticket::COLUMNS.opened_at),
+        ])
+        .limit(limit)
+}
+
 /// `status IN ('open', 'pending')` — a ticket somebody still has to do.
 ///
 /// A helper rather than a constant because [`Expr`] holds owned `Value`s.
@@ -841,40 +954,45 @@ fn live() -> Expr {
 
 /// One grouped row as a [`Workload`].
 ///
-/// Separated out because the mapping from `Vec<Value>` back to typed fields
-/// is exactly where a grouped read loses the derive's help: the aggregates
-/// come back positionally, and the only thing tying position 1 to
-/// `hours_logged` is that the same list was passed in a few lines earlier.
-/// Every arm that cannot happen is an error rather than a `panic!` or a
-/// zero, because a silent zero in a billing roll-up is the worst of the
-/// three.
-fn read_workload(group: &Group) -> Result<Workload> {
-    let shape = || {
-        HelpdeskError::UnexpectedGroup(format!("key {:?}, values {:?}", group.key, group.values))
+/// Every arm names the column or the aggregate it reads, so this cannot
+/// drift with the request the way the first version could — that one indexed
+/// `values[0]` and `values[1]`, and it is the reason
+/// [`Records::grouped_records`] exists at all.
+///
+/// What remains is the *type* mapping, which no lookup can do: a [`Value`]
+/// is a closed enum and a `Workload` field is an `i64`. Every arm that
+/// cannot happen is an error rather than a `panic!` or a zero, because a
+/// silent zero in a billing roll-up is the worst of the three.
+fn read_workload(group: &Grouped) -> Result<Workload> {
+    let shape = |what: &str, got: Option<&Value>| {
+        HelpdeskError::UnexpectedGroup(format!("{what} came back as {got:?}"))
     };
-    let assignee_id = match group.key.first() {
+    let assignee = group.key(Ticket::COLUMNS.assignee_id);
+    let assignee_id = match assignee {
         Some(Value::Uuid(id)) => Some(*id),
+        // `Null` is the unassigned pile. `None` cannot happen — the same
+        // column was requested four lines up — but is folded in rather than
+        // refused, because both mean "no agent holds these".
         Some(Value::Null) | None => None,
-        Some(_) => return Err(shape()),
+        other => return Err(shape("assignee_id", other)),
     };
-    let [tickets, hundredths] = group.values.as_slice() else {
-        return Err(shape());
-    };
+    let tickets = group.get(Aggregate::Count);
+    let hundredths = group.get(Aggregate::Sum(Ticket::COLUMNS.hours_logged));
     Ok(Workload {
         assignee_id,
         tickets: match tickets {
-            Value::I64(n) => *n,
-            Value::U64(n) => i64::try_from(*n).map_err(|_| shape())?,
-            _ => return Err(shape()),
+            Some(Value::I64(n)) => *n,
+            Some(Value::U64(n)) => i64::try_from(*n).map_err(|_| shape("COUNT(*)", tickets))?,
+            other => return Err(shape("COUNT(*)", other)),
         },
         // `SUM` over no rows is null, which cannot happen for a group that
         // exists — a group exists because a row landed in it. Mapped to zero
         // anyway rather than to an error, because "this agent has logged no
         // time" is a real answer and a refusal would be a wrong one.
         hundredths: match hundredths {
-            Value::I64(n) => *n,
-            Value::Null => 0,
-            _ => return Err(shape()),
+            Some(Value::I64(n)) => *n,
+            Some(Value::Null) => 0,
+            other => return Err(shape("SUM(hours_logged)", other)),
         },
     })
 }

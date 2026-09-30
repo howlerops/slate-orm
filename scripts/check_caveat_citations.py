@@ -234,6 +234,61 @@ def resolves(cited: str, hidden: set[str], root: Path) -> bool:
     )
 
 
+#: A reason that asserts something is *absent* from this tree.
+#:
+#: The class this catches, in one sentence: **a verdict whose reason states an
+#: unchecked fact about the tree.** It was written after doing exactly that.
+#: `ledger/2026-09-30-the-image-that-copies-part-of-the-tree.md` justified not
+#: reading `.dockerignore` with
+#:
+#:   > Nothing currently excludes such a directory, and a second parser is
+#:   > cost against a failure nobody has had.
+#:
+#: — a claim about a twenty-line file nobody had opened, in an entry arguing
+#: that a hand-maintained list needs a guard rather than a comment. The file
+#: is an allow-list, and the next CI run failed on it. Four minutes.
+#:
+#: A negative existential is the most checkable kind of claim and the least
+#: checked, because nobody asks for a demonstration that a problem does not
+#: exist. The rule is therefore the weakest thing that would have caught it:
+#: **say where you looked.** A reason claiming an absence must cite at least
+#: one path, so a reader has somewhere to go and disagree. It cannot tell
+#: whether the sentence is *true* — that is the reading — only whether it is
+#: checkable at all.
+ABSENCE = re.compile(
+    r"\bnothing (?:currently |in the tree |here |else )?"
+    r"(?:excludes|names|reads|checks|uses|calls|references|holds|carries|"
+    r"matches|imports|declares|defines|touches|depends)\b"
+    r"|\bno (?:file|caller|test|guard|script|crate|module|entry|path) "
+    r"(?:currently |in the tree |here )?"
+    r"(?:excludes|names|reads|checks|uses|calls|references|holds|carries)\b"
+    r"|\bnothing (?:currently |in the tree |here )?(?:does|has) (?:this|that|so)\b",
+    re.IGNORECASE,
+)
+
+#: A search recorded in the reason: `git grep …`, `grep …`, `rg …`, `ls …`.
+#:
+#: The second way to anchor an absence, and for most of them the *only* one:
+#: "nothing in the tree uses an anchor" is a claim about the tree, not about
+#: a file, so there is no path to cite and the honest anchor is the search
+#: that was run. Requiring a path would have pushed every such reason into
+#: the exemption roster, which is how a rule becomes a formality.
+#:
+#: What both forms have in common is the thing that matters: the reason says
+#: **where somebody looked**, so a reader can look in the same place and
+#: disagree. Neither says the answer was read correctly.
+SEARCHED = re.compile(r"`(?:git grep|grep|rg|ls|git ls-files)\b[^`]*`")
+
+#: Reasons that make an absence claim and deliberately cite no path.
+#:
+#: Keyed the way every roster here is — `(entry, first 60 characters of the
+#: key)` — so a reworded caveat orphans its row and is read again. The reason
+#: is the point: "the absence is of a *concept*, not a file" is the only
+#: shape that belongs here, and an entry that could name a file and did not
+#: is the failure this rule exists for.
+UNANCHORED: dict[tuple[str, str], str] = {}
+
+
 def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
     """`(what, ok, detail)` per check, in the shape the other guards use."""
     out: list[tuple[str, bool, str]] = []
@@ -321,6 +376,56 @@ def check(root: Path = ROOT) -> list[tuple[str, bool, str]]:
         "every cited test or function name is defined somewhere",
         not missing,
         "\n      ".join(missing),
+    )
+
+    # The absence rule. See `ABSENCE`.
+    unanchored: list[str] = []
+    claiming = 0
+    used: set[tuple[str, str]] = set()
+    for verdict in verdicts:
+        by = verdict.get("by") or ""
+        if not ABSENCE.search(by):
+            continue
+        claiming += 1
+        at = (verdict.get("entry", "?"), (verdict.get("key") or "")[:60])
+        if at in UNANCHORED:
+            used.add(at)
+            continue
+        if citations(by) or SEARCHED.search(by):
+            continue
+        unanchored.append(
+            f"{at[0]}: {at[1]!r}\n        {by[:160]}"
+        )
+    record(
+        "every verdict claiming an absence names a path somebody can open",
+        not unanchored,
+        "\n      ".join(unanchored) and
+        "\n      ".join(unanchored)
+        + "\n      A negative existential is checkable in one `git grep`, and"
+          " nobody asks for\n      a demonstration that a problem does not"
+          " exist. Cite the file you read, or the\n      `git grep` you ran,"
+          " or add a row to UNANCHORED saying why there is neither.",
+    )
+    # The never-fires half: a pattern that matches nothing reads exactly like
+    # a repository where every absence claim is anchored.
+    #
+    # Asked of the real tree only. `scripts/test_check_caveat_citations.py`
+    # builds a fixture per rule, each holding the two or three verdicts that
+    # rule is about, and requiring every one of them to also contain an
+    # absence claim would add noise to six fixtures to answer a question
+    # about none of them. The question — *is this pattern matching anything
+    # in this repository* — is a question about this repository.
+    if root == ROOT:
+        record(
+            "some verdict makes an absence claim at all",
+            claiming > 0,
+            f"{claiming} of {len(verdicts)} verdicts",
+        )
+    stale = [f"{entry}: {key!r}" for (entry, key) in sorted(set(UNANCHORED) - used)]
+    record(
+        "every UNANCHORED row is one a verdict still needs",
+        not stale,
+        "\n      ".join(stale),
     )
     return out
 

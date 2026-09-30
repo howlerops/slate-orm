@@ -168,7 +168,45 @@ def later_entries(claim: str, entry: str, bodies: dict[str, str]) -> list[str]:
         if got >= max(2, len(rare) * 0.6):
             hits.append((got, name))
     hits.sort(reverse=True)
-    return [f"{n} ({g}/{len(rare)})" for g, n in hits[:3]]
+    return [f"{n} ({g}/{len(rare)})" for g, n in hits[:SHOWN]]
+
+
+#: How many candidates `later_entries` prints.
+#:
+#: A cut, not a threshold: everything below it scored well enough to be worth
+#: looking at and is dropped anyway, because a reader given nineteen
+#: suggestions reads none. `scripts/test_read_deliberate.py` measures what
+#: that costs — on one labelled row the entry that actually closed the caveat
+#: ranks 16th of 19 — and deliberately does not widen it, because tuning a
+#: cut against a two-row labelled set is fitting the parameter to the test.
+SHOWN = 3
+
+
+def ranked(claim: str, entry: str, bodies: dict[str, str]) -> list[str]:
+    """[`later_entries`] without the cut, best first.
+
+    Exists for `scripts/test_read_deliberate.py`, which measures *where* in
+    this list the answer falls rather than whether it survived `SHOWN` — a
+    score that only asks "did it make the cut" cannot tell a signal that got
+    worse from one whose answer moved from third to fourth, and the labelled
+    set is far too small to spend that resolution.
+    """
+    words = {w for w in WORD.findall(claim.lower()) if w not in STOP}
+    if not words:
+        return []
+    rare = {w for w in words if sum(w in b for b in bodies.values()) < len(bodies) // 6}
+    if len(rare) < 2:
+        return []
+    quoted = plain(claim)[:60]
+    hits = []
+    for name, body in bodies.items():
+        if name <= entry or quoted in plain(body):
+            continue
+        got = sum(w in body for w in rare)
+        if got >= max(2, len(rare) * 0.6):
+            hits.append((got, name))
+    hits.sort(reverse=True)
+    return [n for _, n in hits]
 
 
 def main() -> int:

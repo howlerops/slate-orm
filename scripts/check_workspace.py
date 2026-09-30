@@ -47,6 +47,7 @@ Run it directly, or let CI: `python3 scripts/check_workspace.py`.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -94,6 +95,40 @@ def copied(dockerfile: Path) -> list[Path]:
         # The last word is the destination. A `COPY a b c dst` copies three.
         for source in words[:-1]:
             out.append((ROOT / source).resolve())
+    return out
+
+
+def tracked() -> list[str]:
+    """Every file git tracks, as repository-relative paths."""
+    out = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return out.stdout.split()
+
+
+def re_excluded(ignore: Path) -> list[str]:
+    """The path segments a `.dockerignore` takes back out after admitting.
+
+    The file ends with three `**/<name>/` lines — `target`, `node_modules`,
+    `__pycache__` — which exclude build output *inside* the directories the
+    `!` lines admitted. So "this member is admitted" is not the same as
+    "every file in this member is in the context", and the second is what
+    `cargo` needs: a member whose manifest sits under such a directory would
+    pass the rule above and still fail the build.
+
+    Only the `**/<name>/` shape is read, because it is the only one the file
+    uses; anything else is left to the caller's refusal, the same way
+    [`admitted`] refuses a shape it cannot parse.
+    """
+    out = []
+    for line in ignore.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("**/") and line.endswith("/") and "!" not in line:
+            out.append(line[3:-1])
     return out
 
 
@@ -174,6 +209,32 @@ def main() -> int:
                     f"nothing: `failed to compute cache key: not found`. Add "
                     f"a `!` line for it beside the `COPY`."
                 )
+
+        # And admitted *whole*. A member is in the context only if nothing
+        # takes part of it back out — `**/target/` and friends are applied
+        # after the `!` lines, so a member holding a directory by one of
+        # those names is admitted and then partly removed. Checked against
+        # the tracked files rather than the filesystem, because `target/` is
+        # on every working checkout and in no commit.
+        taken_back = re_excluded(ignore)
+        for path in sorted(tracked()):
+            parts = Path(path).parts
+            hit = next((one for one in taken_back if one in parts), None)
+            if hit is None:
+                continue
+            here = (ROOT / path).resolve()
+            for member in sorted(listed):
+                if member == here or member in here.parents:
+                    problems.append(
+                        f"{path} is a tracked file inside the workspace "
+                        f"member {member.relative_to(ROOT)}, and "
+                        f"`.dockerignore` takes `**/{hit}/` back out after "
+                        f"admitting the member. The member is in the build "
+                        f"context and this file is not, so `cargo` in the "
+                        f"image sees a truncated crate. Rename the directory, "
+                        f"or narrow the exclusion to the paths that are "
+                        f"really build output."
+                    )
 
     for manifest in manifests():
         where = manifest.parent.resolve()

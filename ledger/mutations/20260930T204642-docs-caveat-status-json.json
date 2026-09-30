@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-30T20:46:42+00:00",
+  "file": "docs/caveat-status.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_caveat_citations.py"
+  ],
+  "commit": "8767159",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an absence claim loses the search that anchors it",
+      "old": "(`git grep -c 'md#' -- '*.rs' '*.py' '*.go' '*.ts'` finds none, 2026-09-30)",
+      "new": "and that is simply how it is",
+      "verdict": "caught",
+      "caught_by": [
+        "check_caveat_citations: ok    docs/caveat-status.json parses  (1971 verdicts)"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

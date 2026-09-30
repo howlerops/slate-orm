@@ -24,6 +24,17 @@ pub enum OrmError {
     /// nothing but a `map_err`.
     #[error(transparent)]
     Factory(#[from] crate::factory::FactoryError),
+
+    /// A grouped read was asked for in a shape [`crate::Grouped`] cannot
+    /// answer from.
+    ///
+    /// Its own variant rather than a `KernelError`, because the kernel is
+    /// happy to compute `[Count, Count]` — it is *this* layer that cannot
+    /// then say which of the two a `get(Count)` meant. Pushing it down would
+    /// make the kernel refuse a request it can serve, for the benefit of a
+    /// caller that may not be using the typed wrapper at all.
+    #[error("{0}")]
+    Grouping(String),
 }
 
 /// Convenience alias for typed results.
