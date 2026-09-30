@@ -37,9 +37,12 @@
 #![warn(missing_docs)]
 
 use slate_orm::{
-    Action, Catalog, Expr, Grant, Policy, Principal, Record, RecordStore, Records, SecurityCatalog,
-    SecurityContext, TableId, Value,
+    Action, Aggregate, Catalog, Direction, Expr, Grant, Group, IndexDef, IndexId, Managed,
+    MigrationReport, Policy, Principal, Query, Record, RecordError, RecordStore, Records, Row,
+    ScanOrder, SecurityCatalog, SecurityContext, SortKey, TableDef, TableId, Value, ValueType,
+    migrate,
 };
+use std::sync::LazyLock;
 use uuid::Uuid;
 
 /// What went wrong, in the application's own words.
@@ -62,12 +65,24 @@ pub enum HelpdeskError {
     /// Writing this enum is how that is found out.
     #[error(transparent)]
     Kernel(#[from] slate_kernel::KernelError),
+    /// The catalog itself is invalid, which is a bug in this crate.
+    #[error(transparent)]
+    Schema(#[from] slate_schema::SchemaError),
     /// No ticket with that reference, in this tenant, that this caller may see.
     #[error("no ticket {0} here")]
     NoSuchTicket(String),
     /// A status that is not one of the four the schema admits.
     #[error("{0:?} is not a status: open, pending, solved or closed")]
     NotAStatus(String),
+    /// A grouped read came back in a shape the roll-up cannot read.
+    ///
+    /// Cannot happen while the aggregate list and `read_workload` agree, and
+    /// it is an error rather than a `panic!` or a zero because a grouped
+    /// read's results are positional: the only thing tying position 1 to
+    /// `hours_logged` is that the same list was passed a few lines earlier,
+    /// and a silent zero in a billing roll-up is worse than a refusal.
+    #[error("a grouped read came back in an unexpected shape: {0}")]
+    UnexpectedGroup(String),
 }
 
 /// The result an application method returns.
@@ -209,50 +224,253 @@ pub struct Comment {
 /// The four statuses, so the application and the `CHECK` cannot drift apart.
 pub const STATUSES: [&str; 4] = ["open", "pending", "solved", "closed"];
 
+/// The tickets table as this application actually declares it: everything
+/// `#[derive(Record)]` produced, plus two **text** indexes.
+///
+/// # Why this exists, and why it is the whole cost of the finding
+///
+/// The search box needs an inverted index, and `#[record(index(...))]` takes
+/// `name`, `id`, `unique`, `desc`, `columns` and `only_where` — no `text`.
+/// The kernel has one, `IndexBuilder::text()` declares it and the TOML schema
+/// takes `text = true`; the derive is the one door it is not behind.
+///
+/// The workaround is *not* "call `IndexBuilder::text()` and hand it to the
+/// derive's table", because a `TableDef` is immutable once built and
+/// [`Record::table`] is what every `Records` method passes to the store. An
+/// index the store never sees is an index no write maintains, so a search
+/// over it returns nothing — the silent-empty-index failure
+/// `ledger/2026-09-15-a-new-index-returns-nothing.md` is about. The table the
+/// writes use has to be this one.
+///
+/// So the whole table is written out again. What the derive still does is the
+/// part worth keeping: `to_row`, `from_row` and the `COLUMNS` ordinals, which
+/// [`Indexed`] borrows by wrapping `Ticket`. Only the *schema* is duplicated,
+/// and `the_hand_written_tickets_table_matches_the_derived_one` fails if the
+/// two drift — which is the guard a duplicated declaration needs and the
+/// reason this is a cost rather than a hazard.
+///
+/// # Two indexes, not one
+///
+/// A text index is one entry per term of **one** string column
+/// (`IndexDef::is_text`), so covering the subject and the body is two indexes
+/// and an `Expr::Or`. That is not a limitation of the derive; it is what an
+/// inverted index over a row is.
+// `expect` in a `LazyLock`, which the workspace lints deny. There is nothing
+// to return: `Record::table()` gives a `&'static TableDef` and every caller
+// is a `Records` method that has already decided which table it is using.
+// The alternative — `LazyLock<Result<TableDef, _>>` and an unwrap at each of
+// the dozen call sites — moves the panic rather than removing it, and hides
+// it in twelve places instead of one. A table that does not build is a bug
+// in this file and nothing else, and it is caught by
+// `the_hand_written_tickets_table_matches_the_derived_one`, which builds it.
+#[allow(clippy::expect_used)]
+static TICKETS_TABLE: LazyLock<TableDef> = LazyLock::new(|| {
+    TableDef::builder("tickets", TICKETS)
+        .column("tenant_id", ValueType::Uuid)
+        .column("id", ValueType::Uuid)
+        .column("reference", ValueType::Str)
+        .column("subject", ValueType::Str)
+        .column("body", ValueType::Str)
+        .column("status", ValueType::Str)
+        .column("priority", ValueType::I64)
+        .nullable_column("assignee_id", ValueType::Uuid)
+        .column("hours_logged", ValueType::I64)
+        .column("opened_at", ValueType::I64)
+        .column("updated_at", ValueType::I64)
+        .nullable_column("closed_at", ValueType::I64)
+        .primary_key(["tenant_id", "id"])
+        .tenant_column("tenant_id")
+        .soft_delete("closed_at")
+        .managed_for("opened_at", Managed::CreatedAt)
+        .managed_for("updated_at", Managed::UpdatedAt)
+        .schema_version(1)
+        .index(
+            IndexDef::builder("tickets_by_reference", IndexId(30))
+                .column("reference")
+                .unique(),
+        )
+        .index(
+            IndexDef::builder("tickets_by_priority", IndexId(32))
+                .column("priority")
+                .column_with("opened_at", Direction::Desc),
+        )
+        .index(
+            IndexDef::builder("tickets_by_subject_term", IndexId(33))
+                .column("subject")
+                .text(),
+        )
+        .index(
+            IndexDef::builder("tickets_by_body_term", IndexId(34))
+                .column("body")
+                .text(),
+        )
+        .build()
+        .expect("the hand-written tickets table is valid")
+});
+
+/// A [`Ticket`] stored against [`TICKETS_TABLE`] rather than the derive's.
+///
+/// Every service method below reads and writes this rather than `Ticket`, so
+/// the text indexes are the ones the store maintains. The row codec is still
+/// the derive's — this forwards to it — which is why the duplication above is
+/// the schema and nothing else.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Indexed(pub Ticket);
+
+impl Record for Indexed {
+    fn table() -> &'static TableDef {
+        &TICKETS_TABLE
+    }
+
+    fn to_row(&self) -> Row {
+        self.0.to_row()
+    }
+
+    fn from_row(row: &Row) -> std::result::Result<Self, RecordError> {
+        Ticket::from_row(row).map(Self)
+    }
+}
+
 /// The catalog this application needs.
+///
+/// # Errors
+/// If the four tables do not make a valid catalog, which is a bug here.
 pub fn catalog() -> std::result::Result<Catalog, slate_schema::SchemaError> {
     Catalog::from_tables([
         Tenant::table().clone(),
         Agent::table().clone(),
-        Ticket::table().clone(),
+        // `Indexed::table()`, not `Ticket::table()`: the catalog must agree
+        // with what the writes use, or a migration creates one set of indexes
+        // and the write path maintains another.
+        Indexed::table().clone(),
         Comment::table().clone(),
     ])
 }
 
+/// Bring a store's schema up to what [`catalog`] declares.
+///
+/// An application does this at boot, before it serves anything. Separate from
+/// [`Helpdesk::open`] because migrating is a decision — a process that is one
+/// of six replicas should not quietly create indexes on startup — and because
+/// [`slate_orm::migrate::plan`] exists for showing the change first.
+///
+/// # Errors
+/// If the migration is refused (see [`slate_orm::Refusal`]) or a write fails.
+pub async fn apply_schema<S: slate_kernel::KvStore>(
+    store: &S,
+) -> std::result::Result<MigrationReport, HelpdeskError> {
+    Ok(migrate::migrate(store, &catalog()?).await?)
+}
+
 /// Who may do what.
 ///
-/// Two roles, which is the smallest number that makes the policy interesting:
-/// an `agent` may work tickets in their own tenant, a `viewer` may read them
-/// and nothing else. The tenant boundary is *not* here — it is the key prefix,
-/// enforced below this layer — and that separation is the thing worth seeing:
-/// forgetting a policy loses a rule, forgetting the tenant loses the wall.
+/// Three roles, because two were not enough to make the policies say
+/// anything: an `agent` works tickets, a `viewer` reads them, and a
+/// `supervisor` moves work between agents.
+///
+/// # Where the tenant boundary is *not*
+///
+/// It is not here. It is the key prefix — `#[record(tenant = "tenant_id")]`
+/// — and it is enforced below this layer. That separation is the thing worth
+/// seeing: forgetting a policy loses a rule, forgetting the tenant loses the
+/// wall, and only one of those two mistakes is visible in this function.
+///
+/// # Why the write rule is two policies and not one `Or`
+///
+/// "an agent may write a ticket that is unassigned **or** assigned to them"
+/// is one sentence and two [`Policy`] values. Policies are permissive and
+/// combine with `OR`, as in PostgreSQL, so the pair *is* the disjunction —
+/// and `Expr::Or` would have worked too. The pair is preferred because each
+/// half is separately named, so a refusal can say which rule was expected to
+/// admit the row, and because a fourth rule is an addition rather than an
+/// edit to an expression somebody has to re-read.
+///
+/// The predicate is checked against the row **as it will be** as well as the
+/// row as it was, which is what makes `agents_work_their_own_tickets` a real
+/// rule rather than a decoration: an agent can take an unassigned ticket and
+/// cannot hand one to a colleague, because the resulting row is not theirs.
+/// That is what a `supervisor` is for, and
+/// `an_agent_cannot_push_work_onto_a_colleague` is the demonstration.
 pub fn security() -> SecurityCatalog {
     let read = [Action::Read];
+    let write = [Action::Insert, Action::Update, Action::Delete];
     SecurityCatalog::new()
         .grant(Grant::new("agent", TICKETS, Action::ALL))
         .grant(Grant::new("agent", COMMENTS, Action::ALL))
         .grant(Grant::new("agent", AGENTS, read))
         .grant(Grant::new("agent", TENANTS, read))
+        .grant(Grant::new("supervisor", TICKETS, Action::ALL))
+        .grant(Grant::new("supervisor", COMMENTS, Action::ALL))
+        .grant(Grant::new("supervisor", AGENTS, read))
+        .grant(Grant::new("supervisor", TENANTS, read))
         .grant(Grant::new("viewer", TICKETS, read))
         .grant(Grant::new("viewer", COMMENTS, read))
         .grant(Grant::new("viewer", AGENTS, read))
-        // An agent works their own tenant's tickets. The tenant *prefix*
-        // already makes another tenant's rows unreachable; this is the rule
-        // inside one — and it is written as `True` because there is no
-        // narrower rule to write yet. Recorded as a place a real deployment
-        // would put "only tickets on your team".
-        .policy(Policy::new(
-            "agents_work_their_tenant",
-            TICKETS,
-            Action::ALL,
-            |_: &_| Expr::True,
-        ))
-        .policy(Policy::new(
-            "agents_read_comments",
-            COMMENTS,
-            Action::ALL,
-            |_: &_| Expr::True,
-        ))
+        // Reads are open within the tenant: an agent triaging a queue has to
+        // see tickets nobody has picked up, and a rule narrower than the
+        // tenant would make the inbox lie about what is waiting.
+        .policy(
+            Policy::new("agents_read_the_queue", TICKETS, read, |_: &_| Expr::True)
+                .for_role("agent"),
+        )
+        .policy(
+            Policy::new("viewers_read_the_queue", TICKETS, read, |_: &_| Expr::True)
+                .for_role("viewer"),
+        )
+        .policy(
+            Policy::new("supervisors_read_the_queue", TICKETS, read, |_: &_| {
+                Expr::True
+            })
+            .for_role("supervisor"),
+        )
+        // And the two halves of the write rule.
+        .policy(
+            Policy::new("agents_take_unassigned_tickets", TICKETS, write, |_: &_| {
+                Expr::is_null(Ticket::COLUMNS.assignee_id)
+            })
+            .for_role("agent"),
+        )
+        .policy(
+            Policy::new(
+                "agents_work_their_own_tickets",
+                TICKETS,
+                write,
+                |who: &SecurityContext| {
+                    Expr::eq(Ticket::COLUMNS.assignee_id, who.principal().id.clone())
+                },
+            )
+            .for_role("agent"),
+        )
+        .policy(
+            Policy::new("supervisors_move_work", TICKETS, Action::ALL, |_: &_| {
+                Expr::True
+            })
+            .for_role("supervisor"),
+        )
+        // Comments are the tenant's, with no per-agent rule: a thread nobody
+        // but the assignee could add to is not a thread. The tenant prefix is
+        // still the wall.
+        .policy(
+            Policy::new("agents_join_the_thread", COMMENTS, Action::ALL, |_: &_| {
+                Expr::True
+            })
+            .for_role("agent"),
+        )
+        .policy(
+            Policy::new(
+                "supervisors_join_the_thread",
+                COMMENTS,
+                Action::ALL,
+                |_: &_| Expr::True,
+            )
+            .for_role("supervisor"),
+        )
+        .policy(
+            Policy::new("viewers_read_the_thread", COMMENTS, read, |_: &_| {
+                Expr::True
+            })
+            .for_role("viewer"),
+        )
 }
 
 /// A caller.
@@ -271,6 +489,20 @@ pub struct Inbox {
     pub tickets: Vec<Ticket>,
     /// Pass this back to get the next page, or `None` at the end.
     pub next: Option<Vec<Value>>,
+}
+
+impl Inbox {
+    /// Whether there is provably nothing after this page.
+    ///
+    /// A full page that happens to be the last one still carries a cursor:
+    /// the only way to find out is to ask again, and reading one row further
+    /// on *every* page to save one empty request at the end of a sequence
+    /// most callers never finish is the wrong trade. See [`slate_orm::Page`],
+    /// which this forwards the shape of.
+    #[must_use]
+    pub const fn is_last(&self) -> bool {
+        self.next.is_none()
+    }
 }
 
 /// How much work one agent is holding.
@@ -338,7 +570,7 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
             return Err(HelpdeskError::NotAStatus(ticket.status));
         }
         let txn = self.store.begin().await?;
-        txn.insert_record(who, &ticket).await?;
+        txn.insert_record(who, &Indexed(ticket.clone())).await?;
         txn.commit().await?;
         Ok(ticket)
     }
@@ -351,16 +583,17 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
     /// them apart tells a stranger which references exist.
     pub async fn by_reference(&self, who: &SecurityContext, reference: &str) -> Result<Ticket> {
         let txn = self.store.begin().await?;
-        let found: Vec<Ticket> = txn
+        let found: Vec<Indexed> = txn
             .find_records(
                 who,
                 Expr::eq(Ticket::COLUMNS.reference, Value::Str(reference.to_owned())),
-                slate_kernel::ScanOrder::Ascending,
+                ScanOrder::Ascending,
             )
             .await?;
         found
             .into_iter()
             .next()
+            .map(|Indexed(ticket)| ticket)
             .ok_or_else(|| HelpdeskError::NoSuchTicket(reference.to_owned()))
     }
 
@@ -380,7 +613,8 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
         after.assignee_id = Some(to);
         after.status = "pending".to_owned();
         let txn = self.store.begin().await?;
-        txn.replace_record(who, &before, &after).await?;
+        txn.replace_record(who, &Indexed(before), &Indexed(after.clone()))
+            .await?;
         txn.commit().await?;
         Ok(after)
     }
@@ -399,7 +633,8 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
         let mut after = before.clone();
         after.hours_logged += hundredths;
         let txn = self.store.begin().await?;
-        txn.replace_record(who, &before, &after).await?;
+        txn.replace_record(who, &Indexed(before), &Indexed(after.clone()))
+            .await?;
         txn.commit().await?;
         Ok(after)
     }
@@ -442,7 +677,7 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
             .find_records(
                 who,
                 Expr::eq(Comment::COLUMNS.ticket_id, Value::Uuid(ticket.id)),
-                slate_kernel::ScanOrder::Ascending,
+                ScanOrder::Ascending,
             )
             .await?)
     }
@@ -462,7 +697,7 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
     pub async fn close(&self, who: &SecurityContext, reference: &str) -> Result<()> {
         let ticket = self.by_reference(who, reference).await?;
         let txn = self.store.begin().await?;
-        txn.delete_record::<Ticket>(
+        txn.delete_record::<Indexed>(
             who,
             &[Value::Uuid(ticket.tenant_id), Value::Uuid(ticket.id)],
         )
@@ -470,4 +705,176 @@ impl<S: slate_kernel::KvStore> Helpdesk<S> {
         txn.commit().await?;
         Ok(())
     }
+
+    /// One page of the live queue, and where to resume.
+    ///
+    /// Pass `after = None` for the first page and [`Inbox::next`] for the
+    /// one after it. A short page proves there is nothing behind it; a full
+    /// one proves nothing either way, so a caller loops until `next` is
+    /// `None` and makes one empty request at the end. That is
+    /// [`slate_orm::Page`]'s documented shape and not a bug here.
+    ///
+    /// # The order is the primary key, and it is not a choice
+    ///
+    /// An inbox wants *most urgent first*, and this pages in `(tenant_id,
+    /// id)` order instead. [`Query::after`] pins the access path to the
+    /// table's own key range — deliberately, because a page boundary has to
+    /// be somewhere the cursor can name, and an index scan yields an order
+    /// the primary key does not describe. So a paged read cannot also be a
+    /// sorted one: [`Helpdesk::most_urgent`] is the sorted read and it is
+    /// bounded by a limit rather than paged.
+    ///
+    /// `a_sorted_inbox_page_is_refused_rather_than_silently_misordered` is
+    /// the demonstration, and it is a *good* refusal — the alternative is a
+    /// second page that silently skips or repeats rows.
+    ///
+    /// # Errors
+    /// If the read is refused, and if `page` is zero: a page with no size is
+    /// the whole table.
+    pub async fn inbox(
+        &self,
+        who: &SecurityContext,
+        after: Option<Vec<Value>>,
+        page: usize,
+    ) -> Result<Inbox> {
+        let mut query = Query::all().filter(live()).limit(page);
+        if let Some(cursor) = after {
+            query = query.after(cursor);
+        }
+        let txn = self.store.begin().await?;
+        let found = txn.page_records::<Indexed>(who, &query).await?;
+        Ok(Inbox {
+            tickets: found.rows.into_iter().map(|Indexed(t)| t).collect(),
+            next: found.next,
+        })
+    }
+
+    /// The most urgent live tickets, worst first, at most `limit` of them.
+    ///
+    /// Sorted rather than paged, for the reason [`Helpdesk::inbox`] gives.
+    /// `tickets_by_priority` is `(priority, opened_at DESC)`, so this is the
+    /// order the index already stores and the planner can serve it without a
+    /// sort — though nothing here asserts that it does, which would need
+    /// [`Records::explain_records`] and is a different claim.
+    ///
+    /// # Errors
+    /// If the read is refused.
+    pub async fn most_urgent(&self, who: &SecurityContext, limit: usize) -> Result<Vec<Ticket>> {
+        let query = Query::all()
+            .filter(live())
+            .sort_by([
+                SortKey::asc(Ticket::COLUMNS.priority),
+                SortKey::desc(Ticket::COLUMNS.opened_at),
+            ])
+            .limit(limit);
+        let txn = self.store.begin().await?;
+        let found: Vec<Indexed> = txn.query_records(who, &query).await?;
+        Ok(found.into_iter().map(|Indexed(t)| t).collect())
+    }
+
+    /// How much live work each agent is holding, and the unassigned pile.
+    ///
+    /// One grouped read rather than a scan and a fold in the application,
+    /// which is the difference between decoding every ticket and decoding
+    /// none: the aggregates are computed where the rows are.
+    ///
+    /// The unassigned pile arrives as a group whose key is `Value::Null`,
+    /// because `GROUP BY` puts the nulls together rather than dropping them.
+    /// That is worth knowing: an application that maps the key straight to a
+    /// `Uuid` loses the row it most wants to see.
+    ///
+    /// # Errors
+    /// If the read is refused, or if a group comes back in a shape this does
+    /// not recognise — which would mean the aggregate list and the decoding
+    /// below had drifted apart.
+    pub async fn workload(&self, who: &SecurityContext) -> Result<Vec<Workload>> {
+        let txn = self.store.begin().await?;
+        let groups: Vec<Group> = txn
+            .group_records::<Indexed>(
+                who,
+                &Query::all().filter(live()),
+                &[Ticket::COLUMNS.assignee_id],
+                &[
+                    Aggregate::Count,
+                    Aggregate::Sum(Ticket::COLUMNS.hours_logged),
+                ],
+            )
+            .await?;
+        groups.iter().map(read_workload).collect()
+    }
+
+    /// Every live ticket whose subject or body holds all of `terms`.
+    ///
+    /// Two `contains` predicates under an `Or`, one per text index, because
+    /// an inverted index covers one column. Terms are lowercased and
+    /// deduplicated by [`Expr::contains`], and an empty term list matches
+    /// nothing rather than everything — so a blank search box returns no
+    /// rows, which is the answer a blank search box should give.
+    ///
+    /// # Errors
+    /// If the read is refused.
+    pub async fn search(&self, who: &SecurityContext, terms: &str) -> Result<Vec<Ticket>> {
+        let anywhere = Expr::Or(vec![
+            Expr::contains(Ticket::COLUMNS.subject, terms),
+            Expr::contains(Ticket::COLUMNS.body, terms),
+        ]);
+        let txn = self.store.begin().await?;
+        let found: Vec<Indexed> = txn
+            .find_records(who, live().and(anywhere), ScanOrder::Ascending)
+            .await?;
+        Ok(found.into_iter().map(|Indexed(t)| t).collect())
+    }
+}
+
+/// `status IN ('open', 'pending')` — a ticket somebody still has to do.
+///
+/// A helper rather than a constant because [`Expr`] holds owned `Value`s.
+fn live() -> Expr {
+    Expr::In {
+        column: Ticket::COLUMNS.status,
+        values: vec![
+            Value::Str("open".to_owned()),
+            Value::Str("pending".to_owned()),
+        ],
+    }
+}
+
+/// One grouped row as a [`Workload`].
+///
+/// Separated out because the mapping from `Vec<Value>` back to typed fields
+/// is exactly where a grouped read loses the derive's help: the aggregates
+/// come back positionally, and the only thing tying position 1 to
+/// `hours_logged` is that the same list was passed in a few lines earlier.
+/// Every arm that cannot happen is an error rather than a `panic!` or a
+/// zero, because a silent zero in a billing roll-up is the worst of the
+/// three.
+fn read_workload(group: &Group) -> Result<Workload> {
+    let shape = || {
+        HelpdeskError::UnexpectedGroup(format!("key {:?}, values {:?}", group.key, group.values))
+    };
+    let assignee_id = match group.key.first() {
+        Some(Value::Uuid(id)) => Some(*id),
+        Some(Value::Null) | None => None,
+        Some(_) => return Err(shape()),
+    };
+    let [tickets, hundredths] = group.values.as_slice() else {
+        return Err(shape());
+    };
+    Ok(Workload {
+        assignee_id,
+        tickets: match tickets {
+            Value::I64(n) => *n,
+            Value::U64(n) => i64::try_from(*n).map_err(|_| shape())?,
+            _ => return Err(shape()),
+        },
+        // `SUM` over no rows is null, which cannot happen for a group that
+        // exists — a group exists because a row landed in it. Mapped to zero
+        // anyway rather than to an error, because "this agent has logged no
+        // time" is a real answer and a refusal would be a wrong one.
+        hundredths: match hundredths {
+            Value::I64(n) => *n,
+            Value::Null => 0,
+            _ => return Err(shape()),
+        },
+    })
 }

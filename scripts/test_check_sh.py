@@ -117,6 +117,11 @@ ELSEWHERE = {
         "four examples, and building them is a cargo build — `check.sh` "
         "needs no built binary, which is what makes it cheap"
     ),
+    "sh examples/helpdesk/run.sh --smoke": (
+        "stands the helpdesk up on SlateDB over an object store, in a "
+        "`--release` build. `check.sh` needs no built binary and promises "
+        "seconds; this is a cargo release build and a bucket"
+    ),
     "sh scripts/run_examples.sh slate-orm --smoke": (
         "the same, for the ORM's one end-to-end tour"
     ),

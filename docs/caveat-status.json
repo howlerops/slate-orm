@@ -15364,12 +15364,16 @@
     {
       "entry": "2026-09-30-an-application-written-against-the-rust-surface.md",
       "key": "It is one slice.",
-      "verdict": "open"
+      "verdict": "closed",
+      "by": "2026-09-30-the-helpdesk-on-slatedb.md: the inbox, the workload roll-up, the search box and the migration are written, and examples/helpdesk/examples/over_slatedb.rs runs the whole service over SlateDB on an object store and re-reads it after a restart. The reopen (which cannot be written) stays a finding rather than a gap in the slice",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-an-application-written-against-the-rust-surface.md",
       "key": "The security catalog's two policies are `Expr::True`.",
-      "verdict": "open"
+      "verdict": "closed",
+      "by": "examples/helpdesk/src/lib.rs security(): agents_take_unassigned_tickets and agents_work_their_own_tickets, plus a supervisor role; an_agent_cannot_push_work_onto_a_colleague is the demonstration (2026-09-30-the-helpdesk-on-slatedb.md)",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-30-an-application-written-against-the-rust-surface.md",
@@ -15384,6 +15388,37 @@
       "verdict": "deliberate",
       "by": "this entry: the crate is a correctness exercise against the Rust surface. Four benchmark crates measure speed and CI runs them at --smoke; a ninth timing harness with no baseline and no prior run would report numbers nobody could compare against anything",
       "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
+      "key": "It does not run `--s3` anywhere automatic.",
+      "verdict": "deliberate",
+      "by": "this entry: the minio job owns S3's real differences - conditional writes, error shapes - and this runner asserts none of them, so a second S3 job would cost a server and a build for no signal the filesystem run does not already give. The path is one binary and S3Config::from_env, exercised by hand",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
+      "key": "The reopen is a clean close, not a crash.",
+      "verdict": "deliberate",
+      "by": "this entry: crash-consistency is crates/slate-slatedb's - tests/crash.rs and the fault-injection suite below the object store - and duplicating it in an application example would test SlateDB twice rather than test the application. What this proves is durability across a clean restart, which is what an application author needs to see",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
+      "key": "Five findings are still not an audit.",
+      "verdict": "deliberate",
+      "by": "this entry, and the same reasoning as the morning entry's version: use-driven findings are what an application would hit, and enumerating the derive's omissions means reading crates/slate-derive rather than using it. Two of the five appeared only once the code ran, which is the argument for more running rather than for reading",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
+      "key": "The roll-up decodes positionally.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
+      "key": "Nothing asserts which plan runs.",
+      "verdict": "open"
     }
   ]
 }

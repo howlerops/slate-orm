@@ -80,6 +80,17 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # before its row was written, which is the step that turned one
  # plausible-looking closure — "plan.rs costs a grouped join as grouped" —
  # into the withdrawal below, which is what actually happened.
+ # --- 2026-09-30, the helpdesk ----------------------------------------------
+ #
+ # Both are closed by the same commit, and each names the thing a reader
+ # would go and look at rather than the entry that claims it: the runner that
+ # makes the crate's central claim a result, and the policy that replaced the
+ # two `Expr::True`s.
+ "helpdesk-on-slatedb": ("SlateStore::open_s3", "examples/helpdesk/examples/over_slatedb.rs"),
+ "helpdesk-real-policy": (
+     "agents_work_their_own_tickets",
+     "examples/helpdesk/src/lib.rs",
+ ),
  "explain-aggregate-in-a-transaction": ("explainAggregateIn", "clients/typescript/src/client.ts"),
  "quickstart-install-lines": ("check_install_lines", "site/check/quickstarts.py"),
  "free-ports-guard": (
@@ -1101,6 +1112,14 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    (
+        "2026-09-30-an-application-written-against-the-rust-surface.md",
+        "It is one slice.",
+    ): "helpdesk-on-slatedb",
+    (
+        "2026-09-30-an-application-written-against-the-rust-surface.md",
+        "The security catalog's two policies are `Expr::True`.",
+    ): "helpdesk-real-policy",
     ("2026-09-30-a-premise-nobody-here-can-falsify.md", "Two of the ten are exempted by hand"): "exemption-names-a-path",
     ("2026-09-30-the-exemptions-i-wrote-without-reading.md", "`prebuilt.py` compares one binary against the newest source "): "prebuilt-unknown",
     ("2026-09-30-a-draw-that-reproduces-and-a-roster-that-runs.md", "`prebuilt.py` still compares one binary against the newest s"): "prebuilt-unknown",

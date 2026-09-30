@@ -871,6 +871,32 @@ jobs:
       - run: sh scripts/run_examples.sh slate-kernel --smoke
       - run: sh scripts/run_examples.sh slate-orm --smoke
 
+  # The helpdesk, over SlateDB on an object store.
+  #
+  # `cargo test -p slate-helpdesk` runs the same service over `MemoryStore`,
+  # which is a `BTreeMap`, and the crate's central claim is that
+  # `Helpdesk<S>` answers the same over any `KvStore`. This is the job that
+  # makes that a result rather than a claim about a type parameter: an LSM,
+  # a manifest, a WAL and a bucket underneath the identical code, and the
+  # store closed and reopened halfway so the second half reads what the
+  # first half persisted.
+  #
+  # `--smoke` because the run's job is that it works, not how fast: seven
+  # tickets is the smallest number that still pages more than once and rolls
+  # up more than one group. `run.sh` builds `--release` — the reason is a
+  # measurement in CLAUDE.md about debug builds and disk, and it costs
+  # nothing here.
+  #
+  # Not `--s3`: the S3 differences that matter (conditional writes, error
+  # shapes) have their own `minio` job, and this one asserts none of them.
+  helpdesk:
+    name: helpdesk on slatedb, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sh examples/helpdesk/run.sh --smoke
+
   # The release build, called rather than copied.
   #
   # Compiles `slate-serverd` for both release targets, installs the aarch64

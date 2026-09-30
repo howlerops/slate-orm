@@ -90,14 +90,15 @@ part of the change.
 ## What runs, and where
 
 `main` is the trunk. `.github/workflows/ci.yml` runs on **every push, to every
-branch** — twenty-three jobs covering formatting, the Rust workspace, the Go,
+branch** — twenty-four jobs covering formatting, the Rust workspace, the Go,
 Python and TypeScript clients, the demo frontend, the pre-commit hook's own
 tests, a workspace-layout guard, the repository's *other* Python (every
 harness, script and site check outside `clients/python`), the landing page's
 quickstarts, the ten documentation pages rendered in a browser, the three-SDK
 conformance runner, a browser e2e, the workbench in a browser, MinIO, the whole
 stack deployed against object storage, four benchmark crates at `--smoke`, the
-release build for both shipping targets, and the container image — built,
+helpdesk application on SlateDB over an object store, the release build for
+both shipping targets, and the container image — built,
 started and checked for a shell it should not have.
 
 That count is a count of `jobs:` keys in `ci.yml` and nothing checks it, which
@@ -226,7 +227,7 @@ that `prebuilt.py` does not know is refused rather than run.
   which would have meant the site never deployed at all. Both are written up in
   the workflow files. Prefer running something cheap unconditionally.
 - **Read the run's conclusion; do not wait to be told.** A push starts
-  twenty-three jobs and nothing in this container reports how they ended. A
+  twenty-four jobs and nothing in this container reports how they ended. A
   session once set a watch that matched on the Pages string and expired after
   thirty minutes, and three red runs went by unnoticed —
   `ledger/2026-09-14-ci-clippy-is-newer-than-mine.md` recorded that the honest

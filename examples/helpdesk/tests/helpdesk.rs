@@ -14,8 +14,8 @@
     clippy::panic
 )]
 
-use slate_helpdesk::{Agent, Helpdesk, HelpdeskError, Ticket, caller};
-use slate_orm::{Records, SecurityContext, Value, memory::MemoryStore};
+use slate_helpdesk::{Agent, Helpdesk, HelpdeskError, Indexed, Ticket, caller};
+use slate_orm::{Record, Records, SecurityContext, Value, memory::MemoryStore};
 use uuid::Uuid;
 
 const ACME: Uuid = Uuid::from_u128(1);
@@ -110,7 +110,7 @@ async fn the_same_status_written_past_the_service_is_not_refused() {
     wrong.status = "opne".to_owned();
 
     let txn = desk.store().begin().await.expect("begin");
-    txn.insert_record(&dana, &wrong)
+    txn.insert_record(&dana, &Indexed(wrong))
         .await
         .expect("the store does not know the four words");
     txn.commit().await.expect("commit");
@@ -157,10 +157,16 @@ async fn assigning_a_ticket_somebody_else_moved_is_refused() {
         .await
         .expect("the first write wins");
 
+    // The stale edit is to `hours_logged`, not to `assignee_id`, so the
+    // refusal can only be about the row having moved. An assignee edit would
+    // also be refused — by `agents_work_their_own_tickets` — and the test
+    // would pass for the wrong reason.
     let mut stale = before.clone();
-    stale.assignee_id = Some(RAJ);
+    stale.hours_logged = 99;
     let txn = desk.store().begin().await.expect("begin");
-    let refused = txn.replace_record(&dana, &before, &stale).await;
+    let refused = txn
+        .replace_record(&dana, &Indexed(before), &Indexed(stale))
+        .await;
     assert!(
         refused.is_err(),
         "the second write overwrote a decision it never saw"
@@ -250,4 +256,369 @@ async fn logged_time_accumulates_in_hundredths() {
         .await
         .expect("three quarters");
     assert_eq!(after.hours_logged, 225, "integers, so no cent goes missing");
+}
+
+#[tokio::test]
+async fn the_hand_written_tickets_table_matches_the_derived_one() {
+    // The cost of the text-index workaround, made into a test rather than
+    // left as a comment. `TICKETS_TABLE` restates every column
+    // `#[derive(Record)]` produced so that it can add two indexes the derive
+    // cannot declare; if a field is added to `Ticket` and not here, the row
+    // codec and the schema disagree and nothing else would say so.
+    let derived = Ticket::table();
+    let written = Indexed::table();
+
+    assert_eq!(written.name(), derived.name());
+    assert_eq!(written.id(), derived.id());
+    assert_eq!(written.primary_key(), derived.primary_key());
+    assert_eq!(written.tenant_column(), derived.tenant_column());
+    assert_eq!(written.soft_delete(), derived.soft_delete());
+    assert_eq!(written.schema_version(), derived.schema_version());
+
+    let shape = |table: &slate_orm::TableDef| {
+        table
+            .columns()
+            .iter()
+            .map(|c| {
+                (
+                    c.name().to_owned(),
+                    c.value_type(),
+                    c.is_nullable(),
+                    c.managed(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        shape(written),
+        shape(derived),
+        "the hand-written tickets table has drifted from `#[derive(Record)]`"
+    );
+
+    // And the only difference is the two text indexes.
+    let names = |table: &slate_orm::TableDef| {
+        let mut out = table
+            .indexes()
+            .iter()
+            .map(|i| i.name().to_owned())
+            .collect::<Vec<_>>();
+        out.sort();
+        out
+    };
+    assert_eq!(
+        names(written),
+        [
+            "tickets_by_body_term",
+            "tickets_by_priority",
+            "tickets_by_reference",
+            "tickets_by_subject_term",
+        ]
+    );
+    assert_eq!(
+        names(derived),
+        ["tickets_by_priority", "tickets_by_reference"]
+    );
+}
+
+#[tokio::test]
+async fn a_search_finds_a_ticket_by_a_word_in_its_body() {
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    for (id, reference, subject) in [
+        (60, "ACME-10", "Printer jammed"),
+        (61, "ACME-11", "Invoice wrong"),
+        (62, "ACME-12", "Laptop will not boot"),
+    ] {
+        desk.open_ticket(&dana, ticket(ACME, id, reference, subject, 2))
+            .await
+            .expect("opening");
+    }
+
+    // The subject index.
+    let found = desk.search(&dana, "printer").await.expect("searching");
+    assert_eq!(
+        found
+            .iter()
+            .map(|t| t.reference.as_str())
+            .collect::<Vec<_>>(),
+        ["ACME-10"]
+    );
+
+    // The body index: `ticket()` writes "<subject>. Please advise.", and
+    // "advise" appears in no subject.
+    let found = desk.search(&dana, "advise").await.expect("searching");
+    assert_eq!(found.len(), 3, "every body says it");
+
+    // Two terms is a conjunction within one column, not a disjunction.
+    let found = desk.search(&dana, "laptop boot").await.expect("searching");
+    assert_eq!(
+        found
+            .iter()
+            .map(|t| t.reference.as_str())
+            .collect::<Vec<_>>(),
+        ["ACME-12"]
+    );
+
+    // A blank box matches nothing rather than everything, which is
+    // `Expr::contains`'s documented answer for an empty term list.
+    assert!(
+        desk.search(&dana, "   ")
+            .await
+            .expect("searching")
+            .is_empty()
+    );
+
+    // And the tenant wall holds over an index the query never names.
+    let raj = caller(RAJ, GLOBEX, "agent");
+    assert!(
+        desk.search(&raj, "printer")
+            .await
+            .expect("searching")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn the_inbox_pages_without_repeating_or_skipping_a_ticket() {
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    for n in 0..7_u128 {
+        desk.open_ticket(
+            &dana,
+            ticket(
+                ACME,
+                100 + n,
+                &format!("ACME-2{n}"),
+                "Queued",
+                i64::try_from(n).expect("small"),
+            ),
+        )
+        .await
+        .expect("opening");
+    }
+
+    let mut seen = Vec::new();
+    let mut cursor = None;
+    let mut pages = 0;
+    loop {
+        let page = desk.inbox(&dana, cursor, 3).await.expect("a page");
+        pages += 1;
+        seen.extend(page.tickets.iter().map(|t| t.reference.clone()));
+        match page.next {
+            Some(next) => cursor = Some(next),
+            None => break,
+        }
+        assert!(pages < 10, "the cursor is not advancing");
+    }
+
+    // 7 rows at 3 a page: 3, 3, 1 — and the last is short, so it is the last.
+    assert_eq!(pages, 3);
+    let mut sorted = seen.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        7,
+        "a ticket was repeated or skipped: {seen:?}"
+    );
+
+    // A closed ticket leaves the queue.
+    desk.close(&dana, "ACME-20").await.expect("closing");
+    let page = desk.inbox(&dana, None, 50).await.expect("a page");
+    assert_eq!(page.tickets.len(), 6);
+    assert!(page.is_last());
+}
+
+#[tokio::test]
+async fn most_urgent_is_sorted_and_the_paged_read_is_not() {
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    // Inserted worst-last, so an unsorted read cannot pass by accident.
+    for (id, reference, priority) in [
+        (200, "ACME-30", 3),
+        (201, "ACME-31", 1),
+        (202, "ACME-32", 2),
+    ] {
+        desk.open_ticket(&dana, ticket(ACME, id, reference, "Sorted", priority))
+            .await
+            .expect("opening");
+    }
+
+    let urgent = desk.most_urgent(&dana, 10).await.expect("the urgent list");
+    assert_eq!(
+        urgent.iter().map(|t| t.priority).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+
+    // And a limit takes the worst, not the first three found.
+    let worst = desk.most_urgent(&dana, 1).await.expect("the worst");
+    assert_eq!(worst.len(), 1);
+    assert_eq!(worst[0].reference, "ACME-31");
+}
+
+#[tokio::test]
+async fn a_sorted_inbox_page_is_refused_rather_than_silently_misordered() {
+    // The finding behind `Helpdesk::inbox` paging in key order rather than
+    // in priority order: `Query::after` pins the access path to the table's
+    // key range, so a page cannot also be sorted. The refusal is the right
+    // answer — a cursor into an order the key does not describe would skip
+    // and repeat rows — but it does mean an inbox is *either* paged *or*
+    // prioritised, and an application has to pick.
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    desk.open_ticket(&dana, ticket(ACME, 300, "ACME-40", "Sorted page", 1))
+        .await
+        .expect("opening");
+
+    let query = slate_orm::Query::all()
+        .sort_by([slate_orm::SortKey::asc(Ticket::COLUMNS.priority)])
+        .limit(2);
+    let txn = desk.store().begin().await.expect("begin");
+    let said = txn
+        .page_records::<Indexed>(&dana, &query)
+        .await
+        .expect_err(
+            "a sorted page was served, so the cursor it returns names a row \
+             in an order the primary key does not give",
+        )
+        .to_string();
+    // Named rather than just "is_err": the same call would also fail with no
+    // limit, and a test that cannot tell those apart passes for the wrong
+    // reason. (This one nearly did — the limit is set two lines above
+    // precisely so the sort is the only thing left to refuse.)
+    assert!(
+        said.contains("sorted into an order the primary key does not give"),
+        "refused, but not for the reason this test is about: {said}"
+    );
+}
+
+#[tokio::test]
+async fn the_workload_rolls_up_per_agent_and_keeps_the_unassigned_pile() {
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    for (id, reference) in [(400, "ACME-50"), (401, "ACME-51"), (402, "ACME-52")] {
+        desk.open_ticket(&dana, ticket(ACME, id, reference, "Work", 2))
+            .await
+            .expect("opening");
+    }
+    desk.assign(&dana, "ACME-50", DANA).await.expect("taking");
+    desk.assign(&dana, "ACME-51", DANA).await.expect("taking");
+    desk.log_time(&dana, "ACME-50", 150).await.expect("logging");
+    desk.log_time(&dana, "ACME-51", 25).await.expect("logging");
+
+    let mut rolled = desk.workload(&dana).await.expect("the roll-up");
+    rolled.sort_by_key(|w| w.assignee_id);
+
+    // The unassigned pile sorts first because `None < Some(_)`, and it is
+    // there at all because `GROUP BY` keeps the nulls together rather than
+    // dropping them — the thing an application most wants to see.
+    assert_eq!(rolled.len(), 2, "{rolled:?}");
+    assert_eq!(rolled[0].assignee_id, None);
+    assert_eq!(rolled[0].tickets, 1);
+    assert_eq!(rolled[0].hundredths, 0);
+    assert_eq!(rolled[1].assignee_id, Some(DANA));
+    assert_eq!(rolled[1].tickets, 2);
+    assert_eq!(rolled[1].hundredths, 175, "no lost cent");
+}
+
+#[tokio::test]
+async fn an_agent_cannot_push_work_onto_a_colleague() {
+    // The row policy, doing something. `agents_take_unassigned_tickets` and
+    // `agents_work_their_own_tickets` are checked against the row as it will
+    // be as well as the row as it was, so handing a ticket to somebody else
+    // produces a row the writer's own policies do not admit.
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    desk.open_ticket(&dana, ticket(ACME, 500, "ACME-60", "Mine", 2))
+        .await
+        .expect("opening");
+    desk.assign(&dana, "ACME-60", DANA).await.expect("taking");
+
+    // Dana may not hand it to Raj.
+    let said = desk
+        .assign(&dana, "ACME-60", RAJ)
+        .await
+        .expect_err("an agent reassigned a ticket to a colleague")
+        .to_string();
+    assert!(
+        said.contains("row-level security"),
+        "refused, but not by a policy: {said}"
+    );
+
+    // A supervisor may, and that is what the role is for.
+    let boss = caller(DANA, ACME, "supervisor");
+    desk.assign(&boss, "ACME-60", RAJ)
+        .await
+        .expect("a supervisor moves work");
+
+    // And now Dana cannot touch it at all: it is neither unassigned nor hers.
+    let refused = desk.log_time(&dana, "ACME-60", 10).await;
+    assert!(
+        refused.is_err(),
+        "an agent logged time against a colleague's ticket: {refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_write_a_policy_forbids_says_two_different_things() {
+    // A finding, found by running the application rather than by reading:
+    // the row policy refuses an **insert** with "row-level security forbids
+    // writing this row" and refuses an **update** with "table `tickets` has
+    // no row with this primary key".
+    //
+    // The second is indistinguishable from a row that is genuinely gone, and
+    // an application that wants to say "somebody else has this one" cannot.
+    // It is very likely deliberate — it is the same disclosure decision
+    // `Helpdesk::by_reference` makes on purpose, because telling a caller
+    // that a row they may not touch *exists* is a leak — but the read path's
+    // version is documented and this one is not, so an application meets it
+    // as a puzzle rather than as a rule.
+    //
+    // Asserted here so that a later decision either way is a test change
+    // somebody makes on purpose.
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    let boss = caller(DANA, ACME, "supervisor");
+    desk.open_ticket(&dana, ticket(ACME, 600, "ACME-70", "Handed over", 2))
+        .await
+        .expect("opening");
+    desk.assign(&boss, "ACME-70", RAJ)
+        .await
+        .expect("a supervisor moves work");
+
+    // The update path: a row Dana can read and cannot write.
+    let visible = desk
+        .by_reference(&dana, "ACME-70")
+        .await
+        .expect("the read policy is open within the tenant");
+    assert_eq!(visible.assignee_id, Some(RAJ));
+    let said = desk
+        .log_time(&dana, "ACME-70", 10)
+        .await
+        .expect_err("an agent wrote a colleague's ticket")
+        .to_string();
+    assert!(
+        said.contains("no row with this primary key"),
+        "the update refusal has changed shape, which is the good outcome — \
+         rewrite this test to assert the new one: {said}"
+    );
+
+    // The insert path, for contrast: same rule, different sentence.
+    let mut theirs = ticket(ACME, 601, "ACME-71", "Born assigned", 2);
+    theirs.assignee_id = Some(RAJ);
+    let said = desk
+        .open_ticket(&dana, theirs)
+        .await
+        .expect_err("an agent raised a ticket already assigned to somebody else")
+        .to_string();
+    assert!(
+        said.contains("row-level security"),
+        "the insert refusal has changed shape: {said}"
+    );
+
+    // And the supervisor can, which is what makes both refusals about the
+    // policy rather than about the row being missing or the table being odd.
+    desk.log_time(&boss, "ACME-70", 10)
+        .await
+        .expect("a supervisor works any ticket");
 }

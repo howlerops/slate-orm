@@ -3,7 +3,7 @@
 #
 # # Why this exists
 #
-# `ci.yml` is twenty-three jobs and the static checks in it are spread across
+# `ci.yml` is twenty-four jobs and the static checks in it are spread across
 # eleven of them, in four languages, from five working directories. Both
 # numbers said something else — seventeen and six — until
 # `scripts/test_check_sh.py` was taught to read them, which is the third time
