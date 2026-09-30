@@ -846,6 +846,14 @@ EXEMPT: dict[str, str] = {
         "tree carries the workflow that reacts to a tag, not the fact that one "
         "was pushed. A file asserting the tag exists would be a second copy of it"
     ),
+    "setting": (
+        "closed by a repository setting a person changed on the hosting "
+        "service. Like `tagged`, the fact lives on the remote and not in the "
+        "tree; unlike a tag, no file here even reacts to it, so the only "
+        "witness would be one asserting the setting, which is a copy that goes "
+        "stale silently the moment somebody changes it back. The check is one "
+        "API call, named in the closure's reason"
+    ),
     "stamped": (
         "closed by the state of `docs/caveat-status.json` itself — a count of "
         "caveats in some state, answered by the file reaching a different "
@@ -867,6 +875,9 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`main` is not yet the **default** branch, and this session c'):
+        'closed by somebody with admin changing the setting: `GET /repos/howlerops/slate-orm` answers `"default_branch": "main"`, where the caveat recorded it opening on a feature branch. Nothing in the tree moved, and nothing in the tree could -- the entry says in the same breath that this session cannot write the setting -- so a witness would be a file asserting what the API answers',
     ('2026-09-29-two-rows-for-one-gap.md',
      'It does not sweep the other 124 open rows for duplicates.'):
         'closed by running the sweep in the direction the caveat named missing -- all 137 open rows pairwise against each other -- and reading its output. The result is a null one for the mechanical route and a single real pair for the reading, and neither leaves an artifact: a fuzzy matcher over 60-character key prefixes was measured here and rejected, so there is no guard to point at',
@@ -1012,6 +1023,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`main` is not yet the **default** branch, and this session c'): '=setting',
     ('2026-09-29-the-skip-list-that-excused-nothing.md',
      'Nothing checks that the never-fires halves still fire.'):
         'never-fires-halves-derived',

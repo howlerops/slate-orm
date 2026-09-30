@@ -388,7 +388,7 @@
       "key": "Nothing in the browser writes a schema-state key.",
       "verdict": "deliberate",
       "by": "this entry: the alternative is a migration surface in the workbench so the `0x03` branch is exercised. Not taken because that is a feature added to make a label testable, and the label in question is one that was *removed* \u2014 the viewer no longer claims space `0x03` is an index it failed to decode. A branch that renders a name is a smaller risk than the wrong name was.",
-      "reviewed": "2026-09-27"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-15-a-new-index-returns-nothing.md",
@@ -1368,9 +1368,10 @@
     {
       "entry": "2026-09-17-a-path-of-relationships-on-the-wire.md",
       "key": "`ErrorInfo.metadata` still is not surfaced",
-      "verdict": "deliberate",
-      "by": "this entry: the alternative is carrying `max_relation_depth` in `ErrorInfo.metadata` and reading it in three clients, so a caller does not parse prose. Not taken here because it is a cross-cutting protocol change \u2014 every refusal that names a limit wants it, not just this one \u2014 and doing it for one refusal would make the metadata map look optional. The limit stays in the message because a caller needs to read it, and the entry says plainly that this is the string-matching the repository otherwise avoids.",
-      "reviewed": "2026-09-27"
+      "verdict": "narrowed",
+      "by": "the map is surfaced now, by all three clients, for CHECK_VIOLATION - violationsOf in clients/go/slate/error.go, dict(info.metadata) in clients/python/src/slate/_details.py, clients/typescript/src/details.ts. The residual is the specific half: max_relation_depth is not among the keys, so a refused path still reports the limit in prose. See ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "checked": "2026-09-30",
+      "residual": "max_relation_depth is still not carried in the map, so a caller reads the limit out of the message text. Cheaper than when the caveat was written - all three clients already decode ErrorInfo.metadata - but still a server change plus three client changes"
     },
     {
       "entry": "2026-09-17-a-token-that-never-reached-a-caller.md",
@@ -1633,7 +1634,7 @@
       "key": "The demo UI still does not use the decoders.",
       "verdict": "deliberate",
       "by": "the caveat itself: the UI reads the adapters' JSON, which is the adapters' shape and not a client's; making it use the TypeScript row types would be a fourth consumer and a larger change",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-19-decoders-over-the-servers-own-rows.md",
@@ -2100,7 +2101,7 @@
       "key": "No measurement.",
       "verdict": "deliberate",
       "by": "this entry: nothing here claims a performance property",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-20-an-array-is-a-terminator-not-a-count.md",
@@ -2133,7 +2134,7 @@
       "key": "No `#[derive(Record)]` support.",
       "verdict": "deliberate",
       "by": "this entry: the macro needs an attribute naming an array field's element type, because the Rust type alone does not say which `ValueType` the elements are. That is a derive-surface design \u2014 one more attribute people must know \u2014 and no caller has wanted a derived record with an array.",
-      "reviewed": "2026-09-27"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-20-an-array-on-the-wire-and-in-three-clients.md",
@@ -2515,7 +2516,7 @@
       "key": "Table existence is still disclosed, unchanged and deliberate",
       "verdict": "deliberate",
       "by": "authorized_table: the reasoning is there and was not revisited",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-20-the-column-count-a-stranger-could-read.md",
@@ -2788,7 +2789,7 @@
       "key": "There is still no way to ask whether a row is restorable.",
       "verdict": "deliberate",
       "by": "this entry: an API answering 'is this row restorable' is a read whose answer can be false by the time the restore runs \u2014 the slot it checks is the one another writer is racing for. The refusal names the reason when it happens, which is the only moment the answer is true.",
-      "reviewed": "2026-09-27"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-20-the-index-that-could-not-hold-it.md",
@@ -2919,7 +2920,7 @@
       "key": "The criterion is the calls, not the effect.",
       "verdict": "deliberate",
       "by": "this entry: index maintenance lives in write_row_with, so it would be strange",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-20-the-predicate-shape-nobody-ran.md",
@@ -4138,7 +4139,7 @@
       "key": "Nothing checks the finding *messages*.",
       "verdict": "deliberate",
       "by": "this entry: the messages are read by people, not parsed",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-21-the-conformance-runners-own-arithmetic.md",
@@ -4374,14 +4375,14 @@
       "key": "The README half of the original entry is still open.",
       "verdict": "deliberate",
       "by": "this entry: checking that a paragraph still describes the panels a directory contains is prose against code \u2014 the counts are derivable and are checked, the description is not. Every guard here that tried to hold prose to code ended up holding a phrase instead, which goes stale the first time somebody rewords it.",
-      "reviewed": "2026-09-27"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-21-two-of-three-lists-were-already-guarded.md",
       "key": "The `api.ts` comment is now right and still unguarded.",
       "verdict": "deliberate",
       "by": "this entry: what code review is for, with no mechanical answer here",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-21-two-rosters-for-the-two-ways-a-name-becomes-a-table.md",
@@ -4395,7 +4396,7 @@
       "key": "Nothing checks the rosters' *reasons*.",
       "verdict": "deliberate",
       "by": "the caveat itself: whether a justification has stopped being true is a judgement a person makes on the diff, and the reason text is written to make that possible rather than to make it automatic",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-21-two-rosters-for-the-two-ways-a-name-becomes-a-table.md",
@@ -4503,7 +4504,7 @@
       "key": "`clients/python/testserver` is outside the swept tree",
       "verdict": "deliberate",
       "by": "the caveat itself: the guard walks crates/ only and says so in its own docstring",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-22-a-number-that-cannot-say-what-built-it.md",
@@ -4711,7 +4712,7 @@
       "key": "Fenced blocks are unread.",
       "verdict": "deliberate",
       "by": "the caveat itself, which says so: pasted output is a record of what a run printed, not a claim about now",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-22-the-page-a-reader-actually-reads.md",
@@ -4759,7 +4760,7 @@
       "key": "`examples/batchbench/README.md` duplicates a `docs/performan",
       "verdict": "deliberate",
       "by": "this entry: the digest-keyed roster covering both copies with one entry is the design \u2014 a body appearing twice is one measurement, and keying on the digest is what makes the duplication safe. The `file` field naming one of the two places is the cost of that, and it is tested.",
-      "reviewed": "2026-09-27"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-22-widening-the-tree-was-not-widening-the-claim.md",
@@ -5286,7 +5287,7 @@
       "key": "It still checks numbers and names, not sentences.",
       "verdict": "deliberate",
       "by": "this entry: a check whose failures are arguments is not a check this repository's guards can be",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-25-the-claims-guard-reaches-past-one-page.md",
@@ -5699,7 +5700,7 @@
       "key": "The demo HTTP check was a route listing, not a contract audi",
       "verdict": "deliberate",
       "by": "this entry: the alternative is reading each of the twenty `/api/\u2026` handlers' request shapes to prove none accepts a joined-space ordinal. Not taken because the demo's HTTP surface is not a contract anybody depends on \u2014 it exists so three SDK adapters can be compared against each other, and the conformance runner is what holds them to agreeing. A handler that did accept a joined-space ordinal would be a defect in the demo, not in the thing the caveat is about.",
-      "reviewed": "2026-09-27"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-26-batch-three-of-the-reading-pass.md",
@@ -5931,7 +5932,7 @@
       "key": "It is the same reader.",
       "verdict": "deliberate",
       "by": "this entry: a second reader is the one thing this repository cannot supply, and the caveat it half-closes asked for exactly that. The alternative \u2014 calling the same reader's second pass independent \u2014 would misreport the 1.9% as a rate rather than a floor",
-      "reviewed": "2026-09-26"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-26-the-reverse-sweep-found-six.md",
@@ -6625,7 +6626,7 @@
       "key": "It does not re-read the seventeen reasons that were not corr",
       "verdict": "deliberate",
       "by": "this entry: re-reading every file every reason touches is the reading pass ledger/2026-09-26-the-closed-verdicts-audited.md already costed, and it does not scale with a backlog this size. What is kept instead is that each reason cites something openable, so the next reader can check one in a `git show` rather than all of them.",
-      "reviewed": "2026-09-27"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-27-two-verdicts-rested-on-premises-that-had-moved.md",
@@ -7111,7 +7112,7 @@
       "key": "`slate-serverd` clears the refusal, so its deployment path i",
       "verdict": "deliberate",
       "by": "that entry: reconcile runs only on the node that won the leadership campaign and opened the writer, and opening a SlateDB writer fences the previous one, so the claim is true there. The alternative is to have the daemon refuse too and make every unique index a manual step for a race it has already excluded \u2014 a refusal that fires where the hazard cannot reach is how a guard gets switched off. Not taken. What it costs is that the guard defends the library caller and not the daemon, whose safety still rests on SlateDB's fencing.",
-      "reviewed": "2026-09-28"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-28-the-unique-index-race-is-refused-now.md",
@@ -7819,9 +7820,9 @@
     {
       "entry": "2026-09-14-main-and-the-documentation-sweep.md",
       "key": "`main` is not yet the **default** branch, and this session c",
-      "verdict": "deliberate",
-      "by": "a repository setting no commit can change, and everything a default branch would buy already behaves as though it were one: CI on every push, Pages from main, releases from a tag. Recorded rather than left open because there is nothing in the tree to do.",
-      "reviewed": "2026-09-28"
+      "verdict": "closed",
+      "by": "somebody with admin changed it: GET /repos/howlerops/slate-orm answers \"default_branch\": \"main\". The caveat was true when written and nothing in the repository records the change. See ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-14-main-and-the-documentation-sweep.md",
@@ -9010,7 +9011,7 @@
       "key": "The cap can be poisoned, only degraded.",
       "verdict": "deliberate",
       "by": "bounded rather than unbounded, which was the missing property: sixty-four invented paths pool every genuine method in `(other)` until a restart, done by somebody who could already fill a log with the same requests. Distinguishing a routed path from an unrouted one is the proper fix and needs the layer to know the router's table.",
-      "reviewed": "2026-09-28"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md",
@@ -9537,7 +9538,7 @@
       "entry": "2026-09-28-the-invisible-backlog-part-three.md",
       "key": "A `deliberate` verdict quoting an entry's own reasoning is n",
       "verdict": "deliberate",
-      "reviewed": "2026-09-28",
+      "reviewed": "2026-09-30",
       "by": "the alternative is re-deriving every decision the ledger has already argued, which is the work the ledger exists to avoid repeating \u2014 and a re-derivation by the same kind of reader is not independent either. What the tracker offers instead is the `reviewed` date, which records that somebody read the reasoning against today's tree, and `caveats.py --unread` is what finds the ones nobody has."
     },
     {
@@ -11052,7 +11053,7 @@
       "key": "It compares rendering, not parsing.",
       "verdict": "deliberate",
       "by": "this entry: no client offers reading a decimal string back into units \u2014 a decimal arrives as a count and leaves as a string \u2014 so the round trip does not exist to be compared.",
-      "reviewed": "2026-09-29"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md",
@@ -11818,7 +11819,7 @@
       "key": "The whole-word rule still accepts a name in any string.",
       "verdict": "deliberate",
       "by": "this entry: the existing case `a class only ever built dynamically still counts as used` is there to stop a tightening to attribute values, and a class built by concatenation never appears as one. Narrower than substring, wider than attribute, and that is where the evidence puts it.",
-      "reviewed": "2026-09-29"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md",
@@ -12039,7 +12040,7 @@
       "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
       "key": "It does not bound idle handles.",
       "verdict": "deliberate",
-      "reviewed": "2026-09-29",
+      "reviewed": "2026-09-30",
       "by": "this entry, on a measurement: the permit comes back when the server has finished writing, so a drained handle costs a socket and no permit. That is the resource split the entry argues is the right one \u2014 a socket is the listener's business and a scan in flight is the node's."
     },
     {
@@ -12060,7 +12061,7 @@
       "entry": "2026-09-29-a-cap-on-open-streams-and-what-open-turned-out-to-mean.md",
       "key": "No client knows about it.",
       "verdict": "deliberate",
-      "reviewed": "2026-09-29",
+      "reviewed": "2026-09-30",
       "by": "this entry: RESOURCE_EXHAUSTED is the code the execution ceilings already use and all three clients already turn it into their refused-request exception, which is the correct handling. A caller-visible distinction would be a new error detail on the wire and a change in three clients, for a refusal a caller retries either way."
     },
     {
@@ -12081,7 +12082,7 @@
       "entry": "2026-09-29-four-loose-ends-this-session-tied-off.md",
       "key": "Two workflows setting one name differently is reported as a ",
       "verdict": "deliberate",
-      "reviewed": "2026-09-29",
+      "reviewed": "2026-09-30",
       "by": "this entry: the check's subject is whether check.sh exports what CI sets, and the complaint carries both values so a reader sees the disagreement. A separate conflict rule would have nothing to test against \u2014 no second workflow has a top-level env: block."
     },
     {
@@ -12201,7 +12202,7 @@
       "key": "The probe is still a race.",
       "verdict": "deliberate",
       "by": "this entry: binding, closing and handing the number to a caller that binds later cannot be made atomic from outside the kernel. Excluding the kernel's *automatic* allocation is the whole point and is what the below-the-range rule buys; a deliberate listener taking the port is a different failure and a loud one. True of both heredocs before this and unchanged by it.",
-      "reviewed": "2026-09-29"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-one-allocator-instead-of-two.md",
@@ -12862,7 +12863,7 @@
       "key": "`Catalog::insert`'s own lookup is invisible to it",
       "verdict": "deliberate",
       "by": "it is spelled .find(|t| t.id() == table.id() || t.name() == table.name()) and BY_NAME wants name() immediately after the closure parameter. It is the duplicate refusal rather than a resolver, so nothing is unguarded; widening the pattern to reach it would match every disjunction and is not worth the false positives",
-      "reviewed": "2026-09-29"
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-hole-rule-ten-could-only-write-down.md",
@@ -12976,6 +12977,41 @@
       "key": "Nothing holds the guard's *forward* rule \u2014 the per-installer",
       "verdict": "deliberate",
       "by": "ten cases exercise the per-installer report, so it is not a branch nobody reaches; the halves were covered because a caveat recorded that they were not",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "key": "It cannot say how much of this draw is new.",
+      "verdict": "open",
+      "by": "none of the four earlier entries records its seed or its read set, so the 246-row pooled line is an optimistic bound and not a count. This entry records its own seed, which fixes the next pass and not this one",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "key": "A `reviewed` stamp does not distinguish a read like this one",
+      "verdict": "open",
+      "by": "both a read against code and the 2026-09-26 reverse sweep's bulk prose stamp write the same field, so the tracker cannot say which kind a date is. caveats.py's own comment at CHECKED, REVIEWED already draws the checked/reviewed line and stops there",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "key": "The sibling claim in the same entry could not be checked.",
+      "verdict": "open",
+      "by": "GET /repos/howlerops/slate-orm/pages is refused by this container's proxy with 403, \"Access to this GitHub API path is not permitted through this proxy\". The claim is the same shape as the default-branch one this entry closed, so it is likely stale and is left deliberate rather than guessed at",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "key": "Two per thirty is four events short of a rate.",
+      "verdict": "deliberate",
+      "by": "the interval is reported rather than a point estimate, and the entry says the move from 1.85% to 6.7% is inside what thirty draws do by chance. Reading more is the next pass's job, not a defect in this one",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md",
+      "key": "The \"Nothing\u2026\" hypothesis is neither confirmed nor refuted h",
+      "verdict": "deliberate",
+      "by": "one draw's worth of weak evidence against a hypothesis resting on four events is what thirty reads buy; the entry reports the five negative existentials it drew and that all five held, which is the tally the previous entry asked for",
       "reviewed": "2026-09-30"
     }
   ]

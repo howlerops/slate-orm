@@ -118,6 +118,11 @@ whose error ("verify that the repository has Pages enabled ... or consider
 exploring the `enablement` parameter") reads like a suggestion to the person
 editing the workflow rather than an instruction to the person who can fix it.
 
+~~`main` is not yet the **default** branch, and this session cannot make it
+one.~~ **Closed** — somebody with admin changed it. `GET
+/repos/howlerops/slate-orm` answers `"default_branch": "main"`; see
+`ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md`.
+
 `main` is not yet the **default** branch, and this session cannot make it one.
 Until somebody changes it in Settings → General, the public repository page
 still opens on the feature branch. Everything else — CI on every push, Pages
