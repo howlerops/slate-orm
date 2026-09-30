@@ -15346,6 +15346,20 @@
       "verdict": "open",
       "by": "the later-entry signal has two labelled rows in this repository's history and scores 1 on them. The next false verdict found is the third data point, and nothing before then says what it would do",
       "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-two-documents-this-session-made-wrong.md",
+      "key": "It is a grep, not a reading of every document.",
+      "verdict": "deliberate",
+      "by": "four number-shaped strings were searched for, chosen because they are the counts this session moved. A sentence made wrong in words rather than in digits is not findable that way, and finding one means reading every document against the tree - the classifier this repository declines",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-two-documents-this-session-made-wrong.md",
+      "key": "Nothing stops the next one.",
+      "verdict": "deliberate",
+      "by": "a guard would have to decide whether a sentence of English is still true of the tree, which is the prose parsing every guard in scripts/ declines. The habit is the mechanism and CLAUDE.md states it; this entry is the record that it ran",
+      "reviewed": "2026-09-30"
     }
   ]
 }

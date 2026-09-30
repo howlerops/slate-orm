@@ -606,6 +606,21 @@ def unchecked(days: int | None, root: Path = ROOT, today: str | None = None) -> 
     the right default for a bucket this size, where the first question is
     "what has nobody ever read" and re-reading on a timer would mean 1038 reads
     a period. A number is there for when the frame empties.
+
+    # It emptied
+
+    On 2026-09-30 the whole frame — 1016 rows by then — was drawn in one draw
+    and read. `--unchecked` with no argument now lists nothing, and will list
+    a `deliberate` verdict written after that day and not yet read.
+    **That is the state this was built to reach and it is also the state in
+    which it says least**: a worklist of zero and a worklist nobody looks at
+    print the same thing. `--unchecked <days>` is the question that replaces
+    it, and `main`'s summary line prints the two numbers side by side —
+    `N deliberate (M read against the tree)` — so a bucket that grows shows
+    even when the frame is silent. See
+    `ledger/2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md`, which
+    also records why that pass's 2-of-1016 must not be pooled with the
+    campaigns' 7 of 246.
     """
     from datetime import date, timedelta
 

@@ -156,6 +156,13 @@ The client suites and the demo build `slate-serverd` with `cargo` by default.
 suite) points them at a prebuilt binary instead, which is how CI builds it once
 for every job and how you run a client suite with no Rust toolchain. A path
 that is set and missing is a hard error, never a silent fall back to building.
+So is one **older than the source it was built from**: `scripts/prebuilt.py`
+is the single refusal all six harnesses use, and `scripts/test_prebuilt.py`
+drives four of them with a binary timestamped in 2000 and requires a named
+drive test in the Go and TypeScript suites for the other two. A binary
+compared against nothing is how a mutation of `slate-server` survived the
+three-SDK conformance runner, so a `SLATE_*` variable naming an executable
+that `prebuilt.py` does not know is refused rather than run.
 
 ## Practical notes
 
