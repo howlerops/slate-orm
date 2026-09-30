@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-30T16:01:18+00:00",
+  "file": "scripts/test_check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "c92a1c8",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": []
+}

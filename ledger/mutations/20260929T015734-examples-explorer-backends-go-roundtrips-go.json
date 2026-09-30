@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-29T01:57:34+00:00",
+  "file": "examples/explorer/backends/go/roundtrips.go",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "2896ea3",
+  "python": "3.11.15",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

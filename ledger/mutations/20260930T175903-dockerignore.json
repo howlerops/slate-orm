@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-30T17:59:03+00:00",
+  "file": ".dockerignore",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_workspace.py"
+  ],
+  "commit": "7d06967",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the dockerignore stops admitting a workspace member",
+      "old": "!examples/helpdesk/",
+      "new": "!README.md",
+      "verdict": "caught",
+      "caught_by": [
+        "check_workspace: the workspace and the image's copy list disagree:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the dockerignore becomes a deny-list the parser cannot read",
+      "old": "\n*\n",
+      "new": "\n",
+      "verdict": "caught",
+      "caught_by": [
+        "check_workspace: the workspace and the image's copy list disagree:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

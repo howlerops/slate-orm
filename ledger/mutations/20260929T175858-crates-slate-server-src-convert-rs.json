@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-29T17:58:58+00:00",
+  "file": "crates/slate-server/src/convert.rs",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOFLAGS= SLATE_SERVERD= go test ./slate -run 'NotIn|NegationIsNot' -count=1"
+  ],
+  "commit": "17bf747",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the wire drops the negation, so NOT IN answers what IN does",
+      "old": "        Node::Negation(inner) => Expr::Not(Box::new(expr_at_depth(space, inner, what, depth + 1)?)),",
+      "new": "        Node::Negation(inner) => expr_at_depth(space, inner, what, depth + 1)?,",
+      "verdict": "caught",
+      "caught_by": [
+        "TestAClientSendsNotInAsNotOfIn",
+        "TestNegationIsNotIgnoredOnASingleComparison"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

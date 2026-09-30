@@ -1,0 +1,14 @@
+{
+  "at": "2026-09-29T19:31:33+00:00",
+  "file": ".github/workflows/ci.yml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "test_check_sh.py"
+  ],
+  "commit": "5f27822",
+  "python": "3.11.15",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

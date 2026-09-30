@@ -1,0 +1,47 @@
+{
+  "at": "2026-09-29T06:47:00+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_round_trips.py -q"
+  ],
+  "commit": "8a2e68f",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the envelope term is dropped from the formula",
+      "old": "    assert batched - singly == 4 * ROWS + 2, (",
+      "new": "    assert batched - singly == 4 * ROWS, (",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_batching_saves_round_trips_and_costs_bytes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the paging range is widened to admit equality",
+      "old": "    assert 12 <= by_cursor - by_offset <= 40, (",
+      "new": "    assert 0 <= by_cursor - by_offset <= 40, (",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the batch sends singles instead",
+      "old": "    batch = Batch(Atomicity.INDEPENDENT)\n    for n in range(ROWS):\n        batch.upsert(DOCS, [_row(n)])\n    client.batch(batch)",
+      "new": "    for n in range(ROWS):\n        client.insert(DOCS, [_row(n)], upsert=True)",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_round_trips.py::test_batching_saves_round_trips_and_costs_bytes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

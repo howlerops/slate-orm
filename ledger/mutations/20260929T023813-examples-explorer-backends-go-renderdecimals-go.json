@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T02:38:13+00:00",
+  "file": "examples/explorer/backends/go/renderdecimals.go",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "82a637f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the go adapter's table drops the i64 minimum",
+      "old": "\t{math.MinInt64, 2},",
+      "new": "\t{math.MinInt64 + 1, 2},",
+      "verdict": "caught",
+      "caught_by": [
+        "twelve decimals rendered (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

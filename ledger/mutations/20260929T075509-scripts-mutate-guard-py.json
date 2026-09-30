@@ -1,0 +1,152 @@
+{
+  "at": "2026-09-29T07:55:09+00:00",
+  "file": "scripts/mutate_guard.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate_guard.py"
+  ],
+  "commit": "b2e8682",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a traceback in the output is not read as a death",
+      "old": "    if DIED in output:",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that raises produces no result line at all: exit 1, wanted 70",
+        "raises: Traceback (most recent call last):",
+        "a guard that prints a traceback and exits 0 produces no result line: exit 0, wanted 70",
+        "one guard that cannot answer suppresses the whole run's result line: exit 1, wanted 70",
+        "raises: Traceback (most recent call last):"
+      ],
+      "suites_reported": 4,
+      "expect_survivor": null
+    },
+    {
+      "name": "exit 2 is accepted as a refusal",
+      "old": "    if done.returncode not in (0, 1):",
+      "new": "    if done.returncode not in (0, 1, 2):",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that exits 2 produces no result line at all: exit 1, wanted 70",
+        "exits_two: confused"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "a silent exit 0 is accepted as a pass",
+      "old": "    if done.returncode == 0 and not output.strip():",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that passes silently produces no result line at all: exit 0, wanted 70"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "a guard that could not answer no longer suppresses the result line",
+      "old": "    if died:",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that raises produces no result line at all: exit 0, wanted 70",
+        "a guard that exits 2 produces no result line at all: exit 0, wanted 70",
+        "a guard that passes silently produces no result line at all: exit 0, wanted 70",
+        "a guard that prints a traceback and exits 0 produces no result line: exit 0, wanted 70",
+        "one guard that cannot answer suppresses the whole run's result line: exit 0, wanted 70",
+        "a guard that is not there produces no result line at all: exit 0, wanted 70"
+      ],
+      "suites_reported": 7,
+      "expect_survivor": null
+    },
+    {
+      "name": "a death exits 1 rather than 70, so it reads as an ordinary refusal",
+      "old": "        return 70\n\n    print(f\"{passed} passed, {failed} failed\")",
+      "new": "        return 1\n\n    print(f\"{passed} passed, {failed} failed\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that raises produces no result line at all: exit 1, wanted 70",
+        "a guard that exits 2 produces no result line at all: exit 1, wanted 70",
+        "a guard that passes silently produces no result line at all: exit 1, wanted 70",
+        "a guard that prints a traceback and exits 0 produces no result line: exit 1, wanted 70",
+        "one guard that cannot answer suppresses the whole run's result line: exit 1, wanted 70",
+        "a guard that is not there produces no result line at all: exit 1, wanted 70"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "naming no guard runs nothing and reports a clean empty run",
+      "old": "    if not guards:",
+      "new": "    if guards is None:",
+      "verdict": "caught",
+      "caught_by": [
+        "naming no guard at all fails: exit 0, wanted 70"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "a guard path that does not exist is handed to the interpreter anyway",
+      "old": "    if not path.exists():",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that is not there produces no result line at all: no ['does not exist'] in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a refusal is reported but the run still exits 0",
+      "old": "    return 1 if failed else 0",
+      "new": "    return 0",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that refuses reports a failure mutate.py can read: exit 0, wanted 1",
+        "refuses: a problem",
+        "two guards, one of each, are counted separately: exit 0, wanted 1",
+        "refuses: a problem"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "only stdout is read, so a guard refusing on stderr says nothing",
+      "old": "    output = done.stdout + done.stderr",
+      "new": "    output = done.stdout",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that refuses reports a failure mutate.py can read: no ['FAIL  refuses: a problem'] in",
+        "refuses:",
+        "a guard that raises produces no result line at all: exit 1, wanted 70",
+        "raises:",
+        "a guard that prints a traceback and exits 0 produces no result line: exit 0, wanted 70",
+        "one guard that cannot answer suppresses the whole run's result line: exit 1, wanted 70",
+        "raises:"
+      ],
+      "suites_reported": 5,
+      "expect_survivor": null
+    },
+    {
+      "name": "a refusal is counted as a pass",
+      "old": "            failed += 1",
+      "new": "            passed += 1",
+      "verdict": "caught",
+      "caught_by": [
+        "a guard that refuses reports a failure mutate.py can read: exit 0, wanted 1",
+        "refuses: a problem",
+        "two guards, one of each, are counted separately: exit 0, wanted 1",
+        "refuses: a problem"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

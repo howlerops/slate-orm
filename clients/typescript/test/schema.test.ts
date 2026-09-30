@@ -158,6 +158,38 @@ test("the scale and the element type are pinned too", () => {
 });
 
 /**
+ * The five types neither pinned table carries.
+ *
+ * `DOCS` is u64/string/i64 and `SHELVES` is u64/array/decimal, so between them
+ * this port could misspell `bool`, `bytes`, `f64`, `uuid` or `vector` in its
+ * hash and both tests above would pass. That is the residual
+ * `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md` recorded:
+ * two tables are pinned, not the type surface.
+ *
+ * One table with all five rather than five tables, because the fingerprint
+ * hashes each column's type name in turn, so changing any one of them moves
+ * the number — checked before this constant was written rather than assumed.
+ */
+test("the remaining types are pinned too", () => {
+  const READINGS: TableDef = {
+    name: "readings",
+    columns: [
+      { name: "id", type: "u64" },
+      { name: "ok", type: "bool" },
+      { name: "raw", type: "bytes" },
+      { name: "weight", type: "f64" },
+      { name: "tag", type: "uuid" },
+      { name: "point", type: "vector" },
+    ],
+    primaryKey: ["id"],
+  };
+  //	>>> from slate.schema import fingerprint_of
+  //	>>> hex(fingerprint_of(READINGS))
+  //	'0x9eb9cc433c353eb1'
+  assert.equal(fingerprint(READINGS), 0x9eb9cc433c353eb1n);
+});
+
+/**
  * A key naming a column the declaration does not have must not collide with a
  * correct declaration whose key is the first column.
  *

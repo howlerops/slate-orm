@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-28T23:12:11+00:00",
+  "file": "clients/go/slate/related_test.go",
+  "dialect": "go",
+  "command": [
+    "bash",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -count=1"
+  ],
+  "commit": "3df314d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the stream interceptor records nothing",
+      "old": "\t\t\tseen(method, nil)\n\t\t\treturn streamer(ctx, desc, cc, method, opts...)",
+      "new": "\t\t\treturn streamer(ctx, desc, cc, method, opts...)",
+      "verdict": "caught",
+      "caught_by": [
+        "TestPagingByCursorIsOneRequestPerPage"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

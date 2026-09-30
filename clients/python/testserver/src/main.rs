@@ -88,6 +88,17 @@ fn docs() -> TableDef {
         .column("kind", ValueType::Str)
         .column("size", ValueType::I64)
         .nullable_column("note", ValueType::Str)
+        // `note` was once `comment`, so the Python suite has a renamed column
+        // to declare against. The Go and TypeScript suites each have one in
+        // their own TOML fixture and this one had none, which is the gap
+        // `ledger/2026-09-14-withdrawing-the-rename-caveat.md` left open.
+        //
+        // On `note` rather than `kind`, and that is not arbitrary:
+        // `test_a_renamed_column_is_refused_rather_than_silently_answered`
+        // declares `kind` as `category` and requires a refusal, so giving
+        // `kind` a previous name would make that test's subject legal and the
+        // test would fail for the opposite of the reason it exists.
+        .renamed_column("note", "comment")
         .primary_key(["id"])
         .index(IndexDef::builder("by_kind", IndexId(1)).column("kind"))
         .index(IndexDef::builder("by_size", IndexId(2)).column_with("size", Direction::Asc))

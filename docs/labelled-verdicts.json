@@ -1,0 +1,19 @@
+{
+  "note": "Every `deliberate` verdict this repository has found to be FALSE, and the later ledger entry that had already answered it. The labelled set `scripts/read_deliberate.py`'s later-entry signal is scored against, by `scripts/test_read_deliberate.py`. Add a row here the next time a read finds a false verdict; the score is re-measured from this file rather than by hand. See ledger/2026-09-30-a-labelled-set-for-the-later-entry-signal.md.",
+  "rows": [
+    {
+      "entry": "2026-09-14-a-playground-nobody-could-find.md",
+      "key": "The ordering assertion only pins `#playground` before `#what",
+      "closed_by": "2026-09-14-the-home-page-is-a-workbench.md",
+      "found": "2026-09-30",
+      "note": "site/check/playground.py was deleted in 5ffc331 when the landing page became the workbench. The signal named the closing entry as its single hit."
+    },
+    {
+      "entry": "2026-09-14-a-playground-nobody-could-find.md",
+      "key": "The default-column assertion checks the *option label* ends ",
+      "closed_by": "2026-09-14-the-home-page-is-a-workbench.md",
+      "found": "2026-09-30",
+      "note": "The same deletion. The signal did not name the closing entry: the audit entry quoting the caveat matched every rare word by construction and crowded it out. `later_entries` now skips a body containing the claim's own first sixty characters, which is the fix that measuring produced."
+    }
+  ]
+}

@@ -145,7 +145,7 @@ size budget, because the cost of this lands on a reader's connection.
 
 slate has no SQL. The kernel takes a `Query`; the clients and the wire take a
 structured spec. The editor accepts a small `SELECT`/`INSERT`/`UPDATE`/`DELETE`
-subset (`crates/slate-wasm/src/sql.rs`) and **parses it into that spec** — the
+subset (`crates/slate-sql/src/sql.rs`) and **parses it into that spec** — the
 same `QuerySpec` the dropdowns used to build and the same one an SDK sends.
 The **Spec** tab shows what your statement compiled to, so the translation is
 visible rather than claimed.

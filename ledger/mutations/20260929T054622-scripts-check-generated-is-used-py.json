@@ -1,0 +1,74 @@
+{
+  "at": "2026-09-29T05:46:22+00:00",
+  "file": "scripts/check_generated_is_used.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_generated_is_used.py"
+  ],
+  "commit": "a251c23",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "package_of falls back to the repository root",
+      "old": "    return Path(path).parent.as_posix()",
+      "new": "    return \".\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a package with no manifest scopes to its own directory: no 'nothing in loose imports' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the scope widens to the whole repository",
+      "old": "[\"git\", \"grep\", \"-l\", \"-E\", shaped, \"--\", package_of(path)],",
+      "new": "[\"git\", \"grep\", \"-l\", \"-E\", shaped],",
+      "verdict": "caught",
+      "caught_by": [
+        "an importer in another package does not count: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "MANIFESTS names nothing",
+      "old": "MANIFESTS = (\"go.mod\", \"package.json\", \"pyproject.toml\", \"Cargo.toml\")",
+      "new": "MANIFESTS = ()",
+      "verdict": "caught",
+      "caught_by": [
+        "the real shape passes: exit 1, wanted 0",
+        "a generated file nothing imports fails: no 'nothing in web imports' in",
+        "a bare mention is not an import: no 'nothing in web imports' in",
+        "an importer in another package does not count: no 'nothing in web imports' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "OUTPUT_FLAGS drops --web",
+      "old": "OUTPUT_FLAGS = (\"--python\", \"--go\", \"--typescript\", \"--web\")",
+      "new": "OUTPUT_FLAGS = (\"--python\", \"--go\", \"--typescript\")",
+      "verdict": "caught",
+      "caught_by": [
+        "the real shape passes: exit 1, wanted 0",
+        "a generated file nothing imports fails: no 'nothing in web imports' in",
+        "a bare mention is not an import: no 'nothing in web imports' in",
+        "an importer in another package does not count: no 'nothing in web imports' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "importers counts the file itself",
+      "old": "if line and line != path",
+      "new": "if line",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

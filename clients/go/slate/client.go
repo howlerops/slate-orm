@@ -161,11 +161,18 @@ func (c *Client) Session() *Session {
 	return &Session{client: c, monotonic: true}
 }
 
-// SessionWithoutMonotonicReads starts one that does not carry its watermark.
+// SessionWithoutMonotonicReads starts one whose *reads* do not advance its
+// watermark.
 //
 // For a caller that genuinely wants the cheapest read available and has
 // decided that going backwards is acceptable — a dashboard, a cache warmer.
 // Named at length so that choosing it is deliberate.
+//
+// It still reads its own writes. This used to say "does not carry its
+// watermark", and that is what it did: a session that wrote and read back
+// could miss its own write, with no error anywhere. Both of the named callers
+// are read-only, so nothing they do changes; what changed is the caller who
+// writes, for whom the old behaviour was a surprise rather than a saving.
 func (c *Client) SessionWithoutMonotonicReads() *Session {
 	return &Session{client: c, monotonic: false}
 }
@@ -196,17 +203,34 @@ func (s *Session) observeLocked(token *ReadToken) {
 }
 
 // freshness is the floor this session's reads carry.
+//
+// Gated on the watermark alone, and *not* on s.monotonic. The flag decides
+// whether a read advances the watermark -- see observeServedBy -- and a write
+// advances it either way, so a session that has written carries a floor even
+// with monotonic reads off. That is read-your-writes, which is a different
+// guarantee from monotonic reads and is not the one the flag names.
+//
+// It used to be gated here, which meant SessionWithoutMonotonicReads silently
+// dropped read-your-writes too: write, read back, miss your own write, no
+// error anywhere. The Python client never did that, and the three-way
+// comparison in
+// ledger/2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md
+// is what found the disagreement.
 func (s *Session) freshness() *pb.Freshness {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.monotonic || s.watermark == nil {
+	if s.watermark == nil {
 		return nil
 	}
 	return &pb.Freshness{Level: &pb.Freshness_AtLeast{AtLeast: uint64(*s.watermark)}}
 }
 
 func (s *Session) observeServedBy(sb *pb.ServedBy) {
-	if sb == nil {
+	// The one place the flag belongs: folding a *read's* view into the
+	// watermark is what stops a later read going backwards, and is exactly
+	// what a caller turning monotonic reads off is asking not to pay for.
+	// A write's sequence is folded in elsewhere and is never gated.
+	if sb == nil || !s.monotonic {
 		return
 	}
 	token := ReadToken(sb.Sequence)
@@ -584,10 +608,14 @@ type RowStream struct {
 	computed  [][]Value
 	windowed  [][]Value
 	at        int
-	servedBy  *ServedBy
-	warnings  []string
-	done      bool
-	err       error
+	// primed says a row is under the cursor and the next Next must step past
+	// it. Without it, advancing in Next would skip the first row — and the
+	// getters have to stay idempotent, which is the whole point.
+	primed   bool
+	servedBy *ServedBy
+	warnings []string
+	done     bool
+	err      error
 }
 
 // Query reads rows.
@@ -613,7 +641,17 @@ func (s *Session) Query(ctx context.Context, query Query) (*RowStream, error) {
 // with no Row() call in the body never terminates and spins at full CPU —
 // this comment said "advances to the next row", and a test written from it
 // did exactly that.
+// A cursor that a *getter* advanced was the shape before this: `Row` did the
+// `at++`, so reading a computed value after it silently answered about the
+// next row. Only one of the three getters documented that, and a test written
+// here got it wrong within a minute of meeting it. Advancing in `Next` — the
+// method whose name says it advances — makes the getters idempotent and their
+// order free.
 func (r *RowStream) Next() bool {
+	if r.primed {
+		r.at++
+	}
+	r.primed = false
 	for r.at >= len(r.batch) {
 		if r.done {
 			return false
@@ -666,6 +704,7 @@ func (r *RowStream) Next() bool {
 			r.windowed = append(r.windowed, windows)
 		}
 	}
+	r.primed = true
 	return true
 }
 
@@ -683,20 +722,20 @@ func (r *RowStream) trailers() metadata.MD {
 // column and a caller that indexes past the end gets nothing rather than
 // silently getting a computed value.
 //
-// It advances the cursor, so [RowStream.Computed] must be read first.
+// Reading it does not advance: [RowStream.Next] does. Calling it twice for one
+// row returns that row twice, and [RowStream.Computed] may be read before or
+// after it.
 func (r *RowStream) Row() []Value {
 	if r.at >= len(r.batch) {
 		return nil
 	}
-	row := r.batch[r.at]
-	r.at++
-	return row
+	return r.batch[r.at]
 }
 
 // Computed is what [Query.Compute] produced for the row [RowStream.Row] is
 // about to return, in declaration order. Empty when the query computes nothing.
 //
-// Read it *before* [RowStream.Row], which advances the cursor.
+// Readable before or after [RowStream.Row], which no longer advances.
 func (r *RowStream) Computed() []Value {
 	if r.at >= len(r.computed) {
 		return nil
@@ -1025,10 +1064,14 @@ type JoinStream struct {
 	// computed value and read it as a column.
 	inputComputed [][][]Value
 	at            int
-	servedBy      *ServedBy
-	warnings      []string
-	done          bool
-	err           error
+	// primed says a row is under the cursor and the next Next must step past
+	// it. Without it, advancing in Next would skip the first row — and the
+	// getters have to stay idempotent, which is the whole point.
+	primed   bool
+	servedBy *ServedBy
+	warnings []string
+	done     bool
+	err      error
 }
 
 // Join reads joined rows.
@@ -1059,6 +1102,10 @@ func (t *Transaction) Join(ctx context.Context, join JoinQuery) (*JoinStream, er
 
 // Next advances to the next joined row.
 func (j *JoinStream) Next() bool {
+	if j.primed {
+		j.at++
+	}
+	j.primed = false
 	for j.at >= len(j.batch) {
 		if j.done {
 			return false
@@ -1097,6 +1144,7 @@ func (j *JoinStream) Next() bool {
 			j.inputComputed = append(j.inputComputed, perInput)
 		}
 	}
+	j.primed = true
 	return true
 }
 
@@ -1179,7 +1227,7 @@ func (j *JoinStream) Computed() []Value {
 // no way to read it back — the value arrived on the wire in that input's
 // `Row.computed` and was dropped here.
 //
-// Read it *before* [JoinStream.Row], which advances the cursor.
+// Readable before or after [JoinStream.Row], which no longer advances.
 func (j *JoinStream) InputComputed(input uint32) []Value {
 	if j.at >= len(j.inputComputed) {
 		return nil
@@ -1193,13 +1241,14 @@ func (j *JoinStream) InputComputed(input uint32) []Value {
 
 // Row is the joined row [JoinStream.Next] advanced to: one slice per input,
 // nil where an outer join found no match.
+//
+// Reading it does not advance, so it is safe to call twice and
+// [JoinStream.InputComputed] may be read either side of it.
 func (j *JoinStream) Row() [][]Value {
 	if j.at >= len(j.batch) {
 		return nil
 	}
-	row := j.batch[j.at]
-	j.at++
-	return row
+	return j.batch[j.at]
 }
 
 // Err is why the stream stopped, or nil if it simply ended.
@@ -1236,10 +1285,14 @@ type GroupStream struct {
 	session   *Session
 	batch     []Group
 	at        int
-	servedBy  *ServedBy
-	warnings  []string
-	done      bool
-	err       error
+	// primed says a row is under the cursor and the next Next must step past
+	// it. Without it, advancing in Next would skip the first row — and the
+	// getters have to stay idempotent, which is the whole point.
+	primed   bool
+	servedBy *ServedBy
+	warnings []string
+	done     bool
+	err      error
 }
 
 // Aggregate groups one table.
@@ -1314,6 +1367,10 @@ func (s *Session) aggregate(
 
 // Next advances to the next group.
 func (g *GroupStream) Next() bool {
+	if g.primed {
+		g.at++
+	}
+	g.primed = false
 	for g.at >= len(g.batch) {
 		if g.done {
 			return false
@@ -1354,6 +1411,7 @@ func (g *GroupStream) Next() bool {
 			g.batch = append(g.batch, Group{Key: key, Values: values})
 		}
 	}
+	g.primed = true
 	return true
 }
 
@@ -1370,13 +1428,13 @@ func decodeValues(wire []*pb.Value) ([]Value, error) {
 }
 
 // Group is the group [GroupStream.Next] advanced to.
+//
+// Reading it does not advance, so it is safe to call twice.
 func (g *GroupStream) Group() Group {
 	if g.at >= len(g.batch) {
 		return Group{}
 	}
-	group := g.batch[g.at]
-	g.at++
-	return group
+	return g.batch[g.at]
 }
 
 // Err is why the stream stopped, or nil if it simply ended.

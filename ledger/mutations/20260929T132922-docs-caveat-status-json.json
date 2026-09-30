@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-29T13:29:22+00:00",
+  "file": "docs/caveat-status.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "31c9282",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a narrowed verdict's residual goes empty, so it says what closed and not what is left",
+      "old": "\"residual\": \"the other 117. This entry triaged them and fixed none, and the passes since have moved verdicts rather than closed gaps.\"",
+      "new": "\"residual\": \"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the real tracker: every verdict is well formed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the other narrowed verdict loses its residual the same way",
+      "old": "\"residual\": \"the response-head latency. Every client's duration still stops at the response head, so a streamed read's rows are in no measurement anywhere; ledger/2026-09-29-bytes-do-not-need-a-network.md records the same half as still blocked on a harness with a network under it.\"",
+      "new": "\"residual\": \"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the real tracker: every verdict is well formed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a narrowed verdict reverts to the open one it replaced",
+      "old": "      \"key\": \"It does not fix any of the 118.\",\n      \"verdict\": \"narrowed\",",
+      "new": "      \"key\": \"It does not fix any of the 118!\",\n      \"verdict\": \"narrowed\",",
+      "verdict": "caught",
+      "caught_by": [
+        "the real tracker: every verdict is well formed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

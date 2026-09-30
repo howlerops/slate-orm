@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T16:33:15+00:00",
+  "file": "crates/slate-slatedb/src/s3.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_secret_types.py"
+  ],
+  "commit": "6d748f6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a secret-holding type derives Debug",
+      "old": "struct Credentials {",
+      "new": "#[derive(Debug)]\nstruct Credentials {",
+      "verdict": "caught",
+      "caught_by": [
+        "check_secret_types: `Credentials` at crates/slate-slatedb/src/s3.rs:57 derives `Debug` and holds a secret."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

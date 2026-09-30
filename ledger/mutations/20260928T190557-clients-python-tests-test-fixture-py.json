@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-28T19:05:57+00:00",
+  "file": "clients/python/tests/test_fixture.py",
+  "dialect": "pytest",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/python && python3 -m pytest tests/test_fixture.py -q -k 'fingerprint or value_type or column_type or coverage'"
+  ],
+  "commit": "1f09759",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the coverage computation returns nothing",
+      "old": "    return sorted(t.value for t in ValueType if t not in covered)",
+      "new": "    return []",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_fixture.py::test_the_coverage_guard_fires_when_a_type_is_unpinned"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the coverage computation ignores which types are covered",
+      "old": "    covered = {column.type for table in tables for column in table.columns}",
+      "new": "    covered = set(ValueType)",
+      "verdict": "caught",
+      "caught_by": [
+        "tests/test_fixture.py::test_the_coverage_guard_fires_when_a_type_is_unpinned"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

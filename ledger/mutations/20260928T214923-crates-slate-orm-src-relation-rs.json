@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-28T21:49:23+00:00",
+  "file": "crates/slate-orm/src/relation.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--test",
+    "read_counts",
+    "--no-fail-fast"
+  ],
+  "commit": "abe7009",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the no-parents early return is dropped, so an empty IN is read",
+      "old": "    if parents.is_empty() {\n        return Ok(Vec::new());\n    }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "no_parents_is_no_read_at_all"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

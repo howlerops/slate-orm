@@ -114,10 +114,29 @@ def test_a_python_decimal_is_refused_with_a_reason() -> None:
         # wider type for this; Python's integers are unbounded, so this case
         # exists to keep the three agreeing rather than to catch a Python bug.
         (-9_223_372_036_854_775_808, 2, "-92233720368547758.08"),
+        # Scale 18 is `slate_schema`'s `MAX_SCALE`, where an `i64` has one
+        # digit left of the point. Added because a caveat asked whether the
+        # three agreed above scale 4 and nothing answered it.
+        (1250, 18, "0.000000000000001250"),
+        (9_223_372_036_854_775_807, 18, "9.223372036854775807"),
+        (-9_223_372_036_854_775_808, 18, "-9.223372036854775808"),
     ],
 )
 def test_rendering_against_a_scale(units: int, scale: int, rendered: str) -> None:
     assert Units(units).to_string_with_scale(scale) == rendered
+
+
+def test_a_negative_scale_is_refused() -> None:
+    """The refusal all four renderers now share.
+
+    Rust and Go make a negative scale unrepresentable (`u8`, `uint8`); neither
+    this language nor TypeScript can, so both refuse at run time. This client
+    always did; the other two clamped to zero until 2026-09-29, which renders
+    1250 units as "1250" — a number that is a power of ten out and does not
+    look wrong.
+    """
+    with pytest.raises(ValueError, match="not negative"):
+        Units(1250).to_string_with_scale(-1)
 
 
 def test_the_declared_scale_is_readable_and_only_for_a_decimal() -> None:

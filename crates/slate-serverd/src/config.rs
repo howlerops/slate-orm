@@ -423,13 +423,73 @@ pub(crate) struct LimitSettings {
     /// limit exists to prevent.
     #[serde(default)]
     pub(crate) max_returned_rows: Option<usize>,
-    /// How many requests may be in flight at once across all connections.
+    /// How many requests may be admitted at once, **across the whole node**.
     ///
-    /// Unset means unbounded, which is what shipped: a caller could open as
-    /// many concurrent requests as they had sockets.
+    /// It was per connection, which made the name a lie: it became tonic's
+    /// `concurrency_limit_per_connection`, so a caller who opened a second
+    /// socket got a second allowance and the setting bounded politeness rather
+    /// than load. It is now `tower::limit::GlobalConcurrencyLimitLayer`, one
+    /// semaphore for the process, layered outside the per-connection stack.
+    ///
+    /// **What it bounds is admission, not streaming.** A permit is released
+    /// when the response future resolves, and for a server-streaming RPC that
+    /// is before any row is read. So this caps how many requests are being
+    /// authorized, planned and started at once — the expensive part, and the
+    /// part a flood of cheap-looking requests turns into work — and not how
+    /// many response streams are open. A bound on open streams is a different
+    /// mechanism and does not exist.
+    ///
+    /// Unset means unbounded, which is what shipped.
     #[serde(default)]
     pub(crate) max_concurrent_requests: Option<usize>,
-    /// How long one request may run before it is cancelled.
+    /// How many response **streams** may be open at once, across the node.
+    ///
+    /// The other half of the setting above, and a separate one because the
+    /// two bound different things. `max_concurrent_requests` releases its
+    /// permit when the handler returns; every read here is server-streaming,
+    /// so that is before a single row has been sent.
+    /// `ledger/2026-09-29-ten-streams-under-a-limit-of-one.md` measured the
+    /// consequence: ten concurrent reads, all served, against a node
+    /// configured for one. This one's permit rides on the response body and
+    /// comes back when the stream ends or the caller goes away.
+    ///
+    /// **A caller over it is refused, not queued.** `RESOURCE_EXHAUSTED`,
+    /// immediately. A stream is held for as long as its reader likes, so a
+    /// queue in front of one has no deadline, and a client reading `n + 1`
+    /// streams round-robin would wait on a permit only it could release.
+    ///
+    /// Node-wide, one semaphore for the process. Tonic offers
+    /// `max_concurrent_streams`, which is HTTP/2's per-connection setting and
+    /// is the exact scope mistake `max_concurrent_requests` was just fixed
+    /// for; a caller opening a second socket would get a second allowance.
+    ///
+    /// `0` is refused at startup — it would refuse every read — and unset
+    /// means unbounded, which is what shipped. It bounds the *count* of open
+    /// streams and says nothing about how long one may be held or how many
+    /// rows it may carry.
+    #[serde(default)]
+    pub(crate) max_open_streams: Option<usize>,
+    /// How long one request may **wait** before it is cancelled — unreliably.
+    ///
+    /// Not a latency bound, and not a safe thing to set small. It becomes
+    /// tonic's `Server::timeout`, whose `GrpcTimeout` future polls the handler
+    /// *before* it polls the sleep. So a handler that finishes on its first
+    /// poll cannot be cancelled however low this is — and one that pends once,
+    /// on a read that is not ready yet, meets an already-elapsed sleep on the
+    /// next poll and is. Whether a given fast request pends is the scheduler's
+    /// business, not this setting's.
+    ///
+    /// Measured both ways, which is the point: `request_timeout = "0ms"` left
+    /// a two-row in-memory query answered five runs out of five on one
+    /// machine, and cancelled the same query on the first try on a CI runner.
+    /// A value below what a request spends waiting is therefore a coin flip,
+    /// not a ceiling. Set it generously or not at all; a small value buys no
+    /// bound and introduces a flake.
+    ///
+    /// `crates/slate-serverd/tests/ceilings.rs` asserts only the deterministic
+    /// half — a generous timeout serves, and so does no timeout — and explains
+    /// at length why the zero case is left unasserted. The smallest unit the
+    /// parser accepts is `ms`.
     #[serde(default)]
     pub(crate) request_timeout: Option<String>,
     /// Distinct `GROUP BY` keys one request may hold.
@@ -446,6 +506,16 @@ pub(crate) struct LimitSettings {
     /// the other.
     #[serde(default)]
     pub(crate) max_window_rows: Option<usize>,
+    /// Values one `IN` list may carry.
+    ///
+    /// Unlike the four above, this bounds the *request* rather than what
+    /// answering it costs the node, and it is the one ceiling that refuses
+    /// before a row is read. A caller matching more keys than this is
+    /// describing a join; raising it is reasonable for a node whose callers
+    /// really do send long key lists, and the error names the number so they
+    /// can ask.
+    #[serde(default)]
+    pub(crate) max_in_values: Option<usize>,
 }
 
 /// What the planner is told about the data.

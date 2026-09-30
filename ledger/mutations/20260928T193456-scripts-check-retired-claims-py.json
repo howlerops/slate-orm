@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-28T19:34:56+00:00",
+  "file": "scripts/check_retired_claims.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_retired_claims.py"
+  ],
+  "commit": "0cd6046",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the .github tree is dropped from ROOTS again",
+      "old": "ROOTS = (\".github\", \"crates\"",
+      "new": "ROOTS = (\"crates\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the claim is found in a .yml workflow comment: wanted 1 problems, got 0",
+        "the claim is found in a .yaml workflow comment: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the .yml suffix is dropped again",
+      "old": "    \".yml\",\n    \".yaml\",",
+      "new": "    \".yaml\",",
+      "verdict": "caught",
+      "caught_by": [
+        "the claim is found in a .yml workflow comment: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the .yaml suffix is dropped again",
+      "old": "    \".yaml\",\n}",
+      "new": "}",
+      "verdict": "caught",
+      "caught_by": [
+        "the claim is found in a .yaml workflow comment: wanted 1 problems, got 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

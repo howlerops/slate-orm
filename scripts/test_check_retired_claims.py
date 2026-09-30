@@ -97,6 +97,29 @@ def main() -> int:
         1,
     )
 
+    # The third tree nothing read, and the one with no reason on it. `site/`
+    # was skipped by an oversight and `ledger/` on purpose — an entry that
+    # retires a phrase has to quote it, so reading entries would report every
+    # retirement as a survival. `.github/` was neither: CI's workflow carries
+    # more prose about this repository than most of its source files, and a
+    # claim restated in a job comment is read by whoever debugs that job.
+    # Both spellings, because GitHub accepts both and a suffix nothing
+    # exercises is a suffix a mutation deleting it survives. There is no
+    # `.yaml` in this repository today, which is exactly why the fixture
+    # has to carry one.
+    for suffix in ("yml", "yaml"):
+        ok &= case(
+            f"the claim is found in a .{suffix} workflow comment",
+            {**base, f".github/workflows/ci.{suffix}": f"      # Note: {PHRASE} still.\n"},
+            1,
+        )
+
+    ok &= case(
+        "a workflow stating nothing retired passes",
+        {**base, ".github/workflows/ci.yml": "      # The suite runs in release.\n"},
+        0,
+    )
+
     # The other half of that: a page with nothing retired on it must stay
     # silent, or widening the suffix set buys a guard people switch off.
     ok &= case(

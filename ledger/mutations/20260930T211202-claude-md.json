@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-30T21:12:02+00:00",
+  "file": "CLAUDE.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "14095bf",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "one of the two job counts drifts",
+      "old": "branch** \u2014 twenty-four jobs covering",
+      "new": "branch** \u2014 twenty-three jobs covering",
+      "verdict": "caught",
+      "caught_by": [
+        "CLAUDE.md's job count is ci.yml's"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the other job-count sentence is reworded away",
+      "old": "A push starts\n  twenty-four jobs",
+      "new": "A push kicks off\n  twenty-four jobs",
+      "verdict": "caught",
+      "caught_by": [
+        "CLAUDE.md's job count is ci.yml's"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -185,6 +185,27 @@ failure in every caller that upgraded without asking for it. The cost of that
 choice is that a head node which accepts a connection and then stops answering
 blocks a caller for ever, which `tests/test_deadlines.py` demonstrates.
 
+## Configuring the transport
+
+`Client` takes a built `channel=` and uses it as given:
+
+```python
+counter = Counting()
+channel = grpc.intercept_channel(grpc.insecure_channel(address), counter)
+client = Client(address, APP, channel=channel)
+```
+
+Nothing is added to it and nothing is inspected — credentials, keepalive,
+message-size limits and interceptors are all the caller's to set, because a
+curated subset would need widening every time grpc did.
+
+**Register both interceptor interfaces if you want to see every call.** A read
+is server-streaming and a write is unary, so a `UnaryUnaryClientInterceptor`
+alone counts writes and reports zero for every query, which reads as "a read is
+free" rather than as a hole in the instrument. `tests/test_round_trips.py`
+registers both, and the Go client's own counter was found to have exactly this
+gap.
+
 ## Decimals, and the conditional update
 
 A decimal column holds a count of its own smallest unit. `Units(1250)` in a

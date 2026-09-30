@@ -1,0 +1,65 @@
+{
+  "at": "2026-09-28T21:57:26+00:00",
+  "file": "examples/explorer/run.sh",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_free_ports.py"
+  ],
+  "commit": "aaeb5e7",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the allocator draws from the ephemeral range, the original bug",
+      "old": "    candidate = random.randint(low, min(high, ephemeral_low - 1))",
+      "new": "    candidate = random.randint(low, high)",
+      "verdict": "caught",
+      "caught_by": [
+        "examples/explorer/run.sh: every port is below the floor, a floor inside the allocator's own 10100 ceiling",
+        "a floor below the allocator's bottom raises rather than allocating"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the floor is assumed rather than read from /proc",
+      "old": "        ephemeral_low = int(handle.read().split()[0])",
+      "new": "        ephemeral_low = 32768",
+      "verdict": "caught",
+      "caught_by": [
+        "examples/explorer/run.sh: every port is below the floor, a container configured low, which is why /proc is read",
+        "examples/explorer/run.sh: every port is below the floor, a floor inside the allocator's own 10100 ceiling",
+        "a floor below the allocator's bottom raises rather than allocating"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the allocator offers four ports instead of five",
+      "old": "while len(chosen) < 5:",
+      "new": "while len(chosen) < 4:",
+      "verdict": "caught",
+      "caught_by": [
+        "examples/explorer/run.sh: offers 5 distinct ports, the Linux default",
+        "examples/explorer/run.sh: offers 5 distinct ports, a container configured low, which is why /proc is read",
+        "examples/explorer/run.sh: offers 5 distinct ports, a floor inside the allocator's own 10100 ceiling",
+        "examples/explorer/run.sh: offers 5 distinct ports, /proc unreadable, so the 32768 fallback"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a duplicate port can be offered twice",
+      "old": "    if candidate in chosen:\n        continue\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "examples/explorer/run.sh: offers 5 distinct ports, a floor inside the allocator's own 10100 ceiling"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

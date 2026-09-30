@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T04:32:42+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -run 'TestRelated|Freshness|Floor' -count=1 -v"
+  ],
+  "commit": "9a2521d",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "Go: the floor is sent even by a non-monotonic session",
+      "old": "\tif !s.monotonic || s.watermark == nil {",
+      "new": "\tif s.watermark == nil {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

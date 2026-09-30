@@ -15,7 +15,7 @@ from __future__ import annotations
 import grpc
 import pytest
 
-from slate._details import ERROR_INFO_URL, check_failures_of, reason_of
+from slate._details import ERROR_INFO_URL, check_failures_of, details_of, reason_of
 from slate.errors import (
     _DETAILS_KEY,
     NotFound,
@@ -90,7 +90,7 @@ def _bytes_field(number: int, payload: bytes) -> bytes:
     return _tag(number, 2) + _varint(len(payload)) + payload
 
 
-def decoy(url: str, reason: str = "DECOY") -> bytes:
+def decoy(url: str, reason: str = "DECOY", entry: tuple[str, str] | None = None) -> bytes:
     """A well-formed `Status` whose one detail is packed under `url`.
 
     Encoded by hand, in the opposite direction from the decoder under test, so
@@ -98,8 +98,19 @@ def decoy(url: str, reason: str = "DECOY") -> bytes:
     `ErrorInfo` — field 1, a string — so a decoder that skipped the type check
     would hand back `reason` rather than `""`. That is the whole point: the
     check is what stops one message's field 1 being read as another's.
+
+    `entry` adds a `metadata` pair, field 3, so the same decoy can catch a
+    `details_of` that skips the check. Without it that decoder reads `{}` from
+    a reason-only decoy whether or not it checks the URL, and its decoy case
+    passes for the wrong reason — which is the failure the negative control
+    below exists to rule out, met here while writing it.
     """
     packed = _bytes_field(1, reason.encode())
+    if entry is not None:
+        key, value = entry
+        packed += _bytes_field(
+            3, _bytes_field(1, key.encode()) + _bytes_field(2, value.encode())
+        )
     any_message = _bytes_field(1, url.encode()) + _bytes_field(2, packed)
     return _tag(1, 0) + _varint(8) + _bytes_field(3, any_message)
 
@@ -119,6 +130,22 @@ def test_the_decoy_would_be_read_without_the_type_check() -> None:
     uses, the very same bytes come back as a token.
     """
     assert reason_of(decoy(ERROR_INFO_URL)) == "DECOY"
+
+
+def test_a_detail_of_another_type_yields_no_metadata() -> None:
+    """The same property for `details_of`, which is a second decoder.
+
+    Found by mutation: deleting the URL check in `details_of` alone left every
+    test green, because the case above exercises `reason_of` and nothing
+    carried a metadata pair under a foreign URL.
+    """
+    blob = decoy("type.googleapis.com/google.rpc.RetryInfo", entry=("limit", "9"))
+    assert details_of(blob) == {}
+
+
+def test_the_decoy_would_be_read_as_metadata_without_the_type_check() -> None:
+    """Its negative control, for the reason the one above has one."""
+    assert details_of(decoy(ERROR_INFO_URL, entry=("limit", "9"))) == {"limit": "9"}
 
 
 class _FakeCall(Exception):
@@ -226,6 +253,43 @@ CHECKS_BLOB = bytes.fromhex(
     "6b2e30120c7469746c655f6c656e6774681a150a05636865636b120c7469746c655f"
     "6c656e677468"
 )
+
+
+#: A real blob from a handler's own refusal, captured by
+#: `cargo test -p slate-server --test status -- --ignored --nocapture
+#: emit_a_relation_depth_blob`.
+#:
+#: A *flat* metadata map, unlike `CHECKS_BLOB`'s indexed one, and that is the
+#: point: a client has to read keys it was not written against.
+#: `ledger/2026-09-17-a-path-of-relationships-on-the-wire.md` recorded that a
+#: refused path reports `max_relation_depth` in prose, so a caller wanting the
+#: number matched the sentence.
+DEPTH_BLOB = bytes.fromhex(
+    "080312c301612072656c6174696f6e736869702070617468206f6620332073746570"
+    "73207761732061736b656420666f7220616e6420746865206c696d69742069732032"
+    "3b20656163682073746570206973206120726561642c20736f207468652064657074"
+    "6820697320686f77206d616e79207265616473206f6e652072657175657374207065"
+    "72666f726d732e2053686f7274656e2074686520706174682c206f72207261697365"
+    "20605b6c696d6974735d206d61785f72656c6174696f6e5f6465707468601a680a28"
+    "747970652e676f6f676c65617069732e636f6d2f676f6f676c652e7270632e457272"
+    "6f72496e666f123c0a1752454c4154494f4e5f44455054485f455843454544454412"
+    "09736c6174652d6f726d1a0a0a0561736b65641201331a0a0a056c696d6974120132"
+)
+
+
+def test_a_refusals_numbers_come_back_without_parsing_prose() -> None:
+    """The caveat's point: `limit` is a value, not a substring of a sentence."""
+    assert reason_of(DEPTH_BLOB) == "RELATION_DEPTH_EXCEEDED"
+    assert details_of(DEPTH_BLOB) == {"limit": "2", "asked": "3"}
+    # And the shaped reader says nothing about it, which is what keeps the two
+    # apart: a caller branching on `violations` must not see this as a check.
+    assert check_failures_of(DEPTH_BLOB) == []
+
+
+def test_details_of_a_blob_with_no_error_info_is_empty() -> None:
+    """Most refusals carry none, and `{}` is the answer rather than a raise."""
+    assert details_of(b"") == {}
+    assert details_of(b"not a protobuf at all") == {}
 
 
 def test_every_failing_check_comes_back_typed() -> None:

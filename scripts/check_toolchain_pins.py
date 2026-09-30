@@ -47,23 +47,60 @@ ROOT = Path(__file__).resolve().parent.parent
 #: a `go.mod` reference, is what makes `setup-go` choose `GOTOOLCHAIN=local`.
 GO_VERSION = re.compile(r'^\s*go-version:\s*["\']?([\d.]+)["\']?\s*$', re.MULTILINE)
 
-#: `go install example.com/thing/cmd/x@v1.2.3`, however it is spelled: a
-#: literal command line in a shell step, or a Python list of arguments.
+#: `go install` being run at all, however it is spelled: a literal command line
+#: in a shell step, or a Python list of arguments.
 #:
-#: Matched on the `@version` rather than on `go install`, because the pinned
-#: form is the one with a floor of its own. `go install ./...` builds this
-#: module and cannot want a Go the module does not declare.
+#: Split from `PINNED` below, and that split is the whole fix. This was one
+#: pattern requiring the `@version` on the same match as `go install` — and the
+#: one file in this repository that installs pinned Go tools does not write it
+#: that way. `clients/go/scripts/generate_proto.py` runs
+#: `subprocess.run(["go", "install", package])` with the pins in two constants
+#: fifty lines up, so the pattern never matched it, and the guard's entire
+#: roster was its own docstring's example and its own test's fixture. It ran
+#: for two days reporting `2 pinned go install target(s) in 2 file(s)` about
+#: itself. Found by mutating the real tree: deleting the `GOTOOLCHAIN` line
+#: from the real generator changed nothing here.
 GO_INSTALL = re.compile(
     r"""(?x)
-    (?: ["']go["']\s*,\s*["']install["']        # ["go", "install", PKG]
-      | \bgo\s+install\b )                      # go install PKG
-    [^\n]*?
-    ([\w.\-/]+@v?[\d][\w.\-+]*)                 # the pinned package
+    (?: ["']go["']\s*,\s*["']install["']        # ["go", "install", ...]
+      | \bgo\s+install\b )                     # go install ...
     """
 )
 
-#: What "this file has decided" looks like: the variable named at all.
-DECIDES = re.compile(r"GOTOOLCHAIN")
+#: A pinned package anywhere in the same file. Anywhere, because the pin and
+#: the invocation are routinely apart: a constant at the top, a loop at the
+#: bottom. A file with both is a file that installs a pinned Go tool, which is
+#: what the invariant is about.
+#:
+#: `go install ./...` builds this module and carries no `@version`, so it does
+#: not match and should not: it cannot want a Go the module does not declare.
+PINNED = re.compile(r"[\w.\-/]+@v?[\d][\w.\-+]*")
+
+#: This guard and its own test both carry example install lines — the pattern's
+#: documentation and its fixture. Skipping them by name is what gives the
+#: never-fires rule below something to bite on: with them in, a roster of
+#: exactly these two read as a guard doing its job, and did.
+NOT_AN_INSTALLER = (
+    "scripts/check_toolchain_pins.py",
+    "scripts/test_check_toolchain_pins.py",
+)
+
+#: What "this file has decided" looks like: the variable **assigned**, not
+#: mentioned. It was `re.compile(r"GOTOOLCHAIN")` — the name anywhere — and
+#: `generate_proto.py` explains its choice in twenty lines of comment above the
+#: assignment, so deleting the assignment left eight mentions behind and this
+#: guard green. The third time `scripts/` has met it: `check_generated_is_used.py`
+#: passed on the word "schema" appearing in 483 files, `check_renamed_column.py`
+#: passed on a declaration in an unrelated test, and now this. A bare mention
+#: counting as a use. Comments are stripped before this is applied, because the
+#: prose explaining why `GOTOOLCHAIN=auto` is right is not the setting.
+DECIDES = re.compile(r"""GOTOOLCHAIN["']?\]?\s*[:=]""")
+
+#: A whole-line comment, in every language this guard reads: Python, shell and
+#: YAML all use `#`. Not an inline one — `env = {...}  # why` is a decision
+#: with a note, and stripping from the `#` would be a parser this does not need
+#: to be.
+A_COMMENT = re.compile(r"^\s*#.*$", re.MULTILINE)
 
 #: Where a `go install` could live. Not `rglob("*")` over the workspace —
 #: `target/` and `node_modules/` carry vendored scripts that install their own
@@ -100,17 +137,68 @@ def installers(root: Path) -> dict[str, list[str]]:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        pinned = GO_INSTALL.findall(text)
+        name = relative.as_posix()
+        if name in NOT_AN_INSTALLER:
+            continue
+        if not GO_INSTALL.search(text):
+            continue
+        # Comments stripped here too: `generate_proto.py` quotes its own pins
+        # in the prose explaining them, and a message naming the same package
+        # four times, once as `...protoc-gen-go-grpc@v1.6.2`, reads as four
+        # tools rather than two.
+        pinned = PINNED.findall(A_COMMENT.sub("", text))
         if pinned:
-            found[relative.as_posix()] = pinned
+            found[name] = pinned
     return found
+
+
+def stale_skips(root: Path = ROOT) -> list[str]:
+    """Every name in `NOT_AN_INSTALLER` must still be a file carrying an example.
+
+    The skip list was checked in neither direction: it named two paths and
+    nothing asked whether they still existed or still carried the `go install`
+    the skip excuses. That is the roster rot `EXTERNAL`, `WITNESS` and `PROVES`
+    each check for and this one did not, recorded as a caveat in
+    `ledger/2026-09-29-a-guard-whose-roster-was-itself.md` and closed here.
+
+    A skip that excuses nothing is worse than no skip: it is a name in a
+    frozenset that a reader takes for a live exemption, and if the file comes
+    back carrying a *real* installer the skip hides it. The other direction
+    needs no rule — a new file with an example and no entry here is reported as
+    an installer, which is the guard asking to be told, and is what happened to
+    this file and its test when the rule was written.
+    """
+    said: list[str] = []
+    for name in NOT_AN_INSTALLER:
+        try:
+            text = (root / name).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            said.append(
+                f"NOT_AN_INSTALLER names {name}, which is not a readable file. "
+                "The skip excuses nothing; drop it, or fix the path."
+            )
+            continue
+        if not GO_INSTALL.search(text):
+            said.append(
+                f"NOT_AN_INSTALLER names {name}, which no longer carries a "
+                "`go install` example. The skip excuses nothing now, and if "
+                "the file grows a real installer it will hide it. Drop the "
+                "entry."
+            )
+    return said
 
 
 def problems(root: Path = ROOT) -> list[str]:
     """Every file that installs a pinned Go tool and leaves `GOTOOLCHAIN` to chance."""
     pinned_workflows = workflows(root)
     running = installers(root)
-    said: list[str] = []
+    # Before anything else, because `installers()` has already applied the skip
+    # list: a stale entry means the set below was computed with the wrong
+    # exclusions, so reporting an installer against it would be reporting
+    # against a tree this guard has misread.
+    said: list[str] = stale_skips(root)
+    if said:
+        return said
 
     # The never-fires halves. Either list going empty means the shape this
     # guard is about has moved, not that the tree is clean — and with no
@@ -136,12 +224,12 @@ def problems(root: Path = ROOT) -> list[str]:
 
     where = ", ".join(sorted(pinned_workflows))
     for path, packages in sorted(running.items()):
-        text = (root / path).read_text(encoding="utf-8")
+        text = A_COMMENT.sub("", (root / path).read_text(encoding="utf-8"))
         if DECIDES.search(text):
             continue
         said.append(
             f"{path} runs a pinned `go install` ({', '.join(sorted(set(packages)))}) "
-            f"and never mentions `GOTOOLCHAIN`, while {where} pins "
+            f"and never sets `GOTOOLCHAIN`, while {where} pins "
             "`go-version`.\n"
             "  `actions/setup-go` sets `GOTOOLCHAIN=local` for a pinned "
             "version, so a tool whose own floor is higher fails the job "

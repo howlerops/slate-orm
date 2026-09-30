@@ -1,0 +1,218 @@
+{
+  "at": "2026-09-29T07:49:13+00:00",
+  "file": "scripts/check_renamed_column.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_renamed_column.py"
+  ],
+  "commit": "49bde65",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "Cargo.toml drops out of MANIFESTS, so a Rust client is unclassifiable rather than missing a test",
+      "old": "MANIFESTS = (\"pyproject.toml\", \"go.mod\", \"package.json\", \"Cargo.toml\")",
+      "new": "MANIFESTS = (\"pyproject.toml\", \"go.mod\", \"package.json\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a fourth client with no test fails and names it: no 'clients/rust is a client and PROVES has no entry' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the never-fires rule fires when clients were found, not when none were",
+      "old": "    if not found:",
+      "new": "    if found:",
+      "verdict": "caught",
+      "caught_by": [
+        "three clients with a renamed-column test pass: exit 1, wanted 0",
+        "a helper defined inside a test does not end its body: exit 1, wanted 0",
+        "no clients at all fails: no 'no client directories found' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a directory with no manifest is skipped",
+      "old": "    for name in unmanifested:",
+      "new": "    for name in []:",
+      "verdict": "caught",
+      "caught_by": [
+        "a directory with no manifest fails rather than being skipped: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a client with no roster entry is not reported",
+      "old": "    for name in sorted(set(found) - set(PROVES)):",
+      "new": "    for name in sorted(set(PROVES) - set(PROVES)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a fourth client with no test fails and names it: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a roster entry for a client that is gone is not reported",
+      "old": "    for name in sorted(set(PROVES) - set(found)):",
+      "new": "    for name in sorted(set(found) - set(found)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a rostered client that is gone fails: no 'is not a client directory any more' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing test file is not reported",
+      "old": "        if not path.exists():",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a renamed-away test file fails and says the file is gone: exit 70, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "two matching tests are accepted, so the body is the first of them",
+      "old": "        if times != 1:",
+      "new": "        if times < 1:",
+      "verdict": "caught",
+      "caught_by": [
+        "a test pattern matching twice fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the declaration is looked for in the whole file, not the test's body",
+      "old": "if re.search(proof.declares, body(text, proof.test)) is None:",
+      "new": "if re.search(proof.declares, text) is None:",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration only in some other go test fails: exit 0, wanted 1",
+        "a declaration only in some other python test fails: exit 0, wanted 1",
+        "a declaration only in some other typescript test fails: exit 0, wanted 1",
+        "a declaration matched by the test's own name fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the catalog's rename is not checked",
+      "old": "        elif why := missing(*proof.renamed):",
+      "new": "        elif why := missing(proof.where, proof.test):",
+      "verdict": "caught",
+      "caught_by": [
+        "a catalog that no longer renames the column fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a body runs to the end of the file rather than to the next test",
+      "old": "    following = BOUNDARY.search(text, at.end())",
+      "new": "    following = None",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration only in some other go test fails: exit 0, wanted 1",
+        "a declaration only in some other python test fails: exit 0, wanted 1",
+        "a declaration only in some other typescript test fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a body includes the test's own declaration",
+      "old": "    return text[at.end() : following.start() if following else len(text)]",
+      "new": "    return text[at.start() : following.start() if following else len(text)]",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration matched by the test's own name fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "`test(` stops being a boundary, so a TypeScript body runs into the next test",
+      "old": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "new": "BOUNDARY = re.compile(r\"^(?:async def |def |func |it\\(|describe\\()\", re.M)",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration only in some other typescript test fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "`func ` stops being a boundary, so a Go body runs into the next test",
+      "old": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "new": "BOUNDARY = re.compile(r\"^(?:async def |def |test\\(|it\\(|describe\\()\", re.M)",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration only in some other go test fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "`def ` stops being a boundary, so a Python body runs into the next test",
+      "old": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "new": "BOUNDARY = re.compile(r\"^(?:async def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration only in some other python test fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a boundary may start anywhere on a line, not only at column zero",
+      "old": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "new": "BOUNDARY = re.compile(r\"(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "verdict": "caught",
+      "caught_by": [
+        "a helper defined inside a test does not end its body: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "re.M is dropped, so only the file's first line can hold a boundary",
+      "old": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\", re.M)",
+      "new": "BOUNDARY = re.compile(r\"^(?:async def |def |func |test\\(|it\\(|describe\\()\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a declaration only in some other go test fails: exit 0, wanted 1",
+        "a declaration only in some other python test fails: exit 0, wanted 1",
+        "a declaration only in some other typescript test fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every directory under clients/ is treated as a dotfile and skipped",
+      "old": "        if not child.is_dir() or child.name.startswith(\".\"):",
+      "new": "        if not child.is_dir() or not child.name.startswith(\".\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "three clients with a renamed-column test pass: exit 1, wanted 0",
+        "a fourth client with no test fails and names it: no 'clients/rust is a client and PROVES has no entry' in",
+        "a directory with no manifest fails rather than being skipped: no 'declares none of' in",
+        "a renamed-away test file fails and says the file is gone: no 'clients/go/slate/schema_test.go does not exist' in",
+        "a renamed test fails: no \"typescript's renamed-column test occurs 0 times\" in",
+        "a test pattern matching twice fails: no \"go's renamed-column test occurs 2 times\" in",
+        "a declaration only in some other go test fails: no 'no `\\\\{Name: \"category\", Type: slate\\\\.TypeString\\\\}` between that test and the next one' in",
+        "a declaration only in some other python test fails: no 'no `Column\\\\(\"comment\", ValueType\\\\.STR\\\\)` between that test and the next one' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

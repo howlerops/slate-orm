@@ -120,7 +120,7 @@ func TestUnitsRenderAgainstAScale(t *testing.T) {
 	// dialect.
 	for _, c := range []struct {
 		units  slate.Units
-		scale  int
+		scale  uint8
 		expect string
 	}{
 		{1250, 2, "12.50"},
@@ -134,9 +134,17 @@ func TestUnitsRenderAgainstAScale(t *testing.T) {
 		// tried to stay in int64; it does *not* distinguish -uint64(v) from
 		// uint64(-v), which Go makes identical for every input.
 		{-9223372036854775808, 2, "-92233720368547758.08"},
-		// A negative scale is a caller's mistake in a render path, and a
-		// render path is the worst place to panic. It reads as 0.
-		{1250, -1, "1250"},
+		// Scale 18 is slate_schema's MAX_SCALE, where an i64 has one digit
+		// left of the point. It is here because a caveat said Go's int64
+		// divisor overflowed at 18 and it does not: 10^18 is under i64::MAX,
+		// 19's wrap is undone by the uint64 conversion, and 20 is the first
+		// wrong answer. 20 cannot come from a column, so no row tests it.
+		{1250, 18, "0.000000000000001250"},
+		{9223372036854775807, 18, "9.223372036854775807"},
+		{-9223372036854775808, 18, "-9.223372036854775808"},
+		// No negative-scale row, and that is the point: `scale` is a uint8, so
+		// one does not compile. This used to read as 0 — see the type's own
+		// comment for why that was worse than a refusal.
 	} {
 		if got := c.units.StringWithScale(c.scale); got != c.expect {
 			t.Errorf("Units(%d).StringWithScale(%d) = %q, want %q",

@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-30T15:29:08+00:00",
+  "file": "scripts/check_draws.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_draws.py"
+  ],
+  "commit": "db5a316",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the reproduction check never fires",
+      "old": "            if again != indices:",
+      "new": "            if again is None:",
+      "verdict": "caught",
+      "caught_by": [
+        "a record whose indices did not come out of the frame is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a stamp may name a draw that did not draw it",
+      "old": "        elif k not in record.get(\"keys\", []):",
+      "new": "        elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a stamp against a draw that did not draw the row is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the recovery hatch never closes",
+      "old": "            if str(record.get(\"drawn\", \"\")) > RECOVERY_CLOSED:",
+      "new": "            if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a recovered record drawn after the hatch closed is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

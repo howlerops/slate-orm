@@ -754,26 +754,70 @@ pub fn having(
     Ok(out)
 }
 
-/// A group predicate from both connectives: the ANDed terms and the ORed ones.
+/// One bracketed `HAVING`, as an `Expr` over the group.
 ///
-/// One function rather than two call sites composing `having` twice, because
-/// every consumer wants the same composition — `(all of these) AND (any of
-/// those)` — and the three that exist would each have written it out.
-///
-/// The parser produces one list or the other and never both: a bare mixture
-/// is refused, and a `HAVING` has no bracketed form to land anywhere else —
-/// parentheses reached the `WHERE` first. The composition is written for both
-/// anyway, so that widening the parser later cannot change what an existing
-/// spec means; that is the promise `QuerySpec::predicate` was able to keep
-/// when the `WHERE` did widen.
-pub fn group_predicate(
-    all: &[FilterSpec],
-    any: &[FilterSpec],
+/// The leaf goes back through [`having`] with a one-element slice, so a
+/// bracketed condition and a flat one are converted by the same code. A second
+/// leaf converter is how the two paths come to disagree about what `matches`
+/// means — the argument `group_predicate` already makes for its ORed terms.
+fn group_tree(
+    tree: &PredicateSpec,
     keys: &[Ordinal],
     aggregates: &[Aggregate],
     inputs: &[&TableDef],
 ) -> Result<Expr, String> {
-    let conjunction = having(all, keys, aggregates, inputs)?;
+    Ok(match tree {
+        PredicateSpec::Of(spec) => having(std::slice::from_ref(spec), keys, aggregates, inputs)?,
+        PredicateSpec::All(parts) => {
+            let mut out = Expr::True;
+            for part in parts {
+                let expr = group_tree(part, keys, aggregates, inputs)?;
+                out = match out {
+                    Expr::True => expr,
+                    existing => existing.and(expr),
+                };
+            }
+            out
+        }
+        PredicateSpec::Any(parts) => {
+            let mut out = Vec::with_capacity(parts.len());
+            for part in parts {
+                out.push(group_tree(part, keys, aggregates, inputs)?);
+            }
+            Expr::Or(out)
+        }
+    })
+}
+
+/// A group predicate from all three shapes: the ANDed terms, the ORed ones,
+/// and the bracketed tree that is neither.
+///
+/// One function rather than several call sites composing `having` themselves,
+/// because every consumer wants the same composition — `(all of these) AND
+/// (any of those) AND (the tree)` — and the three that exist would each have
+/// written it out.
+///
+/// The parser populates exactly one of the three, which
+/// `a_flat_having_never_lands_in_the_nested_field` asserts. Composing all
+/// three anyway is what let the parser widen without changing what any
+/// existing spec means — the promise this comment used to make about a
+/// widening that had not happened yet, and that `nested` is.
+pub fn group_predicate(
+    all: &[FilterSpec],
+    any: &[FilterSpec],
+    nested: Option<&PredicateSpec>,
+    keys: &[Ordinal],
+    aggregates: &[Aggregate],
+    inputs: &[&TableDef],
+) -> Result<Expr, String> {
+    let mut conjunction = having(all, keys, aggregates, inputs)?;
+    if let Some(tree) = nested {
+        let expr = group_tree(tree, keys, aggregates, inputs)?;
+        conjunction = match conjunction {
+            Expr::True => expr,
+            existing => existing.and(expr),
+        };
+    }
     if any.is_empty() {
         return Ok(conjunction);
     }

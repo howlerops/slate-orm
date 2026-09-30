@@ -200,9 +200,29 @@ slate_request_late_failures_total{method="/slate.v1.Records/Query"} 1
 slate_request_head_seconds_bucket{method="/slate.v1.Records/Query",le="0.001023"} 119
 slate_request_head_seconds_bucket{method="/slate.v1.Records/Query",le="+Inf"} 128
 slate_request_head_seconds_sum{method="/slate.v1.Records/Query"} 0.184320
-slate_request_head_seconds_count{method="/slate.v1.Records/Query"} 128</code></pre>
+slate_request_head_seconds_count{method="/slate.v1.Records/Query"} 128
+slate_response_bytes_total{method="/slate.v1.Records/Query"} 41984
+slate_response_frames_total{method="/slate.v1.Records/Query"} 128</code></pre>
 
     <ul>
+      <li>
+        <strong>The duration is to the head; the size is the whole body.</strong>
+        Those are different questions and only one of them is spoiled by a slow
+        consumer. A client that reads its rows slowly makes a response take
+        longer — which is why timing to the last row would report the caller's
+        appetite as the server's latency — but it does not make the response
+        larger. So <code>slate_response_bytes_total</code> covers every frame
+        and <code>slate_request_head_seconds</code> stops at the head.
+      </li>
+      <li>
+        <code>slate_response_bytes_total</code> is the <em>protobuf payload</em>:
+        not the HTTP/2 framing, not the headers, not the trailers. That is the
+        same unit each client's own interceptor weighs on the way out, which is
+        what makes a request and a response comparable. A frame is a gRPC
+        message rather than a row — a streamed read batches rows at
+        <code>rows_per_message</code> — so bytes divided by frames is the mean
+        message, which is the number that knob moves.
+      </li>
       <li>
         A <strong>histogram</strong>, not the three quantiles the summary line
         prints, and that is the whole point. A Prometheus summary's quantiles

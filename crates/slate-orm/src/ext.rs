@@ -7,6 +7,7 @@
 //! the kernel directly.
 
 use crate::error::{OrmError, Result};
+use crate::grouped::Grouped;
 use crate::record::Record;
 use async_trait::async_trait;
 use slate_kernel::{
@@ -321,6 +322,27 @@ pub trait Records {
         aggregates: &[Aggregate],
     ) -> Result<Vec<Group>>;
 
+    /// [`Records::group_records`], with each group carrying the request it
+    /// answers so the aggregates are read by name rather than by position.
+    ///
+    /// `group_records` hands back `Vec<Value>` in the order requested, and
+    /// the only thing tying `values[1]` to `Sum(hours_logged)` is that the
+    /// same list was passed a few lines earlier. This returns [`Grouped`],
+    /// whose `get` takes the aggregate itself — see that type's module docs
+    /// for why it is a lookup rather than a generated tuple.
+    ///
+    /// # Errors
+    /// Anything [`Records::group_records`] raises, plus
+    /// [`OrmError::Grouping`] if a column or an aggregate appears twice,
+    /// which would make a lookup ambiguous.
+    async fn grouped_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Grouped>>;
+
     /// The plan a query would run under, without running it.
     fn explain_records<R: Record>(
         &self,
@@ -633,6 +655,30 @@ impl Records for RecordTransaction<'_> {
         Ok(self
             .group_by(context, R::table(), query, group, aggregates)
             .await?)
+    }
+
+    async fn grouped_records<R: Record>(
+        &self,
+        context: &SecurityContext,
+        query: &Query,
+        group: &[Ordinal],
+        aggregates: &[Aggregate],
+    ) -> Result<Vec<Grouped>> {
+        // The duplicate check runs before the read rather than after it: a
+        // request that cannot be read back is one nobody should pay for.
+        Grouped::new(
+            Group {
+                key: vec![Value::Null; group.len()],
+                values: vec![Value::Null; aggregates.len()],
+            },
+            group,
+            aggregates,
+        )?;
+        self.group_records::<R>(context, query, group, aggregates)
+            .await?
+            .into_iter()
+            .map(|one| Grouped::new(one, group, aggregates))
+            .collect()
     }
 
     fn explain_records<R: Record>(

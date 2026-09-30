@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T08:37:05+00:00",
+  "file": "scripts/check_cost_prose.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_guard_scope.py"
+  ],
+  "commit": "b91b411",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a guard scope claim understates the trees it reads",
+      "old": "**It reads `crates/`, `docs/` and `site/`**, plus the Markdown named in",
+      "new": "**It reads `crates/` and `docs/`**, plus the Markdown named in",
+      "verdict": "caught",
+      "caught_by": [
+        "check_guard_scope: scripts/check_cost_prose.py's docstring lists the trees it reads and `site/` is not among them, while the file builds a path into it."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

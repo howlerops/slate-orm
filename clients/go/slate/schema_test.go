@@ -174,6 +174,45 @@ func TestTheScaleAndTheElementTypeArePinnedToo(t *testing.T) {
 	}
 }
 
+// The five types neither pinned table carries.
+//
+// `docs` is u64/str/i64 and `shelves` is u64/array/decimal, so between them
+// this port could misspell `bool`, `bytes`, `f64`, `uuid` or `vector` in its
+// hash and both tests above would pass. That is what
+// `ledger/2026-09-20-an-array-on-the-wire-and-in-three-clients.md` recorded as
+// its residual: two tables are pinned, not the type surface, and a port
+// getting one of those five wrong is caught only by a live suite that happens
+// to write such a column.
+//
+// One table with all five rather than five tables, because the fingerprint
+// hashes each column's type name in turn: changing any one of them moves the
+// number, which was checked before this constant was written down rather than
+// assumed — see the ledger entry for the five values it moves to.
+func TestTheRemainingTypesArePinnedToo(t *testing.T) {
+	// readings {id u64, ok bool, raw bytes, weight f64, tag uuid, point vector},
+	// primary key (id).
+	//
+	//	>>> from slate.schema import fingerprint_of
+	//	>>> hex(fingerprint_of(READINGS))
+	//	'0x9eb9cc433c353eb1'
+	const canonical uint64 = 0x9eb9_cc43_3c35_3eb1
+	readings := slate.TableDef{
+		Name: "readings",
+		Columns: []slate.ColumnDef{
+			{Name: "id", Type: slate.TypeUint},
+			{Name: "ok", Type: slate.TypeBool},
+			{Name: "raw", Type: slate.TypeBytes},
+			{Name: "weight", Type: slate.TypeFloat},
+			{Name: "tag", Type: slate.TypeUUID},
+			{Name: "point", Type: slate.TypeVector},
+		},
+		PrimaryKey: []string{"id"},
+	}
+	if got := readings.Fingerprint(); got != canonical {
+		t.Errorf("fingerprint = %#016x, the canonical form is %#016x", got, canonical)
+	}
+}
+
 // A key naming a column the declaration does not have must not collide with a
 // correct declaration whose key is the first column.
 //
@@ -329,7 +368,7 @@ actions = ["everything"]
 //
 // Pinned against the Python client's output, as the DOCS value above is.
 func TestADecimalsScaleIsPartOfTheFingerprint(t *testing.T) {
-	priced := func(scale int) slate.TableDef {
+	priced := func(scale uint8) slate.TableDef {
 		return slate.TableDef{
 			Name: "prices",
 			Columns: []slate.ColumnDef{

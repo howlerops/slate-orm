@@ -73,20 +73,33 @@ var (
 // no Rust installed at all. A path that is set and does not exist is a hard
 // error — falling back to `cargo` there would quietly test a *different*
 // binary from the one the caller named.
+// prebuilt resolves the `SLATE_SERVERD` branch of binary: the path, or why
+// it must not be used.
+//
+// Split out of binary so that it can be *driven*. binary resolves inside a
+// sync.Once shared by the whole test binary, so a test that called it with a
+// stale path would poison the suite's one build; and until this was its own
+// function, nothing anywhere executed the refusal — `scripts/test_prebuilt.py`
+// could see that this file mentions one and no more than that, which it
+// recorded as a caveat of its own. A harness that stats the binary and forgets
+// to refuse a stale one is the failure that cost a `slate-server` mutation its
+// finding on 2026-09-30, and it passes a roster built on grep.
+func prebuilt(named string) (string, error) {
+	info, err := os.Stat(named)
+	if err != nil {
+		return "", fmt.Errorf("SLATE_SERVERD=%s: %w", named, err)
+	}
+	if err := refuseIfStale(named, info); err != nil {
+		return "", err
+	}
+	return named, nil
+}
+
 func binary(t *testing.T) string {
 	t.Helper()
 	buildOnce.Do(func() {
 		if named := os.Getenv("SLATE_SERVERD"); named != "" {
-			info, err := os.Stat(named)
-			if err != nil {
-				buildErr = fmt.Errorf("SLATE_SERVERD=%s: %w", named, err)
-				return
-			}
-			if err := refuseIfStale(named, info); err != nil {
-				buildErr = err
-				return
-			}
-			binaryPath = named
+			binaryPath, buildErr = prebuilt(named)
 			return
 		}
 		root, err := repoRoot()

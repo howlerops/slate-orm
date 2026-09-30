@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-28T17:54:52+00:00",
+  "file": "crates/slate-sql/src/lower.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a bracketed AND lowers as an OR",
+      "old": "                let expr = group_tree(part, keys, aggregates, inputs)?;\n                out = match out {\n                    Expr::True => expr,\n                    existing => existing.and(expr),\n                };",
+      "new": "                let expr = group_tree(part, keys, aggregates, inputs)?;\n                out = match out {\n                    Expr::True => expr,\n                    existing => Expr::Or(vec![existing, expr]),\n                };",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_in_a_having_is_anded_with_what_follows_it",
+        "the_other_having_nesting_works_too"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

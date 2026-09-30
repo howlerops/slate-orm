@@ -12,8 +12,8 @@ down as a gap rather than closing it. Closing it is one loop.
 
 WHERE IT LOOKS
 
-Source — `.rs`, `.py`, `.go`, `.ts` — **and prose, under `docs/` and
-`ledger/`**. `node_modules`, `dist`, `target` and other vendored or generated
+Source — eleven suffixes, listed below, from `.rs` to `.yml` to `.html` —
+**and prose, under `docs/` and `ledger/`**. `node_modules`, `dist`, `target` and other vendored or generated
 trees are skipped. Measured before that list was written: `playwright-core`'s
 type definitions alone cite `docs/user_data_dir.md` and
 `docs/chromium_browser_vs_google_chrome.md`, neither of which is ours and
@@ -71,7 +71,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 #: Where a citation counts, in code.
-SOURCE_SUFFIXES = (".rs", ".py", ".go", ".ts")
+#:
+#: The last six were added after
+#: `ledger/2026-09-26-the-citation-nobody-could-follow.md` recorded their
+#: absence as its residual: four guards between them read source and prose, and
+#: an entry named in CI's own workflow, in a `head.toml`, on a docs page or in
+#: a shell script was read by none. Every one of those is a place this
+#: repository cites an entry from today — `.github/workflows/ci.yml` names
+#: three, `examples/explorer/head.toml` names two, `site/docs/index.html`
+#: names two, and `scripts/check.sh` names one.
+#:
+#: Widening found no broken citation in any of them, which is the honest
+#: result and not the point: the hole was that a broken one there would have
+#: been invisible. It did find fourteen in `.githooks/test-pre-commit.sh`,
+#: which `git init`s a scratch repository and writes entries into it — a
+#: `FIXTURES` row, below, and the first one the suffix list made reachable.
+SOURCE_SUFFIXES = (
+    ".rs",
+    ".py",
+    ".go",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".sh",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".html",
+)
 
 #: The prose trees, read as sources rather than only as targets.
 PROSE_TREES = ("docs", "ledger")
@@ -111,6 +138,20 @@ FIXTURES: dict[str, str] = {
     "scripts/test_check_cited_docs.py": (
         "writes temporary trees containing invented `docs/…` paths, for the same "
         "reason the cited-tests guard does"
+    ),
+    ".githooks/test-pre-commit.sh": (
+        "`git init`s a scratch repository and writes `ledger/2026-01-01-a.md`, "
+        "`ledger/2026-01-02-b.md` and `ledger/notes.md` into it to drive the "
+        "pre-commit hook; the third is deliberately not a dated entry, because "
+        "the case it drives is the hook refusing one. The suffix widening above "
+        "is what made this file visible, and all fourteen of its strings are "
+        "that tree rather than this one"
+    ),
+    "scripts/test_check_draws.py": (
+        "writes temporary ledgers containing `ledger/2026-01-01-e.md` and runs "
+        "the draw checker over them, including a case citing "
+        "`ledger/not-there.md` — which exists to prove that checker refuses a "
+        "recovered draw whose evidence is not a file, so the dead one is the point"
     ),
     "scripts/test_check_caveat_citations.py": (
         "writes temporary `docs/caveat-status.json` files whose verdicts cite "
@@ -192,6 +233,15 @@ NOT_A_FILE: dict[tuple[str, str], str] = {
         "ledger/2026-09-27-the-other-exemption-roster-was-unchecked.md",
         "ledger/e.md",
     ): "the second path in the same quoted reason",
+    (
+        "ledger/2026-09-28-the-eighth-invented-citation-had-somewhere-to-hide.md",
+        "docs/user_data_dir.md",
+    ): (
+        "`playwright-core`'s own citation again, quoted by the entry that "
+        "widened the suffix list as the measurement for why a suffix list is "
+        "kept rather than dropped. Second row for the same string, in a second "
+        "entry, which is the roster working as keyed"
+    ),
     ("ledger/README.md", "ledger/YYYY-MM-DD-slug.md"): (
         "the filename shape a new entry takes, which is a pattern rather than "
         "a file"

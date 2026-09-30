@@ -3,8 +3,12 @@
 #
 # # Why this exists
 #
-# `ci.yml` is seventeen jobs and the static checks in it are spread across six
-# of them, in four languages, from five working directories. A session that runs
+# `ci.yml` is twenty-four jobs and the static checks in it are spread across
+# eleven of them, in four languages, from five working directories. Both
+# numbers said something else — seventeen and six — until
+# `scripts/test_check_sh.py` was taught to read them, which is the third time
+# a count in this repository's prose went stale beside a thing that grows.
+# A session that runs
 # "the lint" runs one of them. Three commits in one afternoon went red on a
 # check that existed, was cheap, and was run from the wrong directory or not at
 # all:
@@ -88,11 +92,15 @@ python-rest-ruff|.|ruff check .
 codegen-tests|.|python3 scripts/test_codegen.py
 python-decoders|.|python3 -m pytest examples/explorer/backends/python/adapter -q
 check-sh-guard|.|python3 scripts/test_check_sh.py
+versions|.|python3 scripts/check_versions.py
+versions-guard|.|python3 scripts/test_check_versions.py
 mutate-harness|.|python3 scripts/test_mutate.py
 cited-tests|.|python3 scripts/check_cited_tests.py
 cited-tests-guard|.|python3 scripts/test_check_cited_tests.py
 cited-docs|.|python3 scripts/check_cited_docs.py
 cited-docs-guard|.|python3 scripts/test_check_cited_docs.py
+cited-files|.|python3 scripts/check_cited_files.py
+cited-files-guard|.|python3 scripts/test_check_cited_files.py
 site-claims|.|python3 scripts/check_site_claims.py
 site-claims-guard|.|python3 scripts/test_check_site_claims.py
 site-css|.|python3 scripts/check_site_css.py
@@ -103,6 +111,9 @@ caveat-citations|.|python3 scripts/check_caveat_citations.py
 caveat-citations-guard|.|python3 scripts/test_check_caveat_citations.py
 closed-caveats|.|python3 scripts/check_closed_caveats.py
 closed-caveats-guard|.|python3 scripts/test_check_closed_caveats.py
+later-entry-signal|.|python3 scripts/test_read_deliberate.py
+draws|.|python3 scripts/check_draws.py
+draws-guard|.|python3 scripts/test_check_draws.py
 none-last|.|python3 scripts/check_none_last.py
 none-last-guard|.|python3 scripts/test_check_none_last.py
 guard-scope|.|python3 scripts/check_guard_scope.py
@@ -115,8 +126,12 @@ conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py
 demo-surface|.|python3 scripts/check_demo_surface.py
 demo-surface-guard|.|python3 scripts/test_check_demo_surface.py
 example-runner-guard|.|python3 scripts/test_run_examples.py
+free-ports-guard|.|python3 scripts/test_free_ports.py
 example-roster|.|python3 scripts/check_examples_roster.py
 example-roster-guard|.|python3 scripts/test_check_examples_roster.py
+prebuilt-guard|.|python3 scripts/test_prebuilt.py
+outside-premises|.|python3 scripts/check_outside_premises.py
+outside-premises-guard|.|python3 scripts/test_check_outside_premises.py
 toolchain-pins|.|python3 scripts/check_toolchain_pins.py
 toolchain-pins-guard|.|python3 scripts/test_check_toolchain_pins.py
 cost-prose|.|python3 scripts/check_cost_prose.py
@@ -138,6 +153,17 @@ proto-copies|.|python3 scripts/check_proto_copies.py
 proto-copies-guard|.|python3 scripts/test_check_proto_copies.py
 client-identity|.|python3 scripts/check_client_identity.py
 client-identity-guard|.|python3 scripts/test_check_client_identity.py
+transport-door|.|python3 scripts/check_transport_door.py
+transport-door-guard|.|python3 scripts/test_check_transport_door.py
+wasm-runtime|.|python3 scripts/check_wasm_runtime.py
+wasm-runtime-guard|.|python3 scripts/test_check_wasm_runtime.py
+generated-is-used|.|python3 scripts/check_generated_is_used.py
+generated-is-used-guard|.|python3 scripts/test_check_generated_is_used.py
+renamed-column|.|python3 scripts/check_renamed_column.py
+renamed-column-guard|.|python3 scripts/test_check_renamed_column.py
+mutate-guard|.|python3 scripts/test_mutate_guard.py
+mutations-roster|.|python3 scripts/check_mutations_roster.py
+mutations-roster-guard|.|python3 scripts/test_check_mutations_roster.py
 go-client-fmt|clients/go|gofmt -l .
 go-client-vet|clients/go|go vet ./...
 go-adapter-fmt|examples/explorer/backends/go|gofmt -l .

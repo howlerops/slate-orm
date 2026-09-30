@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-28T19:19:41+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -count=1"
+  ],
+  "commit": "3ef180e",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "JoinStream.Row advances again, as it used to",
+      "old": "func (j *JoinStream) Row() [][]Value {\n\tif j.at >= len(j.batch) {\n\t\treturn nil\n\t}\n\treturn j.batch[j.at]\n}",
+      "new": "func (j *JoinStream) Row() [][]Value {\n\tif j.at >= len(j.batch) {\n\t\treturn nil\n\t}\n\trow := j.batch[j.at]\n\tj.at++\n\treturn row\n}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestAnInnerJoinKeepsOnlyMatchedRows",
+        "TestALeftJoinKeepsTheUnmatchedLeftSide",
+        "TestAJoinLimitApplies",
+        "TestTheFourJoinTypesDiffer",
+        "TestAChainsComputedValueReadsEveryInput",
+        "TestPagingAJoinReproducesTheWholeJoin",
+        "TestAJoinsComputedValueReadsBothSides",
+        "TestBothKindsOfComputedValueComeBackOnAJoin"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "RowStream.Row advances again, as it used to",
+      "old": "func (r *RowStream) Row() []Value {\n\tif r.at >= len(r.batch) {\n\t\treturn nil\n\t}\n\treturn r.batch[r.at]\n}",
+      "new": "func (r *RowStream) Row() []Value {\n\tif r.at >= len(r.batch) {\n\t\treturn nil\n\t}\n\trow := r.batch[r.at]\n\tr.at++\n\treturn row\n}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestIndependentBatchAppliesEveryOperation",
+        "TestIndependentBatchCarriesOnPastAFailure",
+        "TestAtomicBatchReportsNoPerOperationOutcomes",
+        "TestBatchCarriesEveryKindOfWrite",
+        "TestQueryFiltersAndOrders",
+        "TestQueryLimitAndProjection",
+        "TestAClientSendsADisjunctionInAFilter",
+        "TestOrWithNoPartsIsFalseAndAdmitsNothing"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "Next never primes, so it never advances",
+      "old": "\tj.primed = true\n\treturn true\n}",
+      "new": "\treturn true\n}",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

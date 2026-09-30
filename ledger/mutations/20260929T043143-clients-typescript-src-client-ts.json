@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-29T04:31:43+00:00",
+  "file": "clients/typescript/src/client.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsx --test test/related.test.ts"
+  ],
+  "commit": "9a2521d",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the freshness floor is never sent",
+      "old": "    if (!this.#monotonic || this.#watermark === undefined) return undefined;",
+      "new": "    if (true) return undefined;",
+      "verdict": "caught",
+      "caught_by": [
+        "a monotonic session sends a freshness floor and a loose one does not"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the floor is sent even by a non-monotonic session",
+      "old": "    if (!this.#monotonic || this.#watermark === undefined) return undefined;",
+      "new": "    if (this.#watermark === undefined) return undefined;",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,46 @@
+{
+  "at": "2026-09-29T16:43:03+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "5b7964b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an entry crediting itself counts as a pointer elsewhere",
+      "old": "            credited = set(CREDITED.findall(unit)) - {path.name}",
+      "new": "            credited = set(CREDITED.findall(unit))",
+      "verdict": "caught",
+      "caught_by": [
+        "a strike naming only its own entry credits nobody: problems: wanted 0, got 1 ['2026-09-19-an-entry.md: `It does not do the first thing.` is closed, and the strike beside it credits 2026-09-19-an-entry.md \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the by must name every credited entry, not any of them",
+      "old": "            if not any(entry in says for entry in wanted):",
+      "new": "            if not all(entry in says for entry in wanted):",
+      "verdict": "caught",
+      "caught_by": [
+        "a `by` naming one of two credited entries is enough: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is closed, and the strike beside it credits 2026-09-19-the-entry-that-started-it.md, 2026-09-20-the-entry-that-closed-it.md \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the credit pattern stops requiring a date, so any .md counts",
+      "old": "CREDITED = re.compile(r\"(?:ledger/)?(\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+\\.md)\")",
+      "new": "CREDITED = re.compile(r\"(?:ledger/)?([a-z0-9-]+\\.md)\")",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

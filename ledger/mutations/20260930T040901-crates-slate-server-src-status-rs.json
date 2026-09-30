@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-30T04:09:01+00:00",
+  "file": "crates/slate-server/src/status.rs",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "3048ca4",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the server sends an ErrorInfo with no metadata, so all three agree on nothing",
+      "old": "    rpc::ErrorInfo {\n        reason: reason_for(error).to_owned(),\n        domain: DOMAIN.to_owned(),\n        metadata,\n    }\n}",
+      "new": "    let _ = metadata;\n    rpc::ErrorInfo {\n        reason: reason_for(error).to_owned(),\n        domain: DOMAIN.to_owned(),\n        metadata: HashMap::new(),\n    }\n}",
+      "verdict": "caught",
+      "caught_by": [
+        "\"a write the schema's CHECK refuses\" agreed on an empty `error.details`, so the three SDKs agree about nothing. Either the server stopped sending `ErrorInfo.metadata` or all three adapters dropped it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

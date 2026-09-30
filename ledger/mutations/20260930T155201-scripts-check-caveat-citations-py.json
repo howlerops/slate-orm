@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-30T15:52:01+00:00",
+  "file": "scripts/check_caveat_citations.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_caveat_citations.py"
+  ],
+  "commit": "0e0e976",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "GONE excuses a path keyed to any entry",
+      "old": "            at = (verdict.get(\"entry\", \"?\"), cited)\n            if at in GONE:",
+      "new": "            at = (verdict.get(\"entry\", \"?\"), cited)\n            if cited in {c for _, c in GONE}:",
+      "verdict": "caught",
+      "caught_by": [
+        "a GONE entry keyed to another entry does not excuse this one"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a GONE row whose path came back is not refused",
+      "old": "        if resolves(cited, hidden, root)\n    ]",
+      "new": "        if False\n    ]",
+      "verdict": "caught",
+      "caught_by": [
+        "a GONE entry whose path is back in the tree is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unused GONE row is not refused",
+      "old": "    unused = [\n        f\"{entry}: {cited}\" for (entry, cited) in sorted(set(GONE) - excused)\n    ]",
+      "new": "    unused: list[str] = []",
+      "verdict": "caught",
+      "caught_by": [
+        "a GONE entry nothing cites any more is refused",
+        "a GONE entry keyed to another entry does not excuse this one"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

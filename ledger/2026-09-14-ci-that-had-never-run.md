@@ -168,6 +168,8 @@ made a tagged release publish nothing.
 
 ## What this does not do
 
+~~Pages needs **Settings → Pages → Source: GitHub Actions** turned on by hand once.~~ **Closed** — the decision this left to whoever merges was made the same afternoon, at 14:06:41 on 2026-09-14, between two runs of the Pages workflow on the same commit. See `ledger/2026-09-30-a-premise-nobody-here-can-falsify.md`.
+
 Pages needs **Settings → Pages → Source: GitHub Actions** turned on by hand
 once; without it the deploy step fails with a 404. Nothing deploys from a
 feature branch, so that is a decision for whoever merges rather than a thing

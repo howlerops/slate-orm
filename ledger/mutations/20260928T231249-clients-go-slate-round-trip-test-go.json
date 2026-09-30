@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-28T23:12:49+00:00",
+  "file": "clients/go/slate/round_trip_test.go",
+  "dialect": "go",
+  "command": [
+    "bash",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -count=1"
+  ],
+  "commit": "3df314d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the paging loop reads one page fewer than it claims",
+      "old": "for p := 0; p < batchRoundTripPages; p++ {",
+      "new": "for p := 0; p < batchRoundTripPages-1; p++ {",
+      "verdict": "caught",
+      "caught_by": [
+        "TestPagingByCursorIsOneRequestPerPage"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the control writes one row instead of twenty",
+      "old": "for id := uint64(1); id <= batchRoundTripRows; id++ {",
+      "new": "for id := uint64(1); id <= 1; id++ {",
+      "verdict": "caught",
+      "caught_by": [
+        "TestABatchIsOneRequestAndSinglesAreMany"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

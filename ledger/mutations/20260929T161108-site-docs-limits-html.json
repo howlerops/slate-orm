@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T16:11:08+00:00",
+  "file": "site/docs/limits.html",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_cited_files.py"
+  ],
+  "commit": "95ae30b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a site page names a design note that is not there",
+      "old": "<code>docs/correctness.md</code> has a section called",
+      "new": "<code>docs/correctnes.md</code> has a section called",
+      "verdict": "caught",
+      "caught_by": [
+        "check_cited_files: site/docs/limits.html cites `docs/correctnes.md`, which is not a file here, nor the tail of one."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

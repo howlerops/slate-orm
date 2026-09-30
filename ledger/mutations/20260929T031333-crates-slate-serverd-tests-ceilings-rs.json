@@ -1,0 +1,47 @@
+{
+  "at": "2026-09-29T03:13:33+00:00",
+  "file": "crates/slate-serverd/tests/ceilings.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "ceilings",
+    "--no-fail-fast"
+  ],
+  "commit": "91119e0",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "only one stream is opened, so nothing is held at once",
+      "old": "const OPEN_AT_ONCE: usize = 10;",
+      "new": "const OPEN_AT_ONCE: usize = 1;",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "the constant sizes the demonstration and cannot be load-bearing: the whole finding is that the node does not distinguish one open stream from ten, so every assertion here follows the constant rather than pinning it. Ten is chosen so a reader cannot mistake the result for a scheduling accident, and one is a weaker demonstration of the same true thing rather than a wrong one."
+    },
+    {
+      "name": "the node is started without the concurrency limit",
+      "old": "        \"[limits]\\nmax_concurrent_requests = 1\\n\\n[observability]\\nmetrics_address = \\\"127.0.0.1:0\\\"\",",
+      "new": "        \"[observability]\\nmetrics_address = \\\"127.0.0.1:0\\\"\",",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "also the finding. A node with no concurrency limit admits ten streams and so does one limited to a single request, because the permit is released before a row is read \u2014 that is the negative result this test exists to measure, and a mutation removing the setting therefore changes nothing. Catching it would mean the limit bound on open streams, which is the change this test would fail on deliberately."
+    },
+    {
+      "name": "the metrics assertion stops following the constant",
+      "old": "        \"slate_requests_total{{method=\\\"/slate.v1.Records/Query\\\"}} {OPEN_AT_ONCE}\"",
+      "new": "        \"slate_requests_total{{method=\\\"/slate.v1.Records/Query\\\"}} 1\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -453,6 +453,29 @@ impl<'a> QueryCursor<'a> {
         plan: Plan,
         query: &Query,
     ) -> Result<Self> {
+        // Before anything is read, because unlike the other four ceilings this
+        // one can be known up front: the list arrives whole in the request,
+        // where a group count or a sort's row count is only discovered partway
+        // through an answer. Refusing here means a caller who sent one too
+        // large pays nothing for it.
+        //
+        // The predicate checked is the *merged* one — the caller's filter with
+        // the security compiler's policy folded in — because this is where
+        // every access path meets, and because the cost being bounded is what
+        // the node spends, which is the merged predicate's. A policy carrying
+        // its own long `IN` list therefore counts against the caller's budget;
+        // the ceiling is three orders of magnitude above any policy this
+        // repository generates, so that is a theoretical unfairness rather
+        // than a practical one, and the alternative — checking the caller's
+        // filter before the merge — would leave a policy's own list uncapped,
+        // which is the direction that matters.
+        let widest = query.filter.widest_in_list();
+        if widest > limits.max_in_values {
+            return Err(KernelError::InListTooLarge {
+                limit: limits.max_in_values,
+                actual: widest,
+            });
+        }
         let limit: Option<usize> = query.limit;
         let offset: usize = query.offset;
         let compute: Vec<Scalar> = query.compute.clone();

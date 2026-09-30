@@ -57,9 +57,17 @@ def repository(root: Path, ignore: tuple[str, ...] = ()) -> None:
         (root / ".gitignore").write_text("\n".join(ignore) + "\n")
 
 
-def case(name: str, verdicts, files, failing: set[str]) -> bool:
+def case(name: str, verdicts, files, failing: set[str], gone=None) -> bool:
     root = tree(verdicts, files)
-    report = guard.check(root)
+    # `GONE` names paths in *this* repository, and its rot rules fire over any
+    # other tree — so a case that is not about them swaps in an empty roster,
+    # the same way `test_check_closed_caveats.py` swaps `WITNESS`.
+    saved = guard.GONE
+    guard.GONE = {} if gone is None else gone
+    try:
+        report = guard.check(root)
+    finally:
+        guard.GONE = saved
     failed = [what for what, ok, _ in report if not ok]
     unexpected = [f for f in failed if not any(frag in f for frag in failing)]
     unseen = [frag for frag in failing if not any(frag in f for f in failed)]
@@ -77,7 +85,11 @@ def case(name: str, verdicts, files, failing: set[str]) -> bool:
 def missing(name: str) -> bool:
     """No `docs/caveat-status.json` at all must fail, not pass with nothing to check."""
     root = Path(tempfile.mkdtemp())
-    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    saved, guard.GONE = guard.GONE, {}
+    try:
+        failed = [what for what, ok, _ in guard.check(root) if not ok]
+    finally:
+        guard.GONE = saved
     if not any("exists" in f for f in failed):
         print(f"FAIL  {name}\n        got {failed}")
         return False
@@ -90,7 +102,11 @@ def malformed(name: str) -> bool:
     root = Path(tempfile.mkdtemp())
     (root / "docs").mkdir(parents=True)
     (root / "docs" / "caveat-status.json").write_text("{not json", encoding="utf-8")
-    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    saved, guard.GONE = guard.GONE, {}
+    try:
+        failed = [what for what, ok, _ in guard.check(root) if not ok]
+    finally:
+        guard.GONE = saved
     if not any("parses" in f for f in failed):
         print(f"FAIL  {name}\n        got {failed}")
         return False
@@ -120,7 +136,11 @@ def name_case(name: str, verdicts, files: dict[str, str], failing: set[str]) -> 
         full = root / path
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(body, encoding="utf-8")
-    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    saved, guard.GONE = guard.GONE, {}
+    try:
+        failed = [what for what, ok, _ in guard.check(root) if not ok]
+    finally:
+        guard.GONE = saved
     unexpected = [f for f in failed if not any(frag in f for frag in failing)]
     unseen = [frag for frag in failing if not any(frag in f for f in failed)]
     if unexpected or unseen:
@@ -152,7 +172,11 @@ def case_a_directory_resolves() -> bool:
         ("crates/x/src/lib.rs",),
     )
     repository(root)
-    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    saved, guard.GONE = guard.GONE, {}
+    try:
+        failed = [what for what, ok, _ in guard.check(root) if not ok]
+    finally:
+        guard.GONE = saved
     ok = "every cited path resolves" not in failed
     print(f"{'ok  ' if ok else 'FAIL'}  a cited directory resolves")
     if not ok:
@@ -179,7 +203,11 @@ def case_git_decides(hide: str) -> bool:
         ("site/built.wasm",),
     )
     repository(root, (hide,) if hide else ())
-    failed = [what for what, ok, _ in guard.check(root) if not ok]
+    saved, guard.GONE = guard.GONE, {}
+    try:
+        failed = [what for what, ok, _ in guard.check(root) if not ok]
+    finally:
+        guard.GONE = saved
     ok = ("every cited path resolves" in failed) is bool(hide)
     print(f"{'ok  ' if ok else 'FAIL'}  {name}")
     if not ok:
@@ -189,6 +217,39 @@ def case_git_decides(hide: str) -> bool:
 
 def main() -> int:
     passed = [
+        # --- GONE: a path cited because it is gone --------------------------
+        case(
+            "a citation excused by GONE is not reported dead",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "ledger/deleted.md is gone, which is what closed this"}],
+            (),
+            set(),
+            gone={("a.md", "ledger/deleted.md"): "deleted in abc1234"},
+        ),
+        case(
+            "a GONE entry whose path is back in the tree is refused",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "ledger/b.md is gone, which is what closed this"}],
+            ("ledger/b.md",),
+            {"names a path that is back"},
+            gone={("a.md", "ledger/b.md"): "deleted in abc1234"},
+        ),
+        case(
+            "a GONE entry nothing cites any more is refused",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "ledger/b.md did it"}],
+            ("ledger/b.md",),
+            {"one some verdict still cites"},
+            gone={("a.md", "ledger/vanished.md"): "deleted in abc1234"},
+        ),
+        case(
+            "a GONE entry keyed to another entry does not excuse this one",
+            [{"entry": "a.md", "key": "k", "verdict": "closed",
+              "by": "ledger/deleted.md is gone"}],
+            (),
+            {"every cited path resolves", "one some verdict still cites"},
+            gone={("other.md", "ledger/deleted.md"): "deleted in abc1234"},
+        ),
         case(
             "a file whose every citation resolves passes",
             [{"entry": "a.md", "key": "k", "verdict": "closed", "by": "ledger/b.md did it"}],

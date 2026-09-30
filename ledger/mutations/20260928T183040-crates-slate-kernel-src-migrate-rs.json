@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-28T18:30:40+00:00",
+  "file": "crates/slate-kernel/src/migrate.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "migrations",
+    "--no-fail-fast"
+  ],
+  "commit": "1e4481b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a never-seen table's unique index is refused too",
+      "old": "            for index in table.indexes() {\n                out.steps.push(Step::BuildIndex {\n                    table: table.id(),\n                    index: index.id(),\n                    name: index.name().to_owned(),\n                });\n            }",
+      "new": "            for index in table.indexes() {\n                if index.is_unique() {\n                    out.refusals.push(Refusal::SoleWriterNotEstablished {\n                        table: table.name().to_owned(),\n                        index: index.name().to_owned(),\n                    });\n                }\n                out.steps.push(Step::BuildIndex {\n                    table: table.id(),\n                    index: index.id(),\n                    name: index.name().to_owned(),\n                });\n            }",
+      "verdict": "caught",
+      "caught_by": [
+        "a_unique_index_on_a_table_the_keyspace_has_never_seen_needs_no_claim"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

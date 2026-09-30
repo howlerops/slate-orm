@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-29T22:43:25+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "ce3c414",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "rule 10 reads only catalog.rs again",
+      "old": "    for path in sorted((root / CATALOG_SOURCE).rglob(\"*.rs\")):",
+      "new": "    for path in sorted((root / CATALOG_SOURCE).glob(\"catalog.rs\")):",
+      "verdict": "caught",
+      "caught_by": [
+        "a lookup in another file of the same crate is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "any impl block counts, not just `impl Catalog`",
+      "old": "        if IMPL_CATALOG.match(line):",
+      "new": "        if line.startswith(\"impl \"):",
+      "verdict": "caught",
+      "caught_by": [
+        "another file with no `impl Catalog` changes nothing"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

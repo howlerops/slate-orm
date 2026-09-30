@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-28T23:09:45+00:00",
+  "file": "clients/typescript/src/client.ts",
+  "dialect": "node",
+  "command": [
+    "bash",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json && node --test dist-test/test/roundTrip.test.js"
+  ],
+  "commit": "3df314d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "connect drops the channel options on the floor",
+      "old": "const raw = new Records(target, credentials, options) as RawClient;",
+      "new": "const raw = new Records(target, credentials) as RawClient;",
+      "verdict": "caught",
+      "caught_by": [
+        "writing n rows one at a time is n round trips",
+        "writing the same n rows in a batch is one round trip",
+        "paging by cursor is one round trip per page"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

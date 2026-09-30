@@ -62,9 +62,16 @@ use tokio_stream::StreamExt as _;
 pub(crate) struct Serving {
     /// How long in-flight requests are given after a stop signal.
     pub(crate) grace: Duration,
-    /// Requests in flight per connection, unset for unbounded.
+    /// Requests admitted at once across the node, unset for unbounded.
     pub(crate) concurrency: Option<usize>,
-    /// How long one request may run, unset for no timeout.
+    /// Response streams open at once across the node, unset for unbounded.
+    ///
+    /// A different thing from `concurrency` and not a finer version of it:
+    /// that one's permit comes back when the handler returns, this one's when
+    /// the body is done. See [`crate::streams`].
+    pub(crate) open_streams: Option<usize>,
+    /// How long one request may *wait*, unset for no timeout. Not a latency
+    /// bound — see the setting it comes from in [`crate::config`].
     pub(crate) request_timeout: Option<Duration>,
     /// What the node says about the requests it serves. See [`crate::observe`].
     pub(crate) observing: crate::observe::Observing,
@@ -95,6 +102,7 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     let Serving {
         grace,
         concurrency,
+        open_streams,
         request_timeout,
         observing,
     } = serving;
@@ -161,17 +169,15 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
     let serving_counters = Arc::clone(&counters);
     let server = tokio::spawn(async move {
         let mut builder = tonic::transport::Server::builder();
-        // Applied to the builder rather than per handler: these bound the node
-        // as a whole, and a caller's leverage here is the number of requests
-        // they can have in flight, not the number per connection.
+        // The timeout is applied to the builder, which is the only place
+        // tonic offers, and is weaker than its name: it only fires on a
+        // handler that pends, because `GrpcTimeout::poll` polls the inner
+        // future first. Written up on the setting above, and
+        // `tests/ceilings.rs` pins what can be pinned of it.
         //
         // Left unset by default. A concurrency limit low enough to protect a
         // small node is low enough to break a large one, and there is no
-        // number that is right without knowing the machine — but until now
-        // there was no way to say one at all, which is the actual defect.
-        if let Some(limit) = concurrency {
-            builder = builder.concurrency_limit_per_connection(limit);
-        }
+        // number that is right without knowing the machine.
         if let Some(timeout) = request_timeout {
             builder = builder.timeout(timeout);
         }
@@ -181,6 +187,45 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
         // the layer. Adding the layer conditionally would mean two builder
         // types and a branch that has to construct the server twice.
         builder
+            // **Node-wide, not per connection.** `concurrency_limit_per_connection`
+            // is what this used, and its name is exact: a caller who opens a
+            // second socket got a second allowance, so the setting bounded
+            // politeness rather than load. `GlobalConcurrencyLimitLayer` holds
+            // one semaphore for the process and is layered here, outside the
+            // per-connection stack, so every connection draws on it.
+            //
+            // **What it bounds is handler starts, not streaming.** A permit is
+            // released when the response future resolves, and for a
+            // server-streaming RPC that is before any row is read — the same
+            // property `ledger/2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md`
+            // recorded about the per-connection version. So this caps how many
+            // requests are being *admitted and planned* at once, which is the
+            // expensive part, and not how many response streams are open. A
+            // bound on open streams is a different mechanism and is not this.
+            //
+            // Cloned per connection by the layer; the semaphore inside is an
+            // `Arc`, so every clone shares the count. That is the whole
+            // difference from the method it replaces, and it is one word in
+            // the type name, which is why the old one read as correct.
+            .layer(tower::util::option_layer(
+                concurrency.map(tower::limit::GlobalConcurrencyLimitLayer::new),
+            ))
+            // **Inside the admission limit, outside the observer.**
+            //
+            // Inside, because a request that is refused for want of a stream
+            // permit should not also be occupying an admission permit while it
+            // is refused — and because the two caps are independent, so the
+            // cheaper test belongs nearer the handler.
+            //
+            // Outside `ObserveLayer`, so a refusal is *counted*. The refusal
+            // is a trailers-only response with `grpc-status: 8`, which is
+            // exactly what `head_status` reads, so the node's own summary and
+            // `/metrics` report a capped read the way they report any other
+            // failure. Layered the other way round it would be invisible,
+            // which is the property that makes a limit impossible to tune.
+            .layer(tower::util::option_layer(
+                open_streams.map(crate::streams::StreamLimitLayer::new),
+            ))
             .layer(crate::observe::ObserveLayer::new(
                 serving_counters,
                 observing.request_log,

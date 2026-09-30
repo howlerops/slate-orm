@@ -12,6 +12,7 @@ to install before they can see anything work.
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import json
 import sys
@@ -20,6 +21,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+import grpc
 from slate import (
     Agg,
     Atomicity,
@@ -194,12 +196,61 @@ def build_query(spec: dict[str, Any]) -> Query:
     return query
 
 
+class Counting(grpc.UnaryUnaryClientInterceptor, grpc.UnaryStreamClientInterceptor):
+    """Counts the calls a client makes, per RPC, and forwards them untouched.
+
+    Both interfaces, because a read is server-streaming and a write is unary.
+    Registering only the first counts writes and reports zero for every query,
+    which reads as "queries are free" rather than as a hole in the instrument
+    — and is exactly the bug the Go adapter's sibling of this class had for a
+    day (`ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`).
+    """
+
+    def __init__(self) -> None:
+        self.calls: collections.Counter[str] = collections.Counter()
+
+    def _count(self, method: str) -> None:
+        # `/slate.v1.Records/Insert` -> `Insert`. The RPC names are not the
+        # client's method names: a single insert is `Insert` and a keyset page
+        # is `Query`.
+        self.calls[method.rsplit("/", 1)[-1]] += 1
+
+    def intercept_unary_unary(self, continuation: Any, client_call_details: Any, request: Any) -> Any:
+        # Named `client_call_details` because the base class is: `grpc` passes
+        # it by keyword, so a shorter name is a Liskov violation rather than a
+        # style choice.
+        self._count(client_call_details.method)
+        return continuation(client_call_details, request)
+
+    def intercept_unary_stream(self, continuation: Any, client_call_details: Any, request: Any) -> Any:
+        self._count(client_call_details.method)
+        return continuation(client_call_details, request)
+
+
 class Adapter:
     def __init__(self, head: str) -> None:
         self.head = head
         self.clients = {
             name: Client(head, identity=identity) for name, identity in IDENTITIES.items()
         }
+        # A fourth client, `app`'s identity again, whose channel counts. Its
+        # own connection rather than an interceptor on `self.clients["app"]`:
+        # the demo frontend and the conformance runner share that one, so a
+        # counter on it would fold a browser's polling into the measurement.
+        # Nothing but `/api/round-trips` ever touches this one.
+        self.counter = Counting()
+        self.counted = Client(
+            head,
+            channel=grpc.intercept_channel(grpc.insecure_channel(head), self.counter),
+            identity=IDENTITIES["app"],
+        )
+        # One measurement at a time. The counter is process-wide state and
+        # `ThreadingHTTPServer` serves concurrent requests, so two overlapping
+        # calls here would each read the other's calls. The conformance runner
+        # is sequential, so this never contends; it is here because a count
+        # that is silently wrong under concurrency is worse than one that
+        # waits.
+        self.counting_lock = threading.Lock()
 
     def meta(self, session, _body):
         return {
@@ -664,10 +715,38 @@ class Adapter:
         grouped = GroupedJoinQuery(join)
         grouped.group_by(key)
         grouped.aggregate(Agg.count())
+        # `SUM` over a decimal, beside the count and on every grouping.
+        #
+        # It is the one aggregate that returns money, and until it was here
+        # the corpus compared no aggregate that returned anything but a `u64`.
+        # A sum over a decimal is *exact* — the kernel adds units of the
+        # column's smallest unit and never a float — which is the claim worth
+        # comparing across three clients, and the one a client that reached
+        # for a float somewhere would break by a cent rather than visibly.
+        #
+        # On every grouping rather than behind a flag: the groups differ per
+        # grouping and so do the sums, so twelve cases compare it instead of
+        # one, and the aggregate list is the same for `/api/explain-aggregate`
+        # — which is where `decodes` now has to include `price`.
+        grouped.aggregate(Agg.sum(books.c.price))
         if body.get("having"):
             grouped.having(grouped.agg(0).ge(u64(int(body["having"]["minCount"]))))
 
-        column = grouped.key(0) if body.get("sort") == "key" else grouped.agg(0)
+        # `total` sorts by the decimal sum, which is `Agg(1)`.
+        #
+        # It is what makes the sum load-bearing rather than a field beside the
+        # answer. Three clients agreeing is blind to all three dropping the
+        # second aggregate — the groups would still carry a count and still
+        # match — but a sort naming `Agg(1)` when there is no second aggregate
+        # is refused by the server, and the runner reports a case that is
+        # supposed to answer and did not.
+        sort = body.get("sort")
+        if sort == "key":
+            column = grouped.key(0)
+        elif sort == "total":
+            column = grouped.agg(1)
+        else:
+            column = grouped.agg(0)
         direction = desc if body.get("direction") == "desc" else asc
         # A tie-break on the key, so equal counts do not come back in whatever
         # order the hash produced — which would differ between adapters.
@@ -684,6 +763,8 @@ class Adapter:
             values = list(group.aggregates)
             if values:
                 entry["count"] = encode(values[0])
+            if len(values) > 1:
+                entry["total"] = encode(values[1])
             groups.append(entry)
         return {"groups": groups}
 
@@ -1277,6 +1358,174 @@ class Adapter:
             Units(1000),
         ]
 
+    #: The decimal renderings all three clients must agree on.
+    #:
+    #: `(units, scale)`, and the scale is the argument rather than a property of
+    #: the value: a decimal on the wire is a count of the column's smallest
+    #: unit and the scale never travels. Each client therefore has a renderer
+    #: of its own — `Units.to_string_with_scale`, `Units.StringWithScale`,
+    #: `unitsToString` — and each had an edge-case table in its *own* suite,
+    #: written independently. Three tables that agree with three authors is not
+    #: three renderers that agree with each other, which is what this is.
+    #:
+    #: `/api/conditional-update` compares them too and compares one value at
+    #: one scale, because that is what `books.price` declares. Everything that
+    #: can only go wrong somewhere else is here:
+    #:
+    #: - scale 0, where there is no point at all and the two branches diverge;
+    #: - a value smaller than one whole unit, where the zero padding is the
+    #:   whole answer and dropping it turns 0.05 into 0.5;
+    #: - a negative smaller than one whole unit, where the sign has to survive
+    #:   a `whole` that rounds to zero — `-0.75` is the case the caveat named,
+    #:   and a renderer that took the sign off `whole` prints `0.75`;
+    #: - scales 1, 3 and 4, so "pad to two" is not enough to pass;
+    #: - and both i64 extremes, where negating the magnitude overflows in two
+    #:   of the three languages. Go's renderer carries a comment about exactly
+    #:   this; nothing compared it against the other two.
+    RENDERED = (
+        (0, 0),
+        (0, 2),
+        (7, 1),
+        (5, 4),
+        (-1, 2),
+        (-75, 2),
+        (1250, 0),
+        (1250, 1),
+        (1250, 2),
+        (-1250, 3),
+        (9223372036854775807, 2),
+        (-9223372036854775808, 2),
+        # Above scale 4, which nothing in the demo declares and no row here
+        # reached until the caveat asking for it was taken up. 18 is the
+        # schema's MAX_SCALE: at that scale an i64 has one digit left of the
+        # point, which is why the cap is where it is.
+        (1250, 6),
+        (-75, 9),
+        (1250, 18),
+        (9223372036854775807, 18),
+        (-9223372036854775808, 18),
+    )
+
+    def render_decimals(self, _session, _body):
+        """Every client's decimal renderer, on one shared table.
+
+        No server anywhere: this is three pure functions compared to each
+        other, which is the one thing in this contract that needs no database
+        — and the reason it is here rather than in three suites is that three
+        suites cannot disagree with each other.
+        """
+        return {
+            "rendered": [
+                # `units` as a string, by the contract's 64-bit rule: two of
+                # these do not survive a JSON number, and they are the two the
+                # table exists for.
+                {"units": str(units), "scale": scale,
+                 "text": Units(units).to_string_with_scale(scale)}
+                for units, scale in self.RENDERED
+            ]
+        }
+
+    #: The id range the round-trip handler owns, clear of every other one.
+    ROUND_TRIP_FIRST = 9400
+
+    #: How many rows the write workloads write.
+    #:
+    #: Four rather than two, so `4 != 1` says what happened where `2 != 1`
+    #: could be an off-by-one anywhere. Not twenty, as the per-client suites
+    #: use: this runs against a shared demo database on every conformance run,
+    #: and the point here is the *shape* of the count, which four shows.
+    ROUND_TRIP_ROWS = 4
+
+    #: Three keyset pages of three, over the eleven books the fixture seeds.
+    #:
+    #: Nine of eleven, so the third page is full and the loop never meets the
+    #: end — a short page would end the walk early in a way that depends on how
+    #: many rows the *other* endpoints happen to have left behind, and the
+    #: three adapters run at different points in that sequence.
+    ROUND_TRIP_PAGES = 3
+    ROUND_TRIP_PAGE_SIZE = 3
+
+    #: Three seeded books that have sales, for the relation workload.
+    ROUND_TRIP_PARENTS = (10, 11, 12)
+
+    def round_trips(self, _session, body):
+        """Run a fixed workload and report how many requests the client sent.
+
+        The one thing three SDKs can differ about that no comparison of
+        *answers* can see. A client that looped where the other two batched
+        returns identical rows and costs N times as much, so `/api/batch` and
+        `/api/related` agreeing says nothing about it.
+
+        Each client's own suite already counts its own round trips, against its
+        own expectation. Three independent assertions are weaker than one
+        comparison: they cannot catch two clients that are wrong the same way,
+        which is the failure this whole runner exists for.
+
+        The persona is ignored on purpose — this always runs as `app`, on the
+        adapter's own counting connection. Row-level security changes which
+        rows a read returns and not how many requests fetching them takes, so
+        letting the header through would offer a knob that cannot move the
+        answer.
+        """
+        workload = body.get("workload")
+        first = self.ROUND_TRIP_FIRST
+        session = self.counted.session()
+
+        def scrub():
+            w = DeleteWhere(BOOKS)
+            session.delete_where(w.where(w.c.id.ge(u64(first))))
+
+        with self.counting_lock:
+            # Before, not only after: a run that died partway through leaves
+            # rows behind, and `singles` would then fail on an already-exists
+            # rather than counting anything.
+            scrub()
+            self.counter.calls.clear()
+            try:
+                if workload == "singles":
+                    # The control. Without it the batch case shows only that a
+                    # batch works, and a client sending one request per row
+                    # returns exactly the same rows.
+                    for n in range(self.ROUND_TRIP_ROWS):
+                        session.insert(BOOKS, [self._book(first + n, f"Round Trip {n}")])
+                elif workload == "batch":
+                    b = Batch(Atomicity.INDEPENDENT)
+                    for n in range(self.ROUND_TRIP_ROWS):
+                        b.insert(BOOKS, [self._book(first + n, f"Round Trip {n}")])
+                    session.batch(b)
+                elif workload == "paging":
+                    cursor = None
+                    for _ in range(self.ROUND_TRIP_PAGES):
+                        q = Query(BOOKS)
+                        q.limit(self.ROUND_TRIP_PAGE_SIZE)
+                        if cursor is not None:
+                            q.after(cursor)
+                        page = session.page(q)
+                        cursor = page.cursor
+                elif workload == "related":
+                    key = SALES_FOREIGN_KEYS["sale_book"]
+                    session.related(
+                        _answers(key, parents=False),
+                        [u64(k) for k in self.ROUND_TRIP_PARENTS],
+                        through=key["name"],
+                        on=BY_NAME[key["child"]],
+                        children=True,
+                    )
+                else:
+                    raise ValueError(f"unknown workload {workload!r}")
+                calls = dict(self.counter.calls)
+            finally:
+                # Outside the count, and in a `finally` so a workload that
+                # raised partway through still leaves the range empty for the
+                # next adapter the runner asks.
+                self.counter.calls.clear()
+                scrub()
+
+        # Sorted, and zeroes left out: a list in a dict's iteration order is
+        # the one thing in this contract three languages would spell three
+        # ways for free.
+        return {"calls": [{"rpc": rpc, "count": calls[rpc]} for rpc in sorted(calls)]}
+
     def transaction(self, session, body):
         """The one thing a single request cannot show: a write visible only to
         its own transaction until it commits."""
@@ -1338,6 +1587,8 @@ ROUTES = {
     "/api/typed": "typed",
     "/api/bad-batch": "bad_batch",
     "/api/transaction": "transaction",
+    "/api/round-trips": "round_trips",
+    "/api/render-decimals": "render_decimals",
 }
 
 
@@ -1434,6 +1685,12 @@ def handler_for(adapter: Adapter):
                         }
                         for one in error.violations
                     ],
+                    # The refusal's own numbers, as the server sent them. A
+                    # bound in the sentence is a bound a caller has to parse;
+                    # this is the same value the three clients each read out
+                    # of `ErrorInfo.metadata`, so a disagreement between them
+                    # shows up as a diff here.
+                    "details": dict(error.details),
                 }})
                 return
             except Exception as error:  # noqa: BLE001

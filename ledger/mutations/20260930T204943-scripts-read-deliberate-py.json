@@ -1,0 +1,46 @@
+{
+  "at": "2026-09-30T20:49:43+00:00",
+  "file": "scripts/read_deliberate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_read_deliberate.py"
+  ],
+  "commit": "8767159",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the printed cut widens from three to ten",
+      "old": "SHOWN = 3",
+      "new": "SHOWN = 10",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "ranked() stops skipping the audit entry that quotes the claim",
+      "old": "        if name <= entry or quoted in plain(body):\n            continue\n        got = sum(w in body for w in rare)\n        if got >= max(2, len(rare) * 0.6):\n            hits.append((got, name))\n    hits.sort(reverse=True)\n    return [n for _, n in hits]",
+      "new": "        if name <= entry:\n            continue\n        got = sum(w in body for w in rare)\n        if got >= max(2, len(rare) * 0.6):\n            hits.append((got, name))\n    hits.sort(reverse=True)\n    return [n for _, n in hits]",
+      "verdict": "caught",
+      "caught_by": [
+        "the signal ranks the closing entry at [(16, 19), (None, 8)]"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the rarity cutoff moves from a sixth of the ledger to a third",
+      "old": "    rare = {w for w in words if sum(w in b for b in bodies.values()) < len(bodies) // 6}\n    if len(rare) < 2:\n        return []\n    quoted = plain(claim)[:60]",
+      "new": "    rare = {w for w in words if sum(w in b for b in bodies.values()) < len(bodies) // 3}\n    if len(rare) < 2:\n        return []\n    quoted = plain(claim)[:60]",
+      "verdict": "caught",
+      "caught_by": [
+        "the signal ranks the closing entry at [(16, 19), (None, 8)]"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

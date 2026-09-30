@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-28T19:03:03+00:00",
+  "file": "clients/go/slate/schema.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -run 'TestThe' -count=1"
+  ],
+  "commit": "1f09759",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the vector type name is misspelled in the hash",
+      "old": "\tTypeVector ColumnType = \"vector\"",
+      "new": "\tTypeVector ColumnType = \"vec\"",
+      "verdict": "caught",
+      "caught_by": [
+        "TestTheRemainingTypesArePinnedToo"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the uuid type name is misspelled in the hash",
+      "old": "\tTypeUUID   ColumnType = \"uuid\"",
+      "new": "\tTypeUUID   ColumnType = \"guid\"",
+      "verdict": "caught",
+      "caught_by": [
+        "TestTheRemainingTypesArePinnedToo"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "bool and bytes are swapped",
+      "old": "\tTypeBool   ColumnType = \"bool\"\n\tTypeBytes  ColumnType = \"bytes\"",
+      "new": "\tTypeBool   ColumnType = \"bytes\"\n\tTypeBytes  ColumnType = \"bool\"",
+      "verdict": "caught",
+      "caught_by": [
+        "TestTheRemainingTypesArePinnedToo"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T03:54:01+00:00",
+  "file": "clients/go/slate/value.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -run TestUnitsRenderAgainstAScale -count=1 -v"
+  ],
+  "commit": "3174583",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the divisor stops following the scale above six",
+      "old": "\tfor range scale {\n\t\tdivisor *= 10\n\t}",
+      "new": "\tfor range min(scale, 6) {\n\t\tdivisor *= 10\n\t}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestUnitsRenderAgainstAScale"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the padding width stops following the scale above four",
+      "old": "\treturn fmt.Sprintf(\"%s%d.%0*d\", sign, whole, int(scale), part)",
+      "new": "\treturn fmt.Sprintf(\"%s%d.%0*d\", sign, whole, min(int(scale), 4), part)",
+      "verdict": "caught",
+      "caught_by": [
+        "TestUnitsRenderAgainstAScale"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T08:33:08+00:00",
+  "file": "crates/slate-server/src/service.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_handlers.py"
+  ],
+  "commit": "b91b411",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the authorisation helper is renamed away from the pattern",
+      "old": "    fn authorize_join_inputs(",
+      "new": "    fn check_join_inputs(",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

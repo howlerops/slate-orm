@@ -115,3 +115,37 @@ fn rendering_handles_a_negative_and_a_bare_fraction() {
     assert_eq!(Units(1250).to_string_with_scale(0), "1250");
     assert_eq!(Units(1250).to_string_with_scale(3), "1.250");
 }
+
+#[test]
+fn rendering_is_exact_at_the_schema_s_maximum_scale() {
+    // 18 is `slate_schema`'s `MAX_SCALE`: `10^18` is under `i64::MAX`, so an
+    // `i64` value at that scale has exactly one digit left of the point. This
+    // is the end of the range the schema can produce, and until now nothing
+    // rendered above scale 4 in any of the four implementations.
+    assert_eq!(Units(1250).to_string_with_scale(18), "0.000000000000001250");
+    assert_eq!(
+        Units(i64::MAX).to_string_with_scale(18),
+        "9.223372036854775807"
+    );
+    assert_eq!(
+        Units(i64::MIN).to_string_with_scale(18),
+        "-9.223372036854775808"
+    );
+    // Above 18 this is wrong, which is pinned rather than left implied.
+    // `saturating_pow` holds the divisor at `i64::MAX` from scale 19 up, and
+    // the wrongness is *invisible for small values*: at scale 19 a units of
+    // 1250 still renders `0.0000000000000001250`, because any divisor larger
+    // than the value gives a whole part of zero and a remainder of the value,
+    // and the width comes from the scale rather than the divisor. Measured
+    // after asserting the opposite and watching it fail — the first draft of
+    // this test picked 1250 and was wrong about what it demonstrated.
+    //
+    // It takes a value at the top of the range to see it. A scale that high
+    // cannot come from a column (`TableBuilder` refuses above 18), so this is
+    // a note about the helper's own edge and not a defect anything can reach.
+    assert_eq!(
+        Units(i64::MAX).to_string_with_scale(19),
+        "1.0000000000000000000",
+        "the saturated divisor, whose true answer is 0.9223372036854775807"
+    );
+}

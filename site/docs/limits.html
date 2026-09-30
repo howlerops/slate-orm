@@ -96,15 +96,16 @@
         brackets you mean.
       </p>
       <p>
-        Two clauses take no brackets. A <em>join's</em> <code>WHERE</code>
+        One clause takes no brackets. A <em>join's</em> <code>WHERE</code>
         is <code>AND</code> only: its conditions are split by side so each
         scan is narrowed before the hash join runs, and neither a disjunction
         nor a tree spanning both sides can be split that way. A
-        <code>HAVING</code> is all <code>AND</code> or all <code>OR</code>
-        — on a single table, a join and a chain alike — because the group
-        conditions have no nested form to lower onto. A disjunction is also a
-        filter rather than an access path: it cannot become a scan bound,
-        because <code>a = 1 OR b = 2</code> has no single key range.
+        <code>HAVING</code> brackets exactly as a <code>WHERE</code> does
+        — on a single table, a join and a chain alike — and shares
+        the same parser, so the two cannot come to disagree about what a
+        bracket means. A disjunction is still a filter rather than an access
+        path: it cannot become a scan bound, because
+        <code>a = 1 OR b = 2</code> has no single key range.
       </p>
       <p>
         <strong>The newest features stop where they stop.</strong> A window
@@ -116,6 +117,33 @@
         another view, and — unlike <code>SECURITY DEFINER</code> — cannot
         widen what a caller may see, because row-level security composes on
         top of it rather than under it.
+      </p>
+      <p>
+        <strong>A schema check is optional, so its protections are too.</strong>
+        The fingerprint a client sends covers each column's name, type and
+        ordinal, the primary key, a decimal's <em>scale</em> and an array's
+        element type — the last two deliberately, because a client with either
+        wrong reads the <em>right</em> column and renders every value wrong
+        consistently, with the wire carrying neither. A request that carries a
+        check and disagrees is refused. A request that carries none is served
+        as before, and nothing obliges a client to send one.
+      </p>
+      <p>
+        <strong>A streamed read's rows are in no measurement.</strong> Every
+        latency the node reports — the summary line, the quantiles and the
+        exported histogram — is time to the <em>response head</em>. A read that
+        streamed for a minute and then failed contributes its first-byte
+        latency and nothing else.
+      </p>
+      <p>
+        <strong><code>request_timeout</code> is not a ceiling on how long a
+        request takes.</strong> It bounds a request that <em>waits</em>, and
+        even that unreliably: a handler that finishes on its first poll is
+        never cancelled however low the value, and one that pends once is. The
+        same two-row query with <code>request_timeout = "0ms"</code> came back
+        answered five runs out of five on one machine and cancelled on the
+        first try on another. Set it generously or leave it unset — a small
+        value buys no bound and makes fast requests fail at random.
       </p>
       <p>
         <strong>No in-place promotion</strong> of a read replica to writer —

@@ -20,7 +20,8 @@ That is `CLAUDE.md`'s "stale documentation is worse than none" pointed at the
 most load-bearing prose in the repository, and it is mechanically checkable:
 the numbers are derivable from the constants.
 
-**It reads `crates/` and `docs/`.** Code only, until #283. The page a reader
+**It reads `crates/`, `docs/` and `site/`**, plus the Markdown named in
+`README_GLOBS` below. Code only, until #283. The page a reader
 actually reaches is `docs/performance.md`, and its "a point read costs about 3"
 outlived the constant by nine tasks — surviving #277's sweep precisely because
 that sweep could not see it. Prose in `docs/` is read as current whether or not

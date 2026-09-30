@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T02:51:07+00:00",
+  "file": "examples/explorer/web/src/panels.tsx",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--e2e"
+  ],
+  "commit": "e58f129",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the retired-rows control never sets the flag",
+      "old": "        ...(asking() ? { includeDeleted: true } : {}),",
+      "new": "        ...(asking() ? {} : {}),",
+      "verdict": "unreadable",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

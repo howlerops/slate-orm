@@ -1,0 +1,39 @@
+[package]
+name = "slate-helpdesk"
+description = "A small multi-tenant helpdesk, written against slate-orm the way an application would be"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+# An example application, not a library this repository consumes. The same
+# reasoning `slate-orm`'s manifest gives: a token added for one crate publishes
+# every crate that did not say no.
+publish = false
+
+[dependencies]
+slate-orm = { path = "../../crates/slate-orm" }
+slate-kernel.workspace = true
+slate-schema.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+# No tokio outside `[dev-dependencies]`. The service layer is `async` and asks
+# for no runtime: every method awaits the store it was handed, and choosing a
+# reactor is the caller's decision. `scripts/check_wasm_runtime.py` is the
+# check that makes that decision visible, and this crate is a library, so it
+# would have to be rostered to take one.
+
+[dev-dependencies]
+tokio.workspace = true
+# Only the runner (`examples/over_slatedb.rs`) needs these, and a cargo
+# example is built with the dev-dependencies — which is exactly why the
+# runner is an example rather than a `[[bin]]`. A binary would put `tokio`
+# and an LSM into the library's own dependency table, and the library asks
+# for neither.
+slate-slatedb.workspace = true
+slatedb = { version = "0.16", default-features = false }
+
+[lints]
+workspace = true

@@ -1,0 +1,37 @@
+{
+  "at": "2026-09-29T16:23:26+00:00",
+  "file": "scripts/check_cited_files.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_cited_files.py"
+  ],
+  "commit": "95ae30b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a file::item citation keeps its item name",
+      "old": "AT_PLACE = re.compile(rf\"({PATH})(?::\\d+|::[A-Za-z_][A-Za-z0-9_]*)\\Z\")",
+      "new": "AT_PLACE = re.compile(rf\"({PATH})(?::\\d+)\\Z\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a file::item citation whose file is gone fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a file:line location keeps its line number",
+      "old": "AT_PLACE = re.compile(rf\"({PATH})(?::\\d+|::[A-Za-z_][A-Za-z0-9_]*)\\Z\")",
+      "new": "AT_PLACE = re.compile(rf\"({PATH})(?:::[A-Za-z_][A-Za-z0-9_]*)\\Z\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a file:line location whose file is gone fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

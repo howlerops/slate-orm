@@ -18,7 +18,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import readline from "node:readline";
 
-import { Client, type Identity } from "../src/index.js";
+// `grpc` through the client rather than from `@grpc/grpc-js` directly:
+// depending on it here would install a second copy, and the objects cross
+// the boundary. The re-export exists for exactly this.
+import { Client, grpc, type Identity } from "../src/index.js";
+
+type ChannelOptions = grpc.ChannelOptions;
 
 export const CONFIG = `
 [listen]
@@ -67,7 +72,10 @@ function repositoryRoot(): string {
   }
 }
 
-const ROOT = repositoryRoot();
+/** Exported so a test does not recompute it from a relative depth, which
+ * the comment above `repositoryRoot` warns is right from one of `test/` and
+ * `dist-test/test/` and silently wrong from the other. */
+export const ROOT = repositoryRoot();
 
 let built = false;
 
@@ -84,7 +92,16 @@ let built = false;
  * back to `cargo` there would quietly test a different binary from the one the
  * caller named.
  */
-function binary(): string {
+/**
+ * Exported so that the refusal below can be *driven*, not just read.
+ *
+ * `scripts/test_prebuilt.py` holds every harness that takes `SLATE_SERVERD`
+ * to refusing a stale one, and until this was exported it could only see that
+ * this file mentions `refuseIfStale` — a harness that defines the function and
+ * never calls it passes that. `test/prebuilt.test.ts` calls this with a
+ * deliberately stale binary, which is the same path `start()` takes.
+ */
+export function binary(): string {
   const named = process.env["SLATE_SERVERD"];
   if (named) {
     if (!existsSync(named)) throw new Error(`SLATE_SERVERD=${named} does not exist`);
@@ -158,7 +175,19 @@ function refuseIfStale(binaryPath: string): void {
 
 export interface Serving {
   readonly address: string;
-  client(identity?: Identity): Client;
+  /**
+   * A client on this node.
+   *
+   * `options` reaches `Client.connect`'s fourth argument untouched, which is
+   * how a test installs a grpc-js interceptor. It is here because some
+   * properties of a client are properties of the *request* and not of the
+   * answer — a dropped freshness floor returns exactly the right rows — so the
+   * only place to assert them is the wire. The Go suite has done this since
+   * 2026-09-16; this client had no argument to pass an interceptor through
+   * until `ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`
+   * added one.
+   */
+  client(identity?: Identity, options?: ChannelOptions): Client;
   stop(): void;
 }
 
@@ -195,8 +224,8 @@ export async function start(extra = ""): Promise<Serving> {
   const clients: Client[] = [];
   return {
     address,
-    client(identity = APP) {
-      const c = Client.connect(address, identity);
+    client(identity = APP, options: ChannelOptions = {}) {
+      const c = Client.connect(address, identity, grpc.credentials.createInsecure(), options);
       clients.push(c);
       return c;
     },

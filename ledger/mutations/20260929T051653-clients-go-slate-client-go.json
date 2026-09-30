@@ -1,0 +1,36 @@
+{
+  "at": "2026-09-29T05:16:53+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "go",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/go && GOTOOLCHAIN=local go test ./slate -run 'TestRelated' -count=1 -v"
+  ],
+  "commit": "b676a63",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "Go: the flag gates the floor again, as it used to",
+      "old": "\tif s.watermark == nil {\n\t\treturn nil\n\t}\n\treturn &pb.Freshness{Level: &pb.Freshness_AtLeast{AtLeast: uint64(*s.watermark)}}",
+      "new": "\tif !s.monotonic || s.watermark == nil {\n\t\treturn nil\n\t}\n\treturn &pb.Freshness{Level: &pb.Freshness_AtLeast{AtLeast: uint64(*s.watermark)}}",
+      "verdict": "caught",
+      "caught_by": [
+        "TestRelatedCarriesTheFreshnessFloor"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "Go: a read's view is folded in even with the flag off",
+      "old": "\tif sb == nil || !s.monotonic {",
+      "new": "\tif sb == nil {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

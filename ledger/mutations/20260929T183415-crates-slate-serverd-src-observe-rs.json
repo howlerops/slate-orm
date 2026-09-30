@@ -1,0 +1,45 @@
+{
+  "at": "2026-09-29T18:34:15+00:00",
+  "file": "crates/slate-serverd/src/observe.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bins",
+    "--test",
+    "observing",
+    "--no-fail-fast"
+  ],
+  "commit": "428ff2b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the summary line prints the two the other way round",
+      "old": "counters.body_bytes.load(Ordering::Relaxed),\n                counters.body_frames.load(Ordering::Relaxed),",
+      "new": "counters.body_frames.load(Ordering::Relaxed),\n                counters.body_bytes.load(Ordering::Relaxed),",
+      "verdict": "caught",
+      "caught_by": [
+        "observe::tests::a_trailers_frame_weighs_nothing_and_is_not_a_frame",
+        "observe::tests::a_streamed_body_is_weighed_frame_by_frame"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the exported bytes family reads the frame count",
+      "old": "\"slate_response_bytes_total\",\n            &|method| method.body_bytes.load(Ordering::Relaxed),",
+      "new": "\"slate_response_bytes_total\",\n            &|method| method.body_frames.load(Ordering::Relaxed),",
+      "verdict": "caught",
+      "caught_by": [
+        "observe::tests::the_response_weight_is_exported_for_a_scraper",
+        "a_scrape_weighs_what_the_node_answered"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

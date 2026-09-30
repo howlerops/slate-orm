@@ -167,11 +167,7 @@ def roots(source: str) -> set[str]:
 
 def claimed_read(text: str) -> set[str]:
     """Trees a docstring says it reads or walks."""
-    return {
-        tree
-        for sentence in CLAIMS_READ.findall(text)
-        for tree in MENTION.findall(sentence)
-    }
+    return {tree for sentence in CLAIMS_READ.findall(text) for tree in MENTION.findall(sentence)}
 
 
 def problems(root: Path = ROOT) -> list[str]:
@@ -203,6 +199,27 @@ def problems(root: Path = ROOT) -> list[str]:
                 "  Either the scope was written before the code, or a "
                 "widening was reverted and the sentence stayed."
             )
+        # And the other direction, which this rule did not have. A claim that
+        # names *fewer* trees than the code reads is the same staleness with
+        # the sign flipped, and it is the one that actually happened: both
+        # guards making a scope claim understated it by exactly one tree,
+        # `check_cost_prose.py` omitting `site/` after #288 widened it and
+        # `check_site_claims.py` omitting `docs/`. Only checking claimed ⊆ read
+        # let a widening land in the code and not in the sentence — which is
+        # the failure this guard exists to catch, in this guard.
+        #
+        # Only when the docstring makes a claim at all: a guard that says
+        # nothing about its scope is saying nothing, not saying the wrong
+        # thing, and forcing twenty-eight of them to declare would be a
+        # different rule with a different cost.
+        for tree in sorted(read - wanted) if wanted else ():
+            said.append(
+                f"scripts/{path.name}'s docstring lists the trees it reads "
+                f"and `{tree}/` is not among them, while the file builds a "
+                "path into it.\n"
+                "  A scope claim that understates is read as exhaustive. "
+                "Widen the sentence, or say why that path is not scope."
+            )
 
     # The never-fires halves, and there are three because three different
     # things could quietly leave this reading nothing: no guards found, no
@@ -220,7 +237,7 @@ def problems(root: Path = ROOT) -> list[str]:
         )
     elif not any(roots(path.read_text(encoding="utf-8")) for path in guards):
         said.append(
-            "no guard builds a `<root> / \"…\"` path at all, so every "
+            'no guard builds a `<root> / "…"` path at all, so every '
             "claim above was compared against an empty set and none of them "
             "could fail. The convention changed; teach `roots` about it."
         )

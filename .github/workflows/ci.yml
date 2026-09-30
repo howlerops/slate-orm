@@ -130,6 +130,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - run: go vet ./...
         working-directory: clients/go
+      # `gofmt -l` prints the files it would rewrite and exits zero either
+      # way, so the status says nothing and the output is the check. Same
+      # wrapper as `go_fmt` in `scripts/check.sh`, which had been the only
+      # place any Go formatting was checked at all — `fmt` covers Rust and
+      # nothing covered this.
+      - run: test -z "$(gofmt -l .)" || { echo "gofmt would rewrite:"; gofmt -l .; exit 1; }
+        working-directory: clients/go
       - run: go test ./...
         working-directory: clients/go
         env:
@@ -198,6 +205,11 @@ jobs:
           path: bin
       - run: chmod +x bin/slate-serverd
       - run: npm ci
+        working-directory: clients/typescript
+      # The client's own typecheck, which `check.sh` ran and no job did. `npm
+      # test` compiles what the tests import and nothing else, so a type error
+      # in an unexercised export shipped green.
+      - run: npx --no-install tsc -p tsconfig.json --noEmit
         working-directory: clients/typescript
       - run: npm test
         working-directory: clients/typescript
@@ -321,6 +333,9 @@ jobs:
       - run: python3 scripts/test_check_caveat_citations.py
       - run: python3 scripts/check_closed_caveats.py
       - run: python3 scripts/test_check_closed_caveats.py
+      - run: python3 scripts/test_read_deliberate.py
+      - run: python3 scripts/check_draws.py
+      - run: python3 scripts/test_check_draws.py
       # The tracker itself, which `scripts/check.sh` has always run and
       # CI never did. `ledger/2026-09-25-a-reworded-caveat-is-a-different-claim.md`
       # recorded the gap: rewording a bullet detaches its verdict
@@ -336,6 +351,13 @@ jobs:
       - run: python3 scripts/test_check_secret_types.py
       - run: python3 scripts/check_cited_docs.py
       - run: python3 scripts/test_check_cited_docs.py
+      # The same failure one level up from check_cited_tests.py, which
+      # matches identifiers: a docs page naming a *file* that has been
+      # renamed away points a reader at nothing, and nothing compiles a
+      # document. A citation may be written relative to a crate, so a path
+      # resolves when it is the tail of a tracked one.
+      - run: python3 scripts/check_cited_files.py
+      - run: python3 scripts/test_check_cited_files.py
       # A handler must authorise before it touches a table's shape.
       # Security finding 8 was fixed twice — the second time because
       # the first covered the handlers it was written about and the
@@ -352,6 +374,24 @@ jobs:
       # third and fourth time.
       - run: python3 scripts/check_examples_roster.py
       - run: python3 scripts/test_check_examples_roster.py
+      # A caveat whose subject is GitHub's settings, a registry or an
+      # upstream project is falsified by nobody here doing anything, so it
+      # goes stale invisibly: `2026-09-14-main-and-the-documentation-sweep.md`
+      # said Pages could not be enabled, and Pages was enabled seventeen
+      # minutes later, on the same commit. This asks each such caveat to say
+      # how it can be re-checked.
+      # Every harness that takes a prebuilt binary must refuse a stale one.
+      # Three of six did not, and the conformance runner was one of them —
+      # which cost a mutation of `slate-server` its finding, because the
+      # mutated source never ran. `scripts/prebuilt.py` has the account.
+      - run: python3 scripts/test_prebuilt.py
+      - run: python3 scripts/check_outside_premises.py
+      - run: python3 scripts/test_check_outside_premises.py
+      # …and, separately, actually fetches them. This one needs the network
+      # and so is not in `scripts/check.sh`; a host that cannot be reached is
+      # reported and does not fail, but a run where *nothing* was reachable
+      # does, because it tested nothing.
+      - run: python3 scripts/check_outside_premises.py --run
       - run: python3 scripts/check_toolchain_pins.py
       - run: python3 scripts/test_check_toolchain_pins.py
       # …and that no comment states a cost constant's old value. The
@@ -373,6 +413,73 @@ jobs:
       # a schema the server does not have, and no type system sees it.
       - run: python3 scripts/check_proto_copies.py
       - run: python3 scripts/test_check_proto_copies.py
+      # A client with no way to pass interceptors, TLS or keepalive through
+      # to its channel is one a caller cannot instrument or secure. The
+      # TypeScript client shipped that way for months, and the roster here is
+      # read off `clients/` so a fourth arriving without a door is seen.
+      - run: python3 scripts/check_transport_door.py
+      - run: python3 scripts/test_check_transport_door.py
+      # A library crate that names an async runtime makes a decision
+      # belonging to whoever embeds it. slate-kernel did, used none of it, and
+      # only a wasm build noticed. The closure this checks is computed from
+      # the manifests; the exemptions outside it are a person's call.
+      - run: python3 scripts/check_wasm_runtime.py
+      - run: python3 scripts/test_check_wasm_runtime.py
+      # `codegen.py --check` proves a generated declaration matches the
+      # catalog, never that anybody imports it or puts it on a request. An
+      # adapter that stopped declaring would keep passing --check and send
+      # every request with no schema claim on it.
+      - run: python3 scripts/check_generated_is_used.py
+      - run: python3 scripts/test_check_generated_is_used.py
+      # A client accepts a renamed column's previous name by doing
+      # nothing at all — the server enumerates every spelling the catalog
+      # accepts — so the property is lost the moment a client gets in the
+      # way, with no test to say so. Two entries recorded Go and
+      # TypeScript as lacking it before anybody ran it. The roster is read
+      # off `clients/`, so a fourth arriving without the test is seen.
+      - run: python3 scripts/check_renamed_column.py
+      - run: python3 scripts/test_check_renamed_column.py
+      # scripts/mutate.py can read five test runners and no guard, so a
+      # mutation aimed at the real tree and judged by a guard had to be run
+      # by hand, without the restore-in-a-finally or the reported-suite
+      # count. mutate_guard.py is that missing dialect, and refuses to call
+      # a guard that died a guard that refused.
+      - run: python3 scripts/test_mutate_guard.py
+      # Three guards were green for reasons unrelated to what they check,
+      # and every one was found by mutating the real tree rather than a
+      # fixture. scripts/mutations.json holds one mutation per guard, or a
+      # sentence saying why there is none; this checks the roster is
+      # complete and its anchors still occur exactly once. Running the
+      # mutations is scripts/run_mutations.py, which breaks the tree and is
+      # deliberately not here.
+      - run: python3 scripts/check_mutations_roster.py
+      - run: python3 scripts/test_check_mutations_roster.py
+      # The release's own first job runs this too, with the tag. Here it is
+      # the tree against itself, which is the half that can go wrong on an
+      # ordinary commit — somebody bumping `package.json` and not `Cargo.toml`
+      # finds out now rather than on the day a tag publishes the older number
+      # to a registry that will not let it be reused.
+      - run: python3 scripts/check_versions.py
+      - run: python3 scripts/test_check_versions.py
+      # Nine steps that `check.sh` had been running and no workflow did, found
+      # by reading the roster in the other direction:
+      # `scripts/test_check_sh.py` held every CI step to the script and nothing
+      # held the script to CI. `check_versions.py` above was the first of them
+      # noticed, by hand, off run 496's step list; these are the rest. Every
+      # one had been firing only when somebody remembered the script, which is
+      # the failure CLAUDE.md names — a check that never fires is a check
+      # nobody has debugged. `check_mutation_claims.py` is the sharpest case:
+      # it caught a real defect the day this was found, and it caught it
+      # locally, because CI was not running it.
+      - run: python3 scripts/check_client_identity.py
+      - run: python3 scripts/test_check_client_identity.py
+      - run: python3 scripts/check_mutation_claims.py
+      - run: python3 scripts/test_check_mutation_claims.py
+      - run: python3 scripts/check_retired_claims.py
+      - run: python3 scripts/test_check_retired_claims.py
+      - run: python3 scripts/check_write_paths.py
+      - run: python3 scripts/test_check_write_paths.py
+      - run: python3 scripts/test_free_ports.py
 
   quickstarts:
     name: the landing page's code
@@ -604,6 +711,14 @@ jobs:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
       - run: go test ./schema/
         working-directory: examples/explorer/backends/go
+      # The demo's own adapters, which `check.sh` checked and no job did. The
+      # Go one is vetted and formatted in `clients/go` and was neither here;
+      # the node adapter is typechecked nowhere else, because `npm test` below
+      # compiles only what its tests reach.
+      - run: go vet ./...
+        working-directory: examples/explorer/backends/go
+      - run: test -z "$(gofmt -l .)" || { echo "gofmt would rewrite:"; gofmt -l .; exit 1; }
+        working-directory: examples/explorer/backends/go
       # The node adapter resolves `@slate-orm/client` to a symlink into
       # `clients/typescript` and imports its *built* `dist/`, which `npm ci`
       # does not produce — `run.sh` builds it explicitly for exactly this
@@ -612,6 +727,15 @@ jobs:
       # on a missing module rather than on anything it was testing.
       - run: npm run build
         working-directory: clients/typescript
+      # After that build, not before it. The adapter imports
+      # `@slate-orm/client`, whose type declarations are what `npm run build`
+      # above produces, so placing this earlier gave `TS2307: cannot find
+      # module` and then twelve cascading `implicitly has an 'any' type` —
+      # twelve errors with one cause. It passed on a laptop because `dist/`
+      # was already there from an earlier run, which is the whole reason a
+      # check has to fire in CI before anyone believes it.
+      - run: npx --no-install tsc -p tsconfig.json --noEmit
+        working-directory: examples/explorer/backends/node
       - run: npm test
         working-directory: examples/explorer/backends/node
       # The only thing anywhere that compares the three clients to *each
@@ -625,6 +749,21 @@ jobs:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
       - run: ./run.sh --e2e
         working-directory: examples/explorer
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+      # Last in this job, and here rather than in `scripts/check.sh`, because
+      # it starts the whole stack: a head node, a Go binary and two npm trees.
+      # This job already pays for `run.sh` twice, so the third is the cheapest
+      # place in CI to assert that stopping it stops everything.
+      #
+      # `ledger/2026-09-14-the-demo-runner-left-processes-behind.md` is the
+      # leak: `go run` compiles then runs the binary as a child and `npm start`
+      # spawns node, so killing the recorded pid left grandchildren, and this
+      # runner's own cleanup line reported three orphans after this job.
+      #
+      # Last for a second reason: a failure leaves listeners on 7421 and
+      # 7431-7433, which would make any later step in this job fail to bind.
+      - run: python3 scripts/test_run_teardown.py
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
 
@@ -733,6 +872,32 @@ jobs:
       - run: sh scripts/run_examples.sh slate-kernel --smoke
       - run: sh scripts/run_examples.sh slate-orm --smoke
 
+  # The helpdesk, over SlateDB on an object store.
+  #
+  # `cargo test -p slate-helpdesk` runs the same service over `MemoryStore`,
+  # which is a `BTreeMap`, and the crate's central claim is that
+  # `Helpdesk<S>` answers the same over any `KvStore`. This is the job that
+  # makes that a result rather than a claim about a type parameter: an LSM,
+  # a manifest, a WAL and a bucket underneath the identical code, and the
+  # store closed and reopened halfway so the second half reads what the
+  # first half persisted.
+  #
+  # `--smoke` because the run's job is that it works, not how fast: seven
+  # tickets is the smallest number that still pages more than once and rolls
+  # up more than one group. `run.sh` builds `--release` — the reason is a
+  # measurement in CLAUDE.md about debug builds and disk, and it costs
+  # nothing here.
+  #
+  # Not `--s3`: the S3 differences that matter (conditional writes, error
+  # shapes) have their own `minio` job, and this one asserts none of them.
+  helpdesk:
+    name: helpdesk on slatedb, smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sh examples/helpdesk/run.sh --smoke
+
   # The release build, called rather than copied.
   #
   # Compiles `slate-serverd` for both release targets, installs the aarch64
@@ -747,6 +912,64 @@ jobs:
   release-build:
     name: the release build
     uses: ./.github/workflows/release-build.yml
+
+  # The image, built on every push and pushed nowhere.
+  #
+  # `release.yml` publishes it to GHCR on a tag, and a Dockerfile first
+  # exercised on release day is the shape this repository has already been
+  # burned by: `ci.yml` itself was active, plausible and had run zero times.
+  # Building it here costs a few minutes and means the `--locked` build, the
+  # distroless base and the `COPY` set are known to work before anybody tags.
+  #
+  # One architecture, not two. The release builds `linux/amd64` and
+  # `linux/arm64`; the second needs QEMU and roughly triples the time, and what
+  # this job is for is the Dockerfile rather than the cross-build — the
+  # aarch64 *binary* is already built by `release-build.yml` above.
+  #
+  # `load: true` rather than `push`, so the image exists locally and the step
+  # after it can run the thing that was built. A build that succeeds and
+  # produces a binary that will not start is a green job and a broken release.
+  image:
+    name: the container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: slate-serverd:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # The same configuration `release-build.yml` validates the bare binary
+      # against, read out of the docs page so the two cannot drift, and run
+      # through the image's entrypoint. `--check` exits after validating, so
+      # this needs no bucket and no port.
+      - name: It starts inside the image, and validates a configuration
+        run: |
+          python3 - <<'PY'
+          import html, pathlib, re
+          page = pathlib.Path("site/docs/quickstart.html").read_text()
+          panel = re.search(
+              r'<div data-panel="toml"[^>]*>\s*<pre><code>(.*?)</code></pre>',
+              page, re.DOTALL)
+          assert panel, "site/docs/quickstart.html has no TOML panel"
+          pathlib.Path("image-check.toml").write_text(html.unescape(panel.group(1)))
+          PY
+          docker run --rm -v "$PWD/image-check.toml:/etc/slate/head.toml:ro" \
+            slate-serverd:ci --config /etc/slate/head.toml --check
+      # An image with no shell cannot be poked at by hand, so the one thing
+      # worth asserting about the base is asserted here: distroless has no
+      # `/bin/sh`, and an image that grew one has stopped being the base this
+      # file chose.
+      - name: The base is still distroless
+        run: |
+          if docker run --rm --entrypoint /bin/sh slate-serverd:ci -c true 2>/dev/null; then
+            echo "::error::the image has a shell; the base is no longer distroless" >&2
+            exit 1
+          fi
+          echo "no shell in the image, as intended"
 
   minio:
     name: integration against MinIO

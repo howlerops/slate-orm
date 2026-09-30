@@ -1,0 +1,32 @@
+{
+  "at": "2026-09-29T18:36:51+00:00",
+  "file": "crates/slate-serverd/src/observe.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bins",
+    "--test",
+    "observing",
+    "--no-fail-fast"
+  ],
+  "commit": "428ff2b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "only an already-ended body is wrapped, so nothing is weighed",
+      "old": "Ok(response) if !failed && !response.body().is_end_stream() => {",
+      "new": "Ok(response) if !failed && response.body().is_end_stream() => {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_scrape_weighs_what_the_node_answered"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

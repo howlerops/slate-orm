@@ -1,0 +1,95 @@
+{
+  "at": "2026-09-29T08:26:36+00:00",
+  "file": "scripts/check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "96217fd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a bare mention of GOTOOLCHAIN counts as a decision again",
+      "old": "DECIDES = re.compile(r\"\"\"GOTOOLCHAIN[\"']?\\]?\\s*[:=]\"\"\")",
+      "new": "DECIDES = re.compile(r\"GOTOOLCHAIN\")",
+      "verdict": "caught",
+      "caught_by": [
+        "GOTOOLCHAIN named only in a docstring is not a decision"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "comments are not stripped before looking for the setting",
+      "old": "        text = A_COMMENT.sub(\"\", (root / path).read_text(encoding=\"utf-8\"))",
+      "new": "        text = (root / path).read_text(encoding=\"utf-8\")",
+      "verdict": "caught",
+      "caught_by": [
+        "GOTOOLCHAIN named only in a comment is not a decision"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the pin must share a match with the `go install`, as it used to",
+      "old": "        pinned = PINNED.findall(A_COMMENT.sub(\"\", text))",
+      "new": "        pinned = PINNED.findall(A_COMMENT.sub(\"\", text)) if \"@v1.2.3\\\" ]\" in text else []",
+      "verdict": "caught",
+      "caught_by": [
+        "a pinned workflow and an installer that decides is clean",
+        "a pinned workflow and an installer that inherits is reported",
+        "setting GOTOOLCHAIN to local counts as deciding",
+        "GOTOOLCHAIN named only in a comment is not a decision",
+        "a pin held in a constant far from the `go install` is still a pin",
+        "GOTOOLCHAIN named only in a docstring is not a decision",
+        "the guard and its own test are not counted as installers",
+        "a shell `go install` is read, not only a Python argument list"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "this guard and its own test count as installers again",
+      "old": "        if name in NOT_AN_INSTALLER:",
+      "new": "        if name in ():",
+      "verdict": "caught",
+      "caught_by": [
+        "the guard and its own test are not counted as installers"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unpinned `go install` is treated as pinned",
+      "old": "        pinned = PINNED.findall(A_COMMENT.sub(\"\", text))",
+      "new": "        pinned = PINNED.findall(A_COMMENT.sub(\"\", text)) or [\"unpinned\"]",
+      "verdict": "caught",
+      "caught_by": [
+        "an unpinned `go install` is not a pinned one",
+        "a tree with no pinned `go install` at all is reported, not passed over"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a `go install` invocation is no longer required, only a pin",
+      "old": "        if not GO_INSTALL.search(text):\n            continue",
+      "new": "        if False:\n            continue",
+      "verdict": "caught",
+      "caught_by": [
+        "a pinned workflow and an installer that decides is clean",
+        "setting GOTOOLCHAIN to local counts as deciding",
+        "the guard and its own test are not counted as installers",
+        "an unpinned `go install` is not a pinned one",
+        "a tree with no pinned `go install` at all is reported, not passed over",
+        "vendored trees are skipped, because their installers are not ours",
+        "this repository decides GOTOOLCHAIN where it must"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

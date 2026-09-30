@@ -1,0 +1,70 @@
+{
+  "at": "2026-09-29T05:47:04+00:00",
+  "file": "scripts/check_generated_is_used.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_generated_is_used.py"
+  ],
+  "commit": "a251c23",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "importers counts the file itself",
+      "old": "if line and line != path",
+      "new": "if line",
+      "verdict": "caught",
+      "caught_by": [
+        "a self-naming header is not an importer: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "package_of falls back to the repository root",
+      "old": "    return Path(path).parent.as_posix()",
+      "new": "    return \".\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a package with no manifest scopes to its own directory: no 'nothing in loose imports' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the scope widens to the whole repository",
+      "old": "[\"git\", \"grep\", \"-l\", \"-E\", shaped, \"--\", package_of(path)],",
+      "new": "[\"git\", \"grep\", \"-l\", \"-E\", shaped],",
+      "verdict": "caught",
+      "caught_by": [
+        "an importer in another package does not count: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the import shape is dropped for the bare stem",
+      "old": "        rf\"(from|import|require)[[:space:]]+[.\\\"'/]*{stem}\\b\"\n        rf\"|[\\\"'][^\\\"']*[./]{stem}(\\.[A-Za-z]+)?[\\\"']\"",
+      "new": "        rf\"\\b{stem}\\b\"\n        rf\"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a bare mention is not an import: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the quoted-path arm is dropped, which Go alone needs",
+      "old": "        rf\"|[\\\"'][^\\\"']*[./]{stem}(\\.[A-Za-z]+)?[\\\"']\"",
+      "new": "        rf\"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the real shape passes: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

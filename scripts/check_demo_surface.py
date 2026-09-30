@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Every adapter endpoint the demo's UI does not call is one somebody decided about.
 
-The demo's web UI calls 12 of the adapters' 24 endpoints. That is the design —
+The demo's web UI calls a subset of the adapters' endpoints — 15 of 25 as this
+is written, and the check prints both so the sentence cannot be the thing that
+drifts. That is the design —
 `ledger/2026-09-21-the-demo-ui-is-a-subset-on-purpose.md` argues it at length:
 the UI exists to show the SDK switcher and the identity switcher, and surface
 coverage is the conformance runner's job. The problem that entry named and did
@@ -95,17 +97,20 @@ NOT_IN_THE_UI = {
     ),
     "/api/related": "one relationship loaded for many parents; the join panel already shows two tables",
     "/api/page": "keyset pagination needs a cursor to be visible to mean anything",
-    "/api/search": (
-        "the full-text demo: deliberately no search box. Adding one and not a "
-        "window panel would set the precedent that the newest feature gets a "
-        "panel, which is how a demo becomes a menu"
-    ),
-    "/api/conditional-update": "optimistic concurrency needs a second writer to be worth watching",
-    "/api/conditional-delete": "the same, for a delete",
     "/api/purge": "erasing retired rows answers with a count and shows nothing",
     "/api/bad-status": "a deliberate check violation, for the conformance corpus's error shapes",
     "/api/typed": "reads two rows through the *generated* decoders; the UI decodes its own",
     "/api/bad-batch": "two rows a batch refuses for different reasons, as data rather than a trailer",
+    "/api/render-decimals": (
+        "twelve decimal strings a client formats without asking the server; "
+        "the UI shows a rendered price in the conditional-write panel, which "
+        "is the same renderer on a value somebody chose"
+    ),
+    "/api/round-trips": (
+        "how many gRPC calls a fixed workload cost, which is a number about "
+        "the client and not about the data; a panel would show four integers "
+        "that never change"
+    ),
 }
 
 
@@ -250,9 +255,11 @@ def main(
         problems.append(
             f"`{endpoint}` is served by the adapters and called nowhere in the "
             "UI.\n"
-            "  That may well be right — the UI shows 12 of 24 on purpose — but "
-            "it is a decision. Give it a panel, or add it to NOT_IN_THE_UI "
-            "with one line saying what a panel for it would fail to show."
+            f"  That may well be right — the UI shows "
+            f"{len(served) - len(NOT_IN_THE_UI)} of {len(served)} on purpose — "
+            "but it is a decision. Give it a panel, or add it to "
+            "NOT_IN_THE_UI with one line saying what a panel for it would "
+            "fail to show."
         )
 
     # Only against the real tree: `readme_counts` takes its own three paths,

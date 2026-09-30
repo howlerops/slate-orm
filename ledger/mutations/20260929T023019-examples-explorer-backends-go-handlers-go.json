@@ -1,0 +1,46 @@
+{
+  "at": "2026-09-29T02:30:19+00:00",
+  "file": "examples/explorer/backends/go/handlers.go",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "9537025",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the go adapter asks for no decimal sum",
+      "old": "\t\tAggregates: []slate.Aggregate{slate.Count(), slate.SumOf(slate.At(books, 7))},",
+      "new": "\t\tAggregates: []slate.Aggregate{slate.Count()},",
+      "verdict": "caught",
+      "caught_by": [
+        "a grouped join by a computed decade (app): the adapters disagree",
+        "a computed decade, ordered by count (app): the adapters disagree",
+        "authors by what their books are worth (app): the adapters disagree",
+        "authors by how many books they have (app): the adapters disagree",
+        "a computed decade with a HAVING (app): the adapters disagree",
+        "explaining a grouped join over a computed decade (app): the adapters disagree",
+        "a grouped join by a computed upper-cased author (app): the adapters disagree",
+        "a grouped join by a computed CASE over the year (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the go adapter sorts by the count when asked for the total",
+      "old": "\tcase \"total\":\n\t\tcolumn = slate.Agg(1)",
+      "new": "\tcase \"total\":\n\t\tcolumn = slate.Agg(0)",
+      "verdict": "caught",
+      "caught_by": [
+        "authors by what their books are worth (app): the adapters disagree",
+        "the must-differ pair ('authors by what their books are worth', 'authors by how many books they have') is not comparable: 'authors by what their books are worth' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

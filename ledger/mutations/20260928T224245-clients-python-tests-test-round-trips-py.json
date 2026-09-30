@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-28T22:42:45+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "python3",
+    "-m",
+    "pytest",
+    "tests/test_round_trips.py",
+    "-q"
+  ],
+  "commit": "321f457",
+  "python": "3.11.15",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

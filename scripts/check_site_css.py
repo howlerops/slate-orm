@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
@@ -117,6 +118,39 @@ def selectors(css: str) -> tuple[set[str], set[str]]:
     return classes, ids
 
 
+#: A comment in a source, in the three languages these globs reach: TypeScript,
+#: TSX and HTML. A line comment is `[^\\n]*` rather than `.*$`, because this
+#: pattern needs `DOTALL` for the block forms and a greedy `.*$` under it eats
+#: from the first `//` to the end of the file — which it did, and forty-three
+#: live classes read as dead. Stripped before a selector is looked for, because
+#: prose is not
+#: a use — `api.ts` explains an environment variable by saying "what a shell
+#: produces", and that kept `.shell` alive after the one `class="shell"` in the
+#: tree was gone. Found by mutation; the fourth time `scripts/` has counted a
+#: mention as a use, after the word "schema" in 483 files, a declaration in an
+#: unrelated test, and `GOTOOLCHAIN` in twenty lines of explanation.
+A_COMMENT = re.compile(r"/\*.*?\*/|<!--.*?-->|^[ \t]*(?://|\*)[^\n]*", re.DOTALL | re.MULTILINE)
+
+
+def named(texts: Iterable[str]) -> str:
+    """Every source, comments removed, as one string to search."""
+    return A_COMMENT.sub(" ", "\n".join(texts))
+
+
+def names(used: str, name: str) -> bool:
+    """Is `name` a whole word here?
+
+    Whole word rather than substring, which is what this was. `.bar` was
+    satisfied by the word "toolbar" anywhere in any source, and a class named
+    for anything with an English word in it — `shell`, `row`, `group` — was
+    effectively unguarded. Nothing in the tree is dead under either rule today,
+    measured: 91 classes across two stylesheets, 0 dead by substring and 0 dead
+    by whole word outside comments. So this catches nothing now and closes the
+    hole a mutation walked straight through.
+    """
+    return re.search(rf"\b{re.escape(name)}\b", used) is not None
+
+
 def check(root: Path) -> list[tuple[str, bool, str]]:
     """`(what, ok, detail)` per check, in the shape the other guards use."""
     out: list[tuple[str, bool, str]] = []
@@ -131,7 +165,7 @@ def check(root: Path) -> list[tuple[str, bool, str]]:
             continue
 
         files = sources(root, globs)
-        used = "\n".join(p.read_text(encoding="utf-8") for p in files)
+        used = named(p.read_text(encoding="utf-8") for p in files)
         classes, ids = selectors(stylesheet.read_text(encoding="utf-8"))
 
         record(f"{sheet} defines some classes", bool(classes), f"{len(classes)}")
@@ -140,14 +174,14 @@ def check(root: Path) -> list[tuple[str, bool, str]]:
         # repository keeps meeting. Named rather than inferred.
         record(f"{sheet} has sources to check against", bool(files), str(globs))
 
-        dead = sorted(name for name in classes if name not in used)
+        dead = sorted(name for name in classes if not names(used, name))
         record(
             f"every class {sheet} defines is named by one of its sources",
             not dead,
             ", ".join(dead),
         )
 
-        orphan_ids = sorted(name for name in ids if name not in used)
+        orphan_ids = sorted(name for name in ids if not names(used, name))
         record(
             f"every id {sheet} defines is named by one of its sources",
             not orphan_ids,

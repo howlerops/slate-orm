@@ -30,16 +30,30 @@
 
 mod common;
 
+use prost::Message;
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::{Action, Grant, RecordStore, SecurityCatalog, SecurityContext};
 use slate_schema::{Catalog, ForeignKeyDef, IndexDef, IndexId, Row, TableDef, TableId};
 use slate_server::HeadConfig;
 use slate_server::proto as pb;
 use slate_server::proto::records_client::RecordsClient;
+use slate_server::proto::rpc;
 use slate_tuple::{Value, ValueType};
 use std::sync::Arc;
 use tonic::Code;
 use tonic::transport::Channel;
+
+/// The `google.rpc.ErrorInfo` a status carries in `grpc-status-details-bin`.
+///
+/// Written out rather than helped along by anything in `slate-server`, the way
+/// `tests/status.rs` does it and for its reason: the thing under test is
+/// whether a client that has never seen this code can read the payload.
+fn error_info(status: &tonic::Status) -> rpc::ErrorInfo {
+    let details = rpc::Status::decode(status.details()).expect("details are a google.rpc.Status");
+    let any = details.details.first().expect("one detail");
+    assert_eq!(any.type_url, "type.googleapis.com/google.rpc.ErrorInfo");
+    rpc::ErrorInfo::decode(any.value.as_slice()).expect("an ErrorInfo")
+}
 
 const ARTICLES: TableId = TableId(1);
 const TAGS: TableId = TableId(2);
@@ -338,6 +352,16 @@ async fn a_path_deeper_than_the_limit_is_refused() {
         "the refusal names the knob: {}",
         error.message()
     );
+
+    // And the numbers are in the details, not only in the sentence. The
+    // caveat in `ledger/2026-09-17-a-path-of-relationships-on-the-wire.md`
+    // was that a caller wanting to shorten the path had to match prose for
+    // the limit; a test that reads it out of `message()` would be that same
+    // contract written down as if it were one.
+    let info = error_info(&error);
+    assert_eq!(info.reason, "RELATION_DEPTH_EXCEEDED");
+    assert_eq!(info.metadata.get("limit").map(String::as_str), Some("1"));
+    assert_eq!(info.metadata.get("asked").map(String::as_str), Some("2"));
 }
 
 #[tokio::test]

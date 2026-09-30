@@ -3,7 +3,13 @@ import { test } from "node:test";
 
 import { Metadata, status as GrpcStatus, type ServiceError } from "@grpc/grpc-js";
 
-import { DETAILS_KEY, ERROR_INFO_URL, checkFailuresOf, reasonOf } from "../src/details.js";
+import {
+  DETAILS_KEY,
+  ERROR_INFO_URL,
+  checkFailuresOf,
+  detailsOf,
+  reasonOf,
+} from "../src/details.js";
 import { fromBatchError, fromServiceError } from "../src/errors.js";
 
 /**
@@ -167,6 +173,43 @@ const CHECKS_HEX =
   "6b2e30120c7469746c655f6c656e6774681a150a05636865636b120c7469746c655f" +
   "6c656e677468";
 const CHECKS = Buffer.from(CHECKS_HEX, "hex");
+
+/**
+ * A real `grpc-status-details-bin` from a handler's own refusal, captured by
+ * `cargo test -p slate-server --test status -- --ignored --nocapture
+ * emit_a_relation_depth_blob`.
+ *
+ * A *flat* metadata map, unlike `CHECKS_HEX`'s indexed one, and that is the
+ * point: a client has to read keys it was not written against.
+ */
+const DEPTH_HEX =
+  "080312c301612072656c6174696f6e736869702070617468206f6620332073746570" +
+  "73207761732061736b656420666f7220616e6420746865206c696d69742069732032" +
+  "3b20656163682073746570206973206120726561642c20736f207468652064657074" +
+  "6820697320686f77206d616e79207265616473206f6e652072657175657374207065" +
+  "72666f726d732e2053686f7274656e2074686520706174682c206f72207261697365" +
+  "20605b6c696d6974735d206d61785f72656c6174696f6e5f6465707468601a680a28" +
+  "747970652e676f6f676c65617069732e636f6d2f676f6f676c652e7270632e457272" +
+  "6f72496e666f123c0a1752454c4154494f4e5f44455054485f455843454544454412" +
+  "09736c6174652d6f726d1a0a0a0561736b65641201331a0a0a056c696d6974120132";
+const DEPTH = Buffer.from(DEPTH_HEX, "hex");
+
+test("a refusal's numbers come back without parsing prose", () => {
+  // `ledger/2026-09-17-a-path-of-relationships-on-the-wire.md` recorded that a
+  // refused path reports `max_relation_depth` in prose, so a caller wanting to
+  // shorten the path and retry matched the sentence for the number.
+  assert.equal(reasonOf(DEPTH), "RELATION_DEPTH_EXCEEDED");
+  assert.deepEqual(detailsOf(DEPTH), { limit: "2", asked: "3" });
+  // And the shaped reader says nothing about it, which keeps the two apart: a
+  // caller branching on `violations` must not see this as a check failure.
+  assert.deepEqual(checkFailuresOf(DEPTH), []);
+});
+
+test("details of a blob with no ErrorInfo is empty", () => {
+  // Most refusals carry none, and `{}` is the answer rather than a throw.
+  assert.deepEqual(detailsOf(Buffer.alloc(0)), {});
+  assert.deepEqual(detailsOf(Buffer.from("not a protobuf at all")), {});
+});
 
 test("every failing check comes back typed", () => {
   // The payoff of publishing `column` and `message`: no prose to parse. A form

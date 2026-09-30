@@ -1,0 +1,49 @@
+{
+  "at": "2026-09-28T22:44:41+00:00",
+  "file": "clients/python/tests/test_round_trips.py",
+  "dialect": "pytest",
+  "command": [
+    "python3",
+    "-m",
+    "pytest",
+    "clients/python/tests/test_round_trips.py",
+    "-q"
+  ],
+  "commit": "321f457",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the paging loop asks for one page instead of four",
+      "old": "    for _ in range(PAGES):\n        q = Query(DOCS).limit(PAGE_SIZE)",
+      "new": "    for _ in range(1):\n        q = Query(DOCS).limit(PAGE_SIZE)",
+      "verdict": "caught",
+      "caught_by": [
+        "clients/python/tests/test_round_trips.py::test_paging_by_cursor_is_one_round_trip_per_page"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the stream interceptor stops counting, so reads read as free",
+      "old": "    def intercept_unary_stream(\n        self, continuation: Any, details: Any, request: Any\n    ) -> Any:\n        self._count(details.method)\n",
+      "new": "    def intercept_unary_stream(\n        self, continuation: Any, details: Any, request: Any\n    ) -> Any:\n",
+      "verdict": "caught",
+      "caught_by": [
+        "clients/python/tests/test_round_trips.py::test_paging_by_cursor_is_one_round_trip_per_page"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the janitor stops deleting, so the suite is polluted",
+      "old": "            janitor.delete(DOCS, [[key] for key in range(FIRST_KEY, FIRST_KEY + ROWS * 2)])",
+      "new": "            pass",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "this file alone cannot see it. The damage is to other files' tests \u2014 five in test_streaming.py, which count rows rather than naming them \u2014 so the mutation is caught by the suite and not by this command. Recorded rather than widened because pointing this case at the whole suite would make every mutation here a two-minute run."
+    }
+  ],
+  "restored_clean": true
+}

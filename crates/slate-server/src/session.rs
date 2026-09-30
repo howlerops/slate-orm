@@ -45,7 +45,7 @@
 use crate::convert::{GroupedRead, GroupedSource, MultiRead, chain_row_values, two_tables};
 use crate::leadership::Leadership;
 use crate::service::WriteObserver;
-use crate::status::from_kernel;
+use crate::status::{self, from_kernel};
 use slate_kernel::security::Principal;
 use slate_kernel::{
     Chain, ChainCursor, ChainPlan, Explanation, Expr, Group, JoinCursor, JoinExplanation,
@@ -486,12 +486,20 @@ impl Sessions {
         {
             let open = self.open.lock().map_err(poisoned)?;
             if open.len() >= self.limits.max_transactions {
-                return Err(Status::new(
+                // Same as the batch bound: a caller backing off wants the
+                // number, and the number is not the caller's own — it is this
+                // node's configuration, which prose is the wrong carrier for.
+                return Err(status::refused(
                     Code::ResourceExhausted,
                     format!(
                         "this node already has {} transactions open, which is its limit",
                         open.len()
                     ),
+                    "TRANSACTION_LIMIT",
+                    HashMap::from([
+                        ("limit".to_owned(), self.limits.max_transactions.to_string()),
+                        ("open".to_owned(), open.len().to_string()),
+                    ]),
                 ));
             }
         }

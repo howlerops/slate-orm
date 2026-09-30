@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T02:37:36+00:00",
+  "file": "examples/explorer/backends/node/src/main.ts",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "82a637f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the node adapter renders every row at scale two",
+      "old": "        text: unitsToString(units, scale),",
+      "new": "        text: unitsToString(units, 2),",
+      "verdict": "caught",
+      "caught_by": [
+        "twelve decimals rendered (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the node adapter's table loses the negative below one unit",
+      "old": "  [-75n, 2],",
+      "new": "  [75n, 2],",
+      "verdict": "caught",
+      "caught_by": [
+        "twelve decimals rendered (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

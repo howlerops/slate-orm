@@ -195,14 +195,20 @@ async fn a_scrape_reports_what_the_node_served() {
     assert!(answered.contains("text/plain; version=0.0.4"), "{answered}");
 
     let query_method = "/slate.v1.Records/Query";
+    // Whole line, not `contains`: a count is a prefix of a bigger count, so
+    // `contains("… 2")` passes on "… 20" and `contains("… 1")` on "… 10".
+    // Latent here — the counts are 2 and 1 today — and found by a mutation in
+    // `ceilings.rs`, where the count is ten and the same shape let a wrong
+    // literal survive.
+    let counted = |line: &str| answered.lines().any(|one| one.trim() == line);
     assert!(
-        answered.contains(&format!(
+        counted(&format!(
             "slate_requests_total{{method=\"{query_method}\"}} 2"
         )),
         "both calls should be counted:\n{answered}"
     );
     assert!(
-        answered.contains(&format!(
+        counted(&format!(
             "slate_request_failures_total{{method=\"{query_method}\"}} 1"
         )),
         "the refusal should be counted as a failure:\n{answered}"
@@ -214,6 +220,160 @@ async fn a_scrape_reports_what_the_node_served() {
             "slate_request_head_seconds_bucket{{method=\"{query_method}\",le=\"+Inf\"}} 2"
         )),
         "{answered}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
+async fn a_scrape_weighs_what_the_node_answered() {
+    // The unit tests beside `observe.rs` weigh a body built by hand, which
+    // says the arithmetic is right and nothing about whether a real streamed
+    // response reaches the wrapper at all: the layer only wraps a call that
+    // succeeded at the head *and* has a body left to send, and both halves of
+    // that condition are decided in `serve.rs` rather than in the counter. A
+    // node that stopped wrapping would pass every unit test and export zero.
+    //
+    // Two properties, not one number. A literal would pin the encoded size of
+    // this fixture's rows, which is a fact about `docs` rather than about the
+    // instrument, and would go red on a column added to the fixture.
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+
+    let mut client = connect(&serving).await;
+    let answered = rows(&mut client, &APP, query("docs"))
+        .await
+        .expect("a query the node will answer");
+    assert!(
+        !answered.is_empty(),
+        "the fixture should seed rows, or a zero weight proves nothing"
+    );
+    drop(client);
+
+    let scraped = scrape(&address, "/metrics").await;
+    let query_method = "/slate.v1.Records/Query";
+    let value = |family: &str| -> u64 {
+        let wanted = format!("{family}{{method=\"{query_method}\"}} ");
+        scraped
+            .lines()
+            .find_map(|line| line.trim().strip_prefix(&wanted)?.parse().ok())
+            .unwrap_or_else(|| panic!("no {family} for {query_method}:\n{scraped}"))
+    };
+
+    // Non-zero, and bigger than the frames it arrived in: a wrapper that
+    // added one per frame rather than the frame's length would satisfy
+    // "non-zero" and fail this. Rows are tens of bytes each, so the margin is
+    // not close.
+    let bytes = value("slate_response_bytes_total");
+    let frames = value("slate_response_frames_total");
+    assert!(frames >= 1, "one query answered at least one frame");
+    assert!(
+        bytes > frames,
+        "{bytes} bytes over {frames} frames is a frame count, not a weight:\n{scraped}"
+    );
+
+    let finished = serving.terminate();
+    assert_eq!(finished.code, Some(0), "stderr:\n{}", finished.stderr);
+}
+
+#[tokio::test]
+async fn a_read_answers_far_more_than_it_asks() {
+    // The comparison both halves of the byte measurement exist for, and the
+    // one thing neither of them did.
+    // `ledger/2026-09-29-the-same-framing-cost-in-three-clients.md` weighs what
+    // each client *sends*; `slate_response_bytes_total` weighs what the node
+    // *answers*. Two numbers in the same unit, in two processes, and until now
+    // nothing put them side by side — which was that change's own first
+    // caveat.
+    //
+    // The request is weighed with `encoded_len()` rather than by an
+    // interceptor, because that is the protobuf payload tonic will serialize,
+    // which is the same thing `slate_response_bytes_total` counts on the way
+    // back. Anything else would compare two different units and call the
+    // difference a finding.
+    //
+    // **Both sides exclude the headers, and on the request that is most of
+    // it.** `Identity::on` puts the principal and the tenant in gRPC
+    // *metadata*, so a `QueryRequest` for a whole table encodes to 8 bytes
+    // while the call that carries it is not remotely that small. The ratio
+    // below is payload against payload, which is the honest comparison of the
+    // two counters and an overstatement of the asymmetry a link would see.
+    use prost::Message as _;
+
+    let files = Files::new();
+    let mut serving = serving(&files, &talking("metrics_address = \"127.0.0.1:0\""));
+    let address = serving
+        .metrics_address()
+        .expect("the node should announce its metrics port");
+
+    let mut client = connect(&serving).await;
+
+    // Enough rows that the asymmetry is structural rather than a coincidence
+    // of the two-row fixture. Written before the query so the read has
+    // something to amplify; the writes land under `Insert` and the assertion
+    // reads `Query`, so they cannot flatter the comparison.
+    const ROWS: u64 = 60;
+    for n in 0..ROWS {
+        client
+            .insert(APP.on(proto::InsertRequest {
+                table: "docs".to_owned(),
+                rows: vec![row(vec![u64_value(1000 + n), str_value("weighed")])],
+                ..Default::default()
+            }))
+            .await
+            .expect("a seeded row");
+    }
+
+    // The same message `rows()` builds, weighed before it is sent. Built twice
+    // rather than cloned so the weighing cannot drift from what goes out: if
+    // the helper's shape changes, this stops compiling rather than silently
+    // measuring a different request.
+    let asked = APP
+        .on(proto::QueryRequest {
+            transaction: String::new(),
+            query: Some(query("docs")),
+            freshness: None,
+        })
+        .into_inner()
+        .encoded_len();
+
+    let answered_rows = rows(&mut client, &APP, query("docs"))
+        .await
+        .expect("a query the node will answer");
+    assert!(
+        answered_rows.len() as u64 >= ROWS,
+        "the read should see the {ROWS} rows written, saw {}",
+        answered_rows.len()
+    );
+    drop(client);
+
+    let scraped = scrape(&address, "/metrics").await;
+    let wanted = "slate_response_bytes_total{method=\"/slate.v1.Records/Query\"} ";
+    let answered: u64 = scraped
+        .lines()
+        .find_map(|line| line.trim().strip_prefix(wanted)?.parse().ok())
+        .unwrap_or_else(|| panic!("no Query response weight:\n{scraped}"));
+
+    // Printed, not only asserted: the ratio is the interesting part and a
+    // reader running this with `--nocapture` should not have to compute it.
+    println!(
+        "asked {asked} bytes, answered {answered} ({}x)",
+        answered / asked as u64
+    );
+
+    // A ratio, not a literal. The bytes move with the fixture's column widths
+    // and with how many rows a message carries; what does not move is that a
+    // whole-table read asks in tens of bytes and answers in thousands. Ten is
+    // well below the ratio observed and well above anything a request-shaped
+    // response could reach.
+    assert!(
+        answered > asked as u64 * 10,
+        "a {ROWS}-row read asked {asked} bytes and answered {answered}; \
+         the response should dwarf the request"
     );
 
     let finished = serving.terminate();

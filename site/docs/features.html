@@ -412,6 +412,14 @@
         index above, which is a different shape with a different cost, and
         conflating the two would make one of them quietly wrong.
       </p>
+      <p>
+        The demo's <code>posts</code> table has two array columns with
+        different element types &mdash; <code>tags</code> holds strings and
+        <code>sizes</code> holds integers &mdash; so browsing it shows the
+        element type being read from the column rather than assumed. One row
+        has both lists empty, which is not the same as null and is not
+        displayed as one.
+      </p>
 
     <h3>Timestamps the store writes</h3>
       <p>

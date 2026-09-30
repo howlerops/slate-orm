@@ -156,12 +156,28 @@ pub struct QuerySpec {
     pub having: Vec<FilterSpec>,
     /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
     ///
-    /// The `HAVING` twin of [`QuerySpec::any_of`]. Flat where `WHERE` now has
-    /// [`QuerySpec::predicate`] as well: parentheses reached the `WHERE` first
-    /// and a `HAVING` nesting has nowhere to go yet, so a mixed `HAVING` is
-    /// still refused whether or not it is bracketed.
+    /// The `HAVING` twin of [`QuerySpec::any_of`], and flat for the reason
+    /// that one is: a clause that *can* be flat always is, so the shape a
+    /// reader wrote without brackets stays the shape every consumer already
+    /// reads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having_any_of: Vec<FilterSpec>,
+    /// A nested group condition, for a `HAVING` the two flat lists cannot hold.
+    ///
+    /// The `HAVING` twin of [`QuerySpec::predicate`], with the same invariant
+    /// and for the same reasons: `Some` only when parentheses made the
+    /// condition neither all-`AND` nor all-`OR`, never populated beside either
+    /// flat list, and a third field rather than a replacement so that
+    /// `HAVING count(*) > 100` — the one everybody writes — stays two lines of
+    /// JSON.
+    ///
+    /// Ordinals are in *group* space, as the flat lists' are. A `HAVING` and a
+    /// `WHERE` nest through one parser and differ only in what a leaf resolves
+    /// against, which is why this field and [`QuerySpec::predicate`] are the
+    /// same type rather than two trees that could come to disagree about what
+    /// a bracket means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub having_predicate: Option<PredicateSpec>,
     /// Values computed over a partition, one per input row, appended after the
     /// computed ones — so the `i`th sits at ordinal
     /// `columns().len() + compute.len() + i` and everything downstream, a sort
@@ -410,12 +426,28 @@ pub struct JoinSpec {
     pub having: Vec<FilterSpec>,
     /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
     ///
-    /// The `HAVING` twin of [`QuerySpec::any_of`]. Flat where `WHERE` now has
-    /// [`QuerySpec::predicate`] as well: parentheses reached the `WHERE` first
-    /// and a `HAVING` nesting has nowhere to go yet, so a mixed `HAVING` is
-    /// still refused whether or not it is bracketed.
+    /// The `HAVING` twin of [`QuerySpec::any_of`], and flat for the reason
+    /// that one is: a clause that *can* be flat always is, so the shape a
+    /// reader wrote without brackets stays the shape every consumer already
+    /// reads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having_any_of: Vec<FilterSpec>,
+    /// A nested group condition, for a `HAVING` the two flat lists cannot hold.
+    ///
+    /// The `HAVING` twin of [`QuerySpec::predicate`], with the same invariant
+    /// and for the same reasons: `Some` only when parentheses made the
+    /// condition neither all-`AND` nor all-`OR`, never populated beside either
+    /// flat list, and a third field rather than a replacement so that
+    /// `HAVING count(*) > 100` — the one everybody writes — stays two lines of
+    /// JSON.
+    ///
+    /// Ordinals are in *group* space, as the flat lists' are. A `HAVING` and a
+    /// `WHERE` nest through one parser and differ only in what a leaf resolves
+    /// against, which is why this field and [`QuerySpec::predicate`] are the
+    /// same type rather than two trees that could come to disagree about what
+    /// a bracket means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub having_predicate: Option<PredicateSpec>,
     /// How to order the **groups** of a grouped join. Empty leaves them in the
     /// order the encoded key sorts them.
     ///
@@ -489,12 +521,28 @@ pub struct ChainSpec {
     pub having: Vec<FilterSpec>,
     /// Conditions over the groups, ORed. Empty unless the reader wrote `OR`.
     ///
-    /// The `HAVING` twin of [`QuerySpec::any_of`]. Flat where `WHERE` now has
-    /// [`QuerySpec::predicate`] as well: parentheses reached the `WHERE` first
-    /// and a `HAVING` nesting has nowhere to go yet, so a mixed `HAVING` is
-    /// still refused whether or not it is bracketed.
+    /// The `HAVING` twin of [`QuerySpec::any_of`], and flat for the reason
+    /// that one is: a clause that *can* be flat always is, so the shape a
+    /// reader wrote without brackets stays the shape every consumer already
+    /// reads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub having_any_of: Vec<FilterSpec>,
+    /// A nested group condition, for a `HAVING` the two flat lists cannot hold.
+    ///
+    /// The `HAVING` twin of [`QuerySpec::predicate`], with the same invariant
+    /// and for the same reasons: `Some` only when parentheses made the
+    /// condition neither all-`AND` nor all-`OR`, never populated beside either
+    /// flat list, and a third field rather than a replacement so that
+    /// `HAVING count(*) > 100` — the one everybody writes — stays two lines of
+    /// JSON.
+    ///
+    /// Ordinals are in *group* space, as the flat lists' are. A `HAVING` and a
+    /// `WHERE` nest through one parser and differ only in what a leaf resolves
+    /// against, which is why this field and [`QuerySpec::predicate`] are the
+    /// same type rather than two trees that could come to disagree about what
+    /// a bracket means.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub having_predicate: Option<PredicateSpec>,
     /// How to order the groups. `[keys..., aggregates...]`, as on [`JoinSpec`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sort: Vec<SortSpec>,

@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:01:56+00:00",
+  "file": "site/workbench.html",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_site_claims.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a site page states a row count the data does not have",
+      "old": "100,000 New York yellow-taxi trip",
+      "new": "900,000 New York yellow-taxi trip",
+      "verdict": "caught",
+      "caught_by": [
+        "check_site_claims: ok    the landing page exists"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

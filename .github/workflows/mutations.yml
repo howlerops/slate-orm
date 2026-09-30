@@ -1,0 +1,55 @@
+name: Mutations
+
+# Break the real tree at every guard, and check each one refuses.
+#
+# `scripts/mutations.json` holds one mutation per guard: a change to a file
+# that guard watches, which it must reject. Twenty-eight guards were surveyed
+# this way and five were wrong — a guard whose roster was its own docstring, a
+# pattern satisfied by a word in a comment, a rule checking half its property.
+# None of that was visible from the guards' own fixture tests, and all of it
+# was green here.
+#
+# `ledger/2026-09-29-every-guard-now-has-one.md` is the survey.
+#
+# NOT IN `ci.yml`, deliberately. Each case restores the file it mutated, but
+# between the patch and the restore the working tree is wrong, and the class of
+# defect this catches changes when a *guard* changes, not when the code it
+# watches does. A minute on every push to twenty-one other jobs is the wrong
+# trade; weekly, plus a button, is the right one.
+#
+# **The `schedule:` half cannot fire until this file is on the default
+# branch** — GitHub runs scheduled workflows only from there. That is the trap
+# `CLAUDE.md` names: a check that never fires is a check nobody has debugged.
+# So `workflow_dispatch` is here too and works on any branch from the moment
+# this lands, and the first thing to do with this workflow is press it.
+on:
+  schedule:
+    # Mondays, 07:11 UTC. Not on the hour: a scheduled run at :00 queues behind
+    # everyone else's and GitHub drops it under load, which for a weekly job
+    # means a missed week nobody notices.
+    - cron: "11 7 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutations:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # `scripts/check_cited_files.py` resolves citations against `git
+      # ls-files`, so the checkout has to be a repository — it is, at depth 1,
+      # which is enough for the index.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # The roster first. A mutation whose anchor has moved would error rather
+      # than run, and this says so in a line instead of a stack trace.
+      - run: python3 scripts/check_mutations_roster.py
+      - run: python3 scripts/run_mutations.py
+      # A survivor leaves the tree mutated only if the run was killed; the
+      # restore is in a `finally`. This is the belt to that brace, and it
+      # fails loudly rather than letting a later step run against a mutation.
+      - run: git diff --exit-code

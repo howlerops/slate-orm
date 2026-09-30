@@ -1,0 +1,35 @@
+{
+  "at": "2026-09-30T01:04:15+00:00",
+  "file": "scripts/test_check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "c56af77",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the only case targeting the go-install half is deleted",
+      "old": "        \"a tree with no pinned `go install` at all is reported, not passed over\",\n        {\".github/workflows/ci.yml\": PINNED, \"scripts/gen.py\": UNPINNED},\n        \"nothing in this repository runs `go install\",\n    ),\n",
+      "new": "        \"a tree with no pinned `go install` at all is reported, not passed over\",\n        {\".github/workflows/ci.yml\": PINNED, \"scripts/gen.py\": UNPINNED},\n        \"go install\",\n    ),\n",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the roster is read off a tree where nothing fires",
+      "old": "    return run({\"README.md\": \"nothing here\\n\"})",
+      "new": "    return run({\".github/workflows/ci.yml\": PINNED, \"scripts/gen.py\": DECIDES})",
+      "verdict": "caught",
+      "caught_by": [
+        "an empty tree names at least one half"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

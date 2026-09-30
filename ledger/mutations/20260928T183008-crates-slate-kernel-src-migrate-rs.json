@@ -1,0 +1,67 @@
+{
+  "at": "2026-09-28T18:30:08+00:00",
+  "file": "crates/slate-kernel/src/migrate.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "migrations",
+    "--no-fail-fast"
+  ],
+  "commit": "1e4481b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the refusal fires for a non-unique index too",
+      "old": "                if index.is_unique() {",
+      "new": "                if true {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_non_unique_index_needs_no_such_claim",
+        "a_partial_index_backfills_only_the_rows_it_admits",
+        "a_backfill_larger_than_one_batch_writes_every_row"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the refusal never fires",
+      "old": "                if index.is_unique() {\n                    out.refusals.push(Refusal::SoleWriterNotEstablished {",
+      "new": "                if false {\n                    out.refusals.push(Refusal::SoleWriterNotEstablished {",
+      "verdict": "caught",
+      "caught_by": [
+        "adding_a_unique_index_to_a_live_table_refuses_until_sole_writership_is_claimed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "with_sole_writer clears every refusal, not just its own",
+      "old": "        self.refusals\n            .retain(|r| !matches!(r, Refusal::SoleWriterNotEstablished { .. }));",
+      "new": "        self.refusals.clear();",
+      "verdict": "caught",
+      "caught_by": [
+        "claiming_sole_writership_does_not_clear_a_layout_refusal"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "with_sole_writer clears nothing",
+      "old": "        self.refusals\n            .retain(|r| !matches!(r, Refusal::SoleWriterNotEstablished { .. }));\n        self",
+      "new": "        self",
+      "verdict": "caught",
+      "caught_by": [
+        "claiming_sole_writership_clears_that_refusal_and_nothing_else",
+        "building_a_unique_index_over_duplicates_refuses_instead_of_hiding_a_row"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -126,13 +126,36 @@ func (v Array) toProto() *pb.Value {
 // StringWithScale renders the units against a scale, as a decimal string.
 //
 // Mirrors slate_orm::Units::to_string_with_scale, and the conformance corpus
-// compares the two. A negative scale is treated as zero rather than panicking:
-// this is a rendering helper, and a caller who got a scale wrong wants a
-// number they can see is wrong, not a crash in a log line.
-func (v Units) StringWithScale(scale int) string {
-	if scale <= 0 {
+// compares the two.
+//
+// The scale is a uint8 because a negative scale is not a thing the system has:
+// slate_schema's ColumnDef holds a u8 and refuses anything above 18, so the
+// only way one reaches here is a caller who computed it wrong. This argument
+// used to be an int and rendered a negative as scale zero, with a comment
+// saying a caller wants a number they can see is wrong rather than a crash —
+// which was the wrong call, and [ColumnDef.Scale]'s own comment three files
+// away says why: a wrong scale "reads the *right* column and renders every
+// value a power of ten out, for ever, with nothing anywhere reporting it".
+// Scale zero is precisely such a number, and it does not look wrong.
+//
+// Go has no exception to raise and a rendering helper must not panic, so the
+// refusal is the type: unrepresentable, exactly as in Rust. The Python client
+// raises ValueError and the TypeScript one throws RangeError, because neither
+// language can make it unrepresentable and both can refuse at run time. All
+// four now refuse; see
+// ledger/2026-09-29-a-negative-scale-is-not-a-scale.md for the three
+// behaviours that were measured before the side was picked.
+func (v Units) StringWithScale(scale uint8) string {
+	if scale == 0 {
 		return strconv.FormatInt(int64(v), 10)
 	}
+	// An int64 divisor is enough because the schema caps a decimal column at
+	// scale 18 and 10^18 is under i64::MAX. Measured, because the caveat that
+	// asked for this said Go overflowed at 18: it does not — 18 and 19 are
+	// both exact (19's int64 wrap is undone by the uint64 conversion below)
+	// and 20 is the first wrong answer. A scale of 20 cannot come from a
+	// column, and a caller who passes one gets a wrong number rather than a
+	// refusal, which is the one hole left here.
 	divisor := int64(1)
 	for range scale {
 		divisor *= 10
@@ -151,7 +174,7 @@ func (v Units) StringWithScale(scale int) string {
 	}
 	whole := magnitude / uint64(divisor)
 	part := magnitude % uint64(divisor)
-	return fmt.Sprintf("%s%d.%0*d", sign, whole, scale, part)
+	return fmt.Sprintf("%s%d.%0*d", sign, whole, int(scale), part)
 }
 
 // String renders a UUID in the usual hyphenated form.

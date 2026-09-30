@@ -1,0 +1,46 @@
+{
+  "at": "2026-09-29T01:59:46+00:00",
+  "file": "examples/explorer/backends/python/adapter/__main__.py",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "2896ea3",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the python adapter walks one page fewer",
+      "old": "    ROUND_TRIP_PAGES = 3\n",
+      "new": "    ROUND_TRIP_PAGES = 2\n",
+      "verdict": "caught",
+      "caught_by": [
+        "three keyset pages cost three requests (app): the adapters disagree",
+        "the must-differ pair ('three keyset pages cost three requests', 'a relation for three parents costs one request') is not comparable: 'three keyset pages cost three requests' produced no agreed answer",
+        "the must-differ pair ('four singles cost four requests', 'three keyset pages cost three requests') is not comparable: 'three keyset pages cost three requests' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the python counter is cleared after the workload rather than before",
+      "old": "            self.counter.calls.clear()\n            try:",
+      "new": "            try:",
+      "verdict": "caught",
+      "caught_by": [
+        "four singles cost four requests (app): the adapters disagree",
+        "four rows in a batch cost one request (app): the adapters disagree",
+        "three keyset pages cost three requests (app): the adapters disagree",
+        "a relation for three parents costs one request (app): the adapters disagree",
+        "the must-differ pair ('four singles cost four requests', 'four rows in a batch cost one request') is not comparable: 'four singles cost four requests', 'four rows in a batch cost one request' produced no agreed answer",
+        "the must-differ pair ('three keyset pages cost three requests', 'a relation for three parents costs one request') is not comparable: 'three keyset pages cost three requests', 'a relation for three parents costs one request' produced no agreed answer",
+        "the must-differ pair ('four singles cost four requests', 'three keyset pages cost three requests') is not comparable: 'four singles cost four requests', 'three keyset pages cost three requests' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

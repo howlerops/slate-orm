@@ -168,6 +168,18 @@ trips, and that is arithmetic rather than a measurement. The read-count claim
 *is* asserted — a whole path is one request, counted at the stub — but no
 number here says what it costs against the two-call version.
 
+~~**`ErrorInfo.metadata` still is not surfaced**~~ **Narrowed** — the map is
+surfaced now, by all three clients, for `CHECK_VIOLATION`: `violationsOf` in
+`clients/go/slate/error.go`, `_details.py`'s `dict(info.metadata)`, and
+`clients/typescript/src/details.ts`. What is still true is the specific half —
+`max_relation_depth` was not among the keys, so a refused path was still
+prose — and that half closed the same day: `status::refused` carries it as
+`RELATION_DEPTH_EXCEEDED` with `limit` and `asked`, and all three clients
+expose the whole map. See
+`ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md`
+for the narrowing and
+`ledger/2026-09-30-a-refusals-numbers-are-values-now.md` for the close.
+
 **`ErrorInfo.metadata` still is not surfaced**, so a refused path reports
 `max_relation_depth` in prose and `INVALID_ARGUMENT` as a token. The limit is
 in the message because a caller needs to read it; that is the string-matching

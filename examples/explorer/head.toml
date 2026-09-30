@@ -254,10 +254,10 @@ columns = ["book_id"]
 
 # `app` can do everything, including EXPLAIN.
 #
-# `posts` is here and deliberately *not* in the `reader` grant below: nothing
-# in the demo reads it, and a table reachable by a role no demonstration uses
-# would read as an oversight. It exists so the generated array decoder has a
-# row type to be, and the suites that exercise that build their own rows.
+# `posts` is here and in the `reader` grant below. It used to be in neither,
+# because nothing in the demo read it: it existed so the generated array
+# decoder had a row type to be. It is seeded and browsable now, so the two
+# grants agree with what the UI can actually ask for.
 [[security.grants]]
 role = "app"
 tables = ["authors", "books", "sales", "editions", "shipments", "posts"]
@@ -274,7 +274,7 @@ actions = ["everything"]
 # retired ones.
 [[security.grants]]
 role = "reader"
-tables = ["authors", "books", "sales", "editions", "shipments"]
+tables = ["authors", "books", "sales", "editions", "shipments", "posts"]
 actions = ["read"]
 
 # `stranger` holds a role with no grant at all. Every table is denied, and the

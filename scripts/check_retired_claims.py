@@ -96,7 +96,7 @@ ROOT = Path(__file__).resolve().parent.parent
 REGISTRY = "scripts/retired_claims.json"
 
 # The live tree. `ledger/` is absent on purpose — see the docstring.
-ROOTS = ("crates", "clients", "docs", "examples", "scripts", "site")
+ROOTS = (".github", "crates", "clients", "docs", "examples", "scripts", "site")
 ROOT_FILES = ("README.md", "CLAUDE.md")
 # `.html` because the documentation site is written in it, and the site is
 # the copy of a claim a correction is most likely to miss: the reasoning
@@ -107,7 +107,31 @@ ROOT_FILES = ("README.md", "CLAUDE.md")
 # every file in it. Tags are not stripped, so a phrase interrupted by an
 # `<em>` or a `<code>` still will not match; a phrase is registered as the
 # longest run of plain words the sentence contains.
-SUFFIXES = {".rs", ".py", ".go", ".ts", ".tsx", ".js", ".sh", ".md", ".toml", ".html"}
+# `.yml` and `.github/` together, and for the same reason `.html` was added
+# above: CI's workflow carries more prose about this repository than most of
+# its source files do, and a claim restated in a job comment is read by
+# whoever is debugging that job at the worst possible moment. Measured before
+# adding them: zero retired phrases standing in either, so this closes a hole
+# rather than a defect — but "a claim there would have been invisible" is the
+# whole argument, and it was the argument for `site/` too.
+#
+# `ledger/` stays out, and that one is deliberate rather than an oversight: an
+# entry that retires a phrase has to quote it, so reading entries would report
+# every retirement as a survival. Two do today.
+SUFFIXES = {
+    ".rs",
+    ".py",
+    ".go",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".sh",
+    ".md",
+    ".toml",
+    ".html",
+    ".yml",
+    ".yaml",
+}
 SKIP_DIRS = {
     "target",
     "node_modules",

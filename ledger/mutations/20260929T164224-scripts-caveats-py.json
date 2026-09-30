@@ -1,0 +1,44 @@
+{
+  "at": "2026-09-29T16:42:24+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "5b7964b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "an entry crediting itself counts as a pointer elsewhere",
+      "old": "            credited = set(CREDITED.findall(unit)) - {path.name}",
+      "new": "            credited = set(CREDITED.findall(unit))",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the credited set is thrown away, so nothing is ever checked",
+      "old": "            found.setdefault(at, set()).update(credited)",
+      "new": "            found.setdefault(at, set())",
+      "verdict": "caught",
+      "caught_by": [
+        "a closed claim whose `by` does not name the entry the strike credits: problems: wanted 1, got 0 []"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the by must name every credited entry, not any of them",
+      "old": "            if not any(entry in says for entry in wanted):",
+      "new": "            if not all(entry in says for entry in wanted):",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

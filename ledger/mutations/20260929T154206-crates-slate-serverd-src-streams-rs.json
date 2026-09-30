@@ -1,0 +1,42 @@
+{
+  "at": "2026-09-29T15:42:06+00:00",
+  "file": "crates/slate-serverd/src/streams.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "ceilings",
+    "--no-fail-fast"
+  ],
+  "commit": "b535077",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the permit is dropped as soon as the handler returns, instead of riding the body",
+      "old": "                tonic::body::Body::new(Held { inner: body, held }),",
+      "new": "                {\n                    drop(held);\n                    body\n                },",
+      "verdict": "caught",
+      "caught_by": [
+        "a_second_stream_is_refused_when_one_may_be_open"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the layer keeps its own semaphore per connection, the scope mistake it exists to avoid",
+      "old": "            permits: Arc::clone(&self.permits),",
+      "new": "            permits: Arc::new(Semaphore::new(self.permits.available_permits() + 1)),",
+      "verdict": "caught",
+      "caught_by": [
+        "a_second_stream_is_refused_when_one_may_be_open"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

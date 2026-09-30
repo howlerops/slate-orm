@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-29T03:27:25+00:00",
+  "file": "scripts/check_transport_door.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_transport_door.py"
+  ],
+  "commit": "1095ca6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a missing file counts as a match",
+      "old": "        return f\"{relative} does not exist\"",
+      "new": "        return None",
+      "verdict": "caught",
+      "caught_by": [
+        "a renamed-away entry file fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

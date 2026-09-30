@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-29T13:44:11+00:00",
+  "file": ".github/workflows/mutations.yml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "8e8d485",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the mutations workflow gains a step nothing accounts for",
+      "old": "      - run: python3 scripts/check_mutations_roster.py",
+      "new": "      - run: python3 scripts/check_mutations_roster.py --strict",
+      "verdict": "caught",
+      "caught_by": [
+        "every workflow step is in check.sh or in ELSEWHERE"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

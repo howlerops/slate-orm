@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T17:26:56+00:00",
+  "file": ".github/workflows/ci.yml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "98d4b2d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the image job's shell assertion loses its name, so nothing rosters it",
+      "old": "      - name: The base is still distroless",
+      "new": "      - name: The base has no shell",
+      "verdict": "caught",
+      "caught_by": [
+        "test_check_sh: ok    every workflow step is in check.sh or in ELSEWHERE"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

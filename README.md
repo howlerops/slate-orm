@@ -78,6 +78,7 @@ println!("{}", txn.explain_records::<User>(&ctx, &Query::all())?);
 | `slate-server` | gRPC head node, writer leadership over an object-store lease |
 | `slate-serverd` | The head node as a binary: one TOML file, no Rust to start it |
 | `slate-headbench` | Benchmarks for the head node, against a real one over a socket |
+| `slate-helpdesk` | A small multi-tenant helpdesk at [`examples/helpdesk`](examples/helpdesk), written against the Rust surface the way an application would be. Not a demo: it exists for the five things it [could not say](examples/helpdesk/README.md), and it runs on SlateDB over an object store |
 | `slate-testserver` | The Python client's fixture daemon. Lives at `clients/python/testserver`, beside the tests that need it, and is a workspace member because three separate things rotted in it while it was not |
 
 Not Rust, and not in the workspace:

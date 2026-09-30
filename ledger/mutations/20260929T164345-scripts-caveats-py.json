@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-29T16:43:45+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "5b7964b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the credit pattern stops requiring a date, so any .md counts",
+      "old": "CREDITED = re.compile(r\"(?:ledger/)?(\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+\\.md)\")",
+      "new": "CREDITED = re.compile(r\"(?:ledger/)?([a-z0-9-]+\\.md)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a strike naming a non-entry Markdown file credits nobody: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is closed, and the strike beside it credits correctness.md \u2014 which its `by` does not name. Describing the work is not citing it: a reader of the tracker has no way back to the entry that did it.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -106,6 +106,11 @@ hypothetical: a session read this docstring, concluded `node` was unsupported,
 and wrote a throwaway harness reimplementing the four protections above against
 a dialect that had been here for weeks. A list of what a tool supports is the
 one thing a tool should never be asked to keep in sync by hand.
+
+`--help` lists the **adapters** the same way, and for the same reason one level
+out: a `scripts/mutate_*.py` is a program that makes something readable by one
+of those dialects, and `mutate_guard.py` spent a day existing, working, and
+appearing in nothing this script printed.
 """
 
 from __future__ import annotations
@@ -748,6 +753,35 @@ def scored(
     return 1 if problems else 0
 
 
+def adapters() -> list[tuple[str, str, str]]:
+    """`scripts/mutate_*.py` beside this one: name, declared dialect, first line.
+
+    Derived rather than written down, for the reason the dialect list above is
+    derived: `ledger/2026-09-29-the-dialect-mutate-py-was-missing.md` recorded
+    that `mutate_guard.py` existed, worked, and appeared in no output this
+    script prints — so a session looking for "can I mutate against a guard"
+    found the answer in an entry and not in `--help`. That is the staleness
+    this file's own docstring argues against, in the one place it could not
+    fix itself. A hand-written list would have gone stale on the second
+    adapter; a glob cannot.
+    """
+    here = Path(__file__).resolve()
+    found: list[tuple[str, str, str]] = []
+    for path in sorted(here.parent.glob("mutate_*.py")):
+        text = path.read_text(encoding="utf-8")
+        first = ""
+        for line in text.splitlines():
+            if line.startswith('"""'):
+                first = line.removeprefix('"""').strip()
+                break
+        # `DIALECT = "python"` at the top level, read as text rather than by
+        # importing: importing an adapter to describe it runs its module-level
+        # code, and `--help` should not be able to start a subprocess.
+        declared = re.search(r'^DIALECT\s*=\s*"([^"]+)"', text, re.M)
+        found.append((path.name, declared.group(1) if declared else "?", first))
+    return found
+
+
 def main(argv: list[str]) -> int:
     if argv and argv[0] in {"-h", "--help"}:
         print(__doc__)
@@ -755,6 +789,16 @@ def main(argv: list[str]) -> int:
         for name, (_, reported) in sorted(DIALECTS.items()):
             print(f"    {name:<12} {reported.pattern}")
         print()
+        found = adapters()
+        if found:
+            print(
+                "Adapters — programs beside this one that make something "
+                "readable by a dialect\nabove. Pass one as the `command`, with "
+                "the dialect it reports in:\n"
+            )
+            for name, dialect, says in found:
+                print(f"    {name:<22} {dialect:<8} {says}")
+            print()
         return 0
     text = sys.stdin.read()
     if not text.strip():

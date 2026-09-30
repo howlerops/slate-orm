@@ -270,6 +270,7 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::RunningDistinctCount => "RUNNING_DISTINCT_COUNT",
         KernelError::WindowOffsetZero { .. } => "WINDOW_OFFSET_ZERO",
         KernelError::TooManyGroups { .. } => "TOO_MANY_GROUPS",
+        KernelError::InListTooLarge { .. } => "IN_LIST_TOO_LARGE",
         KernelError::TooManyDistinctValues { .. } => "TOO_MANY_DISTINCT_VALUES",
         KernelError::DuplicateAssignment { .. } => "DUPLICATE_ASSIGNMENT",
         KernelError::NoSuchColumn { .. } => "NO_SUCH_COLUMN",
@@ -394,11 +395,20 @@ pub fn code_for(error: &KernelError) -> Code {
         // the others can be narrowed with a `LIMIT`, and a window cannot be,
         // because it is computed before the limit applies. Its message says
         // so, so a caller does not retry with a limit and get the same answer.
+        //
+        // `InListTooLarge` is the seventh and sits differently from all six:
+        // it is about the *request* rather than about what answering it costs,
+        // so `InvalidArgument` is arguable. `ResourceExhausted` all the same,
+        // because the remedy is the one this code means — send less — and
+        // because a caller retrying an `InvalidArgument` unchanged is making a
+        // mistake where a caller retrying this against a node configured with
+        // a higher ceiling is not.
         KernelError::JoinBuildTooLarge { .. }
         | KernelError::SortTooLarge { .. }
         | KernelError::WindowTooLarge { .. }
         | KernelError::TooManyGroups { .. }
         | KernelError::TooManyDistinctValues { .. }
+        | KernelError::InListTooLarge { .. }
         | KernelError::PredicateWriteTooLarge { .. } => Code::ResourceExhausted,
 
         // The caller's own request, malformed against this schema.
@@ -436,6 +446,38 @@ pub fn code_for(error: &KernelError) -> Code {
         // See the module docs: unclassified means do not retry.
         _ => Code::Internal,
     }
+}
+
+/// A handler's own refusal, with a stable token and a machine-readable payload.
+///
+/// [`from_kernel`] covers everything the kernel raises. This is for the
+/// refusals a handler makes before or instead of calling it — a limit checked
+/// against the request, a shape the catalog cannot compose — which until now
+/// carried a prose message and nothing else. A caller needing the number in
+/// that sentence had to match the sentence, which is the string-matching this
+/// repository avoids everywhere it can.
+///
+/// `ledger/2026-09-17-a-path-of-relationships-on-the-wire.md` recorded that as
+/// a caveat about `max_relation_depth` and judged it a cross-cutting protocol
+/// change not worth making for one limit. It is much cheaper now: all three
+/// clients already decode `ErrorInfo.metadata` for `CHECK_VIOLATION`, so this
+/// is a map they can already read and a key they cannot yet see.
+#[must_use]
+pub fn refused(
+    code: Code,
+    message: impl Into<String>,
+    reason: &str,
+    metadata: HashMap<String, String>,
+) -> Status {
+    with_details(
+        code,
+        message.into(),
+        rpc::ErrorInfo {
+            reason: reason.to_owned(),
+            domain: DOMAIN.to_owned(),
+            metadata,
+        },
+    )
 }
 
 /// A status that also tells the caller which node to try instead.

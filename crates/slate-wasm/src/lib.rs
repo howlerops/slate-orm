@@ -804,7 +804,10 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+                if !spec.having.is_empty()
+                    || !spec.having_any_of.is_empty()
+                    || spec.having_predicate.is_some()
+                {
                     // Over the group, and its stored keys resolved through the
                     // *joined* ordinal -- which is what `group_value_type` now
                     // walks, and the reason the joined path had no HAVING
@@ -818,6 +821,7 @@ impl Playground {
                     grouping = grouping.having(group_predicate(
                         &spec.having,
                         &spec.having_any_of,
+                        spec.having_predicate.as_ref(),
                         &keys,
                         &aggregates,
                         &[&authors, &books],
@@ -1068,10 +1072,14 @@ impl Playground {
                 // that wants a count asks for one.
                 let keys: Vec<Ordinal> = wanted_keys.iter().map(|k| Ordinal(*k as usize)).collect();
                 let mut grouping = Grouping::by(keys.clone(), &aggregates);
-                if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+                if !spec.having.is_empty()
+                    || !spec.having_any_of.is_empty()
+                    || spec.having_predicate.is_some()
+                {
                     grouping = grouping.having(group_predicate(
                         &spec.having,
                         &spec.having_any_of,
+                        spec.having_predicate.as_ref(),
                         &keys,
                         &aggregates,
                         &refs,
@@ -1557,10 +1565,14 @@ impl Playground {
         // the sort only decides what order they come back in. The kernel
         // applies them in that order regardless; setting them in the same
         // order here is so that reading this says what happens.
-        if !spec.having.is_empty() || !spec.having_any_of.is_empty() {
+        if !spec.having.is_empty()
+            || !spec.having_any_of.is_empty()
+            || spec.having_predicate.is_some()
+        {
             grouping = grouping.having(group_predicate(
                 &spec.having,
                 &spec.having_any_of,
+                spec.having_predicate.as_ref(),
                 &keys,
                 &aggregates,
                 &[table],
@@ -1805,14 +1817,38 @@ impl Playground {
             // would have been off by a hundred.
             let inner_scales = column_scales(&[&self.table(&inner.table)?]);
             let scale = inner_scales.get(column).copied().flatten();
-            let mut values = Vec::with_capacity(rows.len());
+            // Deduplicated, which is a correctness-neutral and cost-decisive
+            // difference. `x IN (a, a, a)` and `x IN (a)` are the same
+            // predicate, so nothing about the answer changes; what changes is
+            // the list's length, and the list is checked against every row the
+            // outer scan reaches.
+            //
+            // It is not a micro-optimisation. `SELECT passengers FROM trips`
+            // over the taxi corpus returns **95,337 non-null rows and 10
+            // distinct values** — measured, by
+            // `the_passengers_subquery_has_far_fewer_values_than_rows` in
+            // `tests/taxi.rs`, which is there because a number in a comment
+            // that nothing computes is the staleness this repository keeps
+            // finding. Four orders of magnitude, and the difference between a
+            // predicate the node will run and one it refuses now that
+            // `ExecutionLimits::max_in_values` exists. That ceiling is what
+            // found this: the query worked, and was quietly paying for
+            // ninety-five thousand comparisons per scanned row.
+            //
+            // A `BTreeSet` rather than sort-and-dedup because the values are
+            // already rendered text and the set is the whole of what is
+            // wanted; the order is the set's and the kernel's `prepared()`
+            // sorts again for its own lookup either way.
+            let mut seen = std::collections::BTreeSet::new();
             for row in &rows {
                 match row.values().get(column) {
                     Some(Value::Null) | None => {}
-                    Some(value) => values.push(text(value, scale)),
+                    Some(value) => {
+                        seen.insert(text(value, scale));
+                    }
                 }
             }
-            filter.values = values;
+            filter.values = seen.into_iter().collect();
         }
         Ok(())
     }

@@ -1,0 +1,70 @@
+{
+  "at": "2026-09-29T16:52:29+00:00",
+  "file": "scripts/free_ports.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_free_ports.py"
+  ],
+  "commit": "dbff761",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the clamp offers the floor itself, the first port inside the range",
+      "old": "        candidate = random.randint(LOW, below - 1)",
+      "new": "        candidate = random.randint(LOW, below)",
+      "verdict": "caught",
+      "caught_by": [
+        "the highest port it can offer is one below the floor"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the floor is assumed rather than read",
+      "old": "            return int(handle.read().split()[0])",
+      "new": "            return ASSUMED if handle else ASSUMED",
+      "verdict": "caught",
+      "caught_by": [
+        "a readable range gives its own floor, not the fallback"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a garbled range is no longer caught",
+      "old": "    except (OSError, ValueError):",
+      "new": "    except OSError:",
+      "verdict": "caught",
+      "caught_by": [
+        "a range that is not a number falls back to the assumed floor"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "distinctness is dropped, so a caller can get the same port twice",
+      "old": "        if candidate in chosen:\n            continue",
+      "new": "        if False:\n            pass",
+      "verdict": "caught",
+      "caught_by": [
+        "a repeated draw is not offered twice"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the bottom of the range moves up, past what LOW promises",
+      "old": "        candidate = random.randint(LOW, below - 1)",
+      "new": "        candidate = random.randint(LOW + 1, below - 1)",
+      "verdict": "caught",
+      "caught_by": [
+        "the highest port it can offer is one below the floor"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

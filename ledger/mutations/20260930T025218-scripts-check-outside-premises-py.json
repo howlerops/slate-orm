@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-30T02:52:18+00:00",
+  "file": "scripts/check_outside_premises.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_outside_premises.py"
+  ],
+  "commit": "19fb33f",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the exemption filter is applied before the markers-stopped-matching half",
+      "old": "    if not rows:\n        said.append(\n            \"no caveat anywhere names a URL",
+      "new": "    rows = [r for r in rows if (r[0], r[1]) not in exempt]\n    if not rows:\n        said.append(\n            \"no caveat anywhere names a URL",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree where every match is exempted is reported, and says so"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the rot rule stops reporting an exemption whose caveat is gone",
+      "old": "        if (entry, key) not in seen\n    ]",
+      "new": "        if False\n    ]",
+      "verdict": "caught",
+      "caught_by": [
+        "an exemption no marker fires on any more is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a recheck naming a url need not say what to expect",
+      "old": "        elif \"expect_status\" not in recipe and \"expect_text\" not in recipe:",
+      "new": "        elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a recheck naming a url and expecting nothing of it is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a closed caveat counts as live",
+      "old": "LIVE = frozenset({\"deliberate\", \"open\", \"narrowed\", \"untriaged\"})",
+      "new": "LIVE = frozenset({\"deliberate\", \"open\", \"narrowed\", \"untriaged\", \"closed\"})",
+      "verdict": "caught",
+      "caught_by": [
+        "a closed one is not asked for a recheck",
+        "a case above is about 'a.md: `Pages needs Settings -> Pages turned on by hand'",
+        "every outside-the-tree caveat here says how to re-check it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

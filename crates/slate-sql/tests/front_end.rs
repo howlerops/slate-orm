@@ -32,7 +32,7 @@
 
 use slate_kernel::{CmpOp, Expr};
 use slate_schema::{IndexDef, IndexId, Ordinal, TableDef, TableId};
-use slate_sql::sql::{Schema, Statement, parse};
+use slate_sql::sql::{COMPARISONS, Schema, Statement, parse};
 use slate_sql::{QuerySpec, lower};
 use slate_tuple::{Value, ValueType};
 
@@ -88,6 +88,38 @@ fn a_select_parses_into_a_spec_naming_the_table_and_the_filter() {
     assert_eq!(spec.filters[0].column, 3);
     assert_eq!(spec.filters[0].op, "ge");
     assert_eq!(spec.filters[0].value, "1970");
+}
+
+/// Every spelling in `COMPARISONS` reaches the parser as one operator.
+///
+/// The table is the parser's vocabulary — `comparison_tail` loops over it and
+/// `crates/slate-wasm/tests/sql.rs` generates from it — and until this test
+/// nothing ran a query for each row. That left one list able to drift from
+/// the code: `lex` used to decide which symbols are two characters with a
+/// hand-written `matches!("<=" | ">=" | "!=" | "<>")`, so a fifth
+/// two-character spelling added to the table would lex as two tokens and
+/// `eat_symbol` would match its first character against some other row.
+/// `lex` now reads the table, and this is what says the reading works:
+/// dropping a spelling from `lex`'s arm used to change nothing here because
+/// nothing here existed.
+#[test]
+fn every_comparison_the_table_declares_parses_as_the_operator_it_names() {
+    for one in COMPARISONS {
+        // The string operators need the string column; `year >= 'a'` would
+        // fail for a reason that is not this test's.
+        let (column, ordinal, value) = match one.op {
+            "like" | "ilike" | "matches" | "contains" => ("title", 2, "'a'"),
+            _ => ("year", 3, "1970"),
+        };
+        let text = format!(
+            "SELECT * FROM books WHERE {column} {} {value}",
+            one.spelling
+        );
+        let spec = select(&text);
+        assert_eq!(spec.filters.len(), 1, "{text}");
+        assert_eq!(spec.filters[0].column, ordinal, "{text}");
+        assert_eq!(spec.filters[0].op, one.op, "{text}");
+    }
 }
 
 #[test]
@@ -1225,4 +1257,239 @@ fn a_repeated_column_in_a_cte_projects_it_twice_just_as_it_does_directly() {
         select("SELECT id, id FROM books"),
         "the expansion is the query it inlines into, repeated column and all"
     );
+}
+
+// --- brackets in a HAVING ----------------------------------------------------
+
+/// Evaluate a lowered `HAVING` against one group of `books` by author.
+///
+/// `SELECT author_id, count(*) ... GROUP BY author_id` puts the key at group
+/// ordinal 0 and the count at 1, which is the space a `HAVING` names. Built
+/// from the parsed spec's own keys and aggregates rather than from constants,
+/// so a lowering that resolved the ordinals differently would be caught here
+/// rather than agreeing with a hand-written copy of its own mistake.
+fn group_admits(text: &str, author_id: u64, count: i64) -> bool {
+    use slate_kernel::Truth;
+    let spec = select(text);
+    let keys: Vec<Ordinal> = spec.group_by.iter().map(|c| Ordinal(*c as usize)).collect();
+    let aggregates: Vec<_> = spec
+        .aggregates
+        .iter()
+        .map(|a| {
+            lower::aggregate_of(&a.kind, Ordinal(a.column as usize))
+                .unwrap_or_else(|e| panic!("{text}: {e}"))
+        })
+        .collect();
+    let table = books();
+    let expr = lower::group_predicate(
+        &spec.having,
+        &spec.having_any_of,
+        spec.having_predicate.as_ref(),
+        &keys,
+        &aggregates,
+        &[&table],
+    )
+    .unwrap_or_else(|e| panic!("{text}: {e}"));
+    let group = slate_schema::Row::new(vec![Value::U64(author_id), Value::I64(count)]);
+    expr.evaluate(&group) == Truth::True
+}
+
+/// The grouped statement these cases all filter, so each one is its `HAVING`.
+const BY_AUTHOR: &str = "SELECT author_id, count(*) FROM books GROUP BY author_id HAVING ";
+
+#[test]
+fn a_bracketed_disjunction_in_a_having_is_anded_with_what_follows_it() {
+    // The `WHERE` case's twin, in group space. `ledger/2026-09-25-or-in-having-too.md`
+    // recorded this as `a HAVING still takes no brackets`, and the reason given
+    // was that the group-condition lists have no nested form to lower — which
+    // was true of the spec and never of the kernel: `Grouping::having` has been
+    // an `Expr` tree since it was written.
+    let text = format!("{BY_AUTHOR}(count(*) > 5 OR author_id = 1) AND count(*) < 100");
+
+    assert!(group_admits(&text, 9, 40), "left arm, under the ceiling");
+    assert!(group_admits(&text, 1, 2), "right arm, under the ceiling");
+    assert!(!group_admits(&text, 9, 200), "left arm, over the ceiling");
+    assert!(!group_admits(&text, 9, 2), "neither arm");
+    // And not merely the trailing conjunct, which is what dropping the bracket
+    // would leave.
+    assert!(
+        !group_admits(&text, 7, 3),
+        "a group the trailing conjunct alone admits"
+    );
+}
+
+#[test]
+fn the_other_having_nesting_works_too() {
+    // `a AND (b OR c)` over groups — the reading the mixing refusal says half
+    // of everyone takes, now writable in a HAVING as it already was in a WHERE.
+    let text = format!("{BY_AUTHOR}author_id = 1 AND (count(*) > 100 OR count(*) < 3)");
+    assert!(group_admits(&text, 1, 500));
+    assert!(group_admits(&text, 1, 1));
+    assert!(!group_admits(&text, 1, 50), "between the arms");
+    assert!(!group_admits(&text, 2, 500), "wrong key");
+}
+
+#[test]
+fn a_flat_having_never_lands_in_the_nested_field() {
+    // The invariant that makes three fields safe rather than three ways to say
+    // one thing, asserted for the HAVING exactly as
+    // `a_flat_where_never_lands_in_the_nested_field` asserts it for the WHERE.
+    for tail in [
+        "count(*) > 5",
+        "(count(*) > 5)",
+        "((count(*) > 5))",
+        "count(*) > 5 AND author_id = 1",
+        "(count(*) > 5) AND (author_id = 1)",
+        "count(*) > 5 OR author_id = 1",
+        "(count(*) > 5 OR author_id = 1)",
+    ] {
+        let text = format!("{BY_AUTHOR}{tail}");
+        let spec = select(&text);
+        assert!(
+            spec.having_predicate.is_none(),
+            "{tail} produced a nested HAVING: {:?}",
+            spec.having_predicate
+        );
+        assert!(
+            spec.having.is_empty() || spec.having_any_of.is_empty(),
+            "{tail} populated both flat HAVING lists"
+        );
+    }
+    // And a bracket that really nests populates exactly the one field.
+    let spec = select(&format!(
+        "{BY_AUTHOR}(count(*) > 5 OR author_id = 1) AND count(*) < 100"
+    ));
+    assert!(spec.having_predicate.is_some());
+    assert!(spec.having.is_empty(), "{:?}", spec.having);
+    assert!(spec.having_any_of.is_empty(), "{:?}", spec.having_any_of);
+}
+
+#[test]
+fn a_redundant_bracket_in_a_having_produces_the_same_spec_as_no_bracket() {
+    // Byte for byte, so a view stored as text resolves to one query whichever
+    // way its author bracketed it.
+    assert_eq!(
+        select(&format!("{BY_AUTHOR}count(*) > 5")),
+        select(&format!("{BY_AUTHOR}(count(*) > 5)")),
+    );
+    assert_eq!(
+        select(&format!("{BY_AUTHOR}count(*) > 5 AND author_id = 1")),
+        select(&format!("{BY_AUTHOR}(count(*) > 5) AND (author_id = 1)")),
+    );
+}
+
+#[test]
+fn mixing_connectives_in_a_having_without_brackets_is_still_refused() {
+    // Unchanged, and now the message's advice is actionable: before this the
+    // refusal told the reader to write brackets a HAVING would also refuse.
+    let error = parse(
+        &format!("{BY_AUTHOR}count(*) > 5 AND author_id = 1 OR count(*) < 2"),
+        &Schema(&[books()]),
+    )
+    .expect_err("a bare mixture in a HAVING must be refused");
+    assert!(
+        error.message.contains("HAVING"),
+        "the refusal must name the clause it came from: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("parentheses") || error.message.contains("brackets"),
+        "and point at the fix: {}",
+        error.message
+    );
+}
+
+#[test]
+fn an_unclosed_bracket_in_a_having_says_having_and_not_where() {
+    // The bracket parser is now shared between the two clauses, which is the
+    // whole point — and is exactly how the unclosed-bracket message comes to
+    // name the wrong one. It is parameterised rather than hard-coded.
+    let error = parse(
+        &format!("{BY_AUTHOR}(count(*) > 5 OR author_id = 1"),
+        &Schema(&[books()]),
+    )
+    .expect_err("an unclosed bracket must be refused");
+    assert!(
+        error.message.contains("HAVING"),
+        "an unclosed bracket in a HAVING must say HAVING: {}",
+        error.message
+    );
+}
+
+#[test]
+fn a_nested_having_survives_the_json_round_trip() {
+    // The Spec tab serializes and the browser deserializes.
+    let spec = select(&format!(
+        "{BY_AUTHOR}(count(*) > 5 OR author_id = 1) AND count(*) < 100"
+    ));
+    let json = serde_json::to_string(&spec).expect("serializable");
+    assert!(json.contains("havingPredicate"), "{json}");
+    let back: QuerySpec = serde_json::from_str(&json).expect("deserializable");
+    assert_eq!(spec, back);
+}
+
+#[test]
+fn a_flat_having_serializes_exactly_as_it_did_before_having_predicate_existed() {
+    // A new always-present `"havingPredicate": null` would change every spec
+    // JSON on disk and every fixture that compares one.
+    let json =
+        serde_json::to_string(&select(&format!("{BY_AUTHOR}count(*) > 5"))).expect("serializable");
+    assert!(!json.contains("havingPredicate"), "{json}");
+}
+
+#[test]
+fn a_bracketed_having_reaches_a_join_and_a_chain() {
+    // The module documentation claims a HAVING behaves the same "on a single
+    // table, a join and a chain alike". Both wider shapes parse through a
+    // different function from the single-table one, which is where the two
+    // came to disagree about `OR` and would come to disagree about brackets.
+    let tables = [books(), authors()];
+    let join = parse(
+        "SELECT a.name, count(*) FROM books JOIN authors AS a ON books.author_id = a.id \
+         GROUP BY a.name HAVING (count(*) > 5 OR count(*) < 2) AND count(*) <> 3",
+        &Schema(&tables),
+    )
+    .unwrap_or_else(|e| panic!("a bracketed HAVING on a join: {}", e.message));
+    match join.statement {
+        Statement::Join(spec) => assert!(
+            spec.having_predicate.is_some(),
+            "the join's HAVING should have nested"
+        ),
+        other => panic!("expected a join, got {other:?}"),
+    }
+
+    let chain = parse(
+        "SELECT a.name, count(*) FROM books \
+         JOIN authors AS a ON books.author_id = a.id \
+         JOIN authors AS b ON books.author_id = b.id \
+         GROUP BY a.name HAVING (count(*) > 5 OR count(*) < 2) AND count(*) <> 3",
+        &Schema(&tables),
+    )
+    .unwrap_or_else(|e| panic!("a bracketed HAVING on a chain: {}", e.message));
+    match chain.statement {
+        Statement::Chain(spec) => assert!(
+            spec.having_predicate.is_some(),
+            "the chain's HAVING should have nested"
+        ),
+        other => panic!("expected a chain, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_ored_single_table_having_is_a_disjunction_and_not_a_conjunction() {
+    // `an_ored_having_reaches_a_chain` covers the chain and the browser's
+    // suite covers the binding; this crate's own surface had no single-table
+    // case, and a mutation putting the ORed terms into the ANDed field
+    // survived the whole file. It is the difference between "either" and
+    // "both", which no assertion about *which list is empty* can see —
+    // `a_flat_having_never_lands_in_the_nested_field` passes either way.
+    let text = format!("{BY_AUTHOR}count(*) > 100 OR author_id = 1");
+    let spec = select(&text);
+    assert_eq!(spec.having_any_of.len(), 2, "both arms should be disjuncts");
+    assert!(spec.having.is_empty(), "{:?}", spec.having);
+
+    // And it means either, in the lowering rather than only in the spec.
+    assert!(group_admits(&text, 1, 2), "the key arm alone");
+    assert!(group_admits(&text, 9, 500), "the count arm alone");
+    assert!(!group_admits(&text, 9, 2), "neither arm");
 }

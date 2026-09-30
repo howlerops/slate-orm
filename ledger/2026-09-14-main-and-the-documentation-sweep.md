@@ -100,6 +100,14 @@ with no path filter.
 
 ## What this does not do
 
+~~**Pages is not enabled, and cannot be enabled from here.**~~ **Closed** —
+somebody with admin enabled it. `https://howlerops.github.io/slate-orm/`
+answers 200 and serves the docs site. The 2026-09-30 audit could not check
+this one, because `GET /repos/howlerops/slate-orm/pages` is refused by that
+container's proxy; fetching the published URL is the route that works, and
+costs nothing. See
+`ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md`.
+
 **Pages is not enabled, and cannot be enabled from here.** `enablement: true`
 was tried and refused: `Create Pages site failed. Error: Resource not
 accessible by integration`. Same wall as the default branch — repository
@@ -110,6 +118,8 @@ failure and prints the one thing a reader needs, which is Settings → Pages →
 Source: GitHub Actions. The setting has to be changed once by a person with
 admin, and then any push to `main` publishes.
 
+~~`enablement: true` ... does not work here.~~ **Narrowed** — the observable half is false: `actions/configure-pages@v5` with `enablement: true` succeeds in every recent run and the step after it is skipped. Whether the token could *enable* Pages is now untestable, Pages being on. See `ledger/2026-09-30-a-premise-nobody-here-can-falsify.md`.
+
 `enablement: true` is kept rather than reverted, even though it does not work
 here. Where a token *is* permitted — a fork, or this repository with different
 Actions permissions — it removes the manual step entirely, and where it is not,
@@ -117,6 +127,11 @@ the message below it says so. The alternative was leaving `enablement: false`,
 whose error ("verify that the repository has Pages enabled ... or consider
 exploring the `enablement` parameter") reads like a suggestion to the person
 editing the workflow rather than an instruction to the person who can fix it.
+
+~~`main` is not yet the **default** branch, and this session cannot make it
+one.~~ **Closed** — somebody with admin changed it. `GET
+/repos/howlerops/slate-orm` answers `"default_branch": "main"`; see
+`ledger/2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md`.
 
 `main` is not yet the **default** branch, and this session cannot make it one.
 Until somebody changes it in Settings → General, the public repository page

@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T03:11:02+00:00",
+  "file": "crates/slate-serverd/tests/ceilings.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "ceilings",
+    "--no-fail-fast"
+  ],
+  "commit": "91119e0",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "only one stream is opened, so nothing is held at once",
+      "old": "const OPEN_AT_ONCE: usize = 10;",
+      "new": "const OPEN_AT_ONCE: usize = 1;",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the streams are drained as they are opened",
+      "old": "        open.push(opened.into_inner());",
+      "new": "        drop(opened);",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

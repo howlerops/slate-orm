@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-29T09:03:04+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_transport_door.py"
+  ],
+  "commit": "89bbacd",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the Go transport door stops taking dial options",
+      "old": "opts ...grpc.DialOption",
+      "new": "opts ...string",
+      "verdict": "caught",
+      "caught_by": [
+        "check_transport_door: go's transport door is gone: clients/go/slate/client.go has no `opts \\.\\.\\.grpc\\.DialOption`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

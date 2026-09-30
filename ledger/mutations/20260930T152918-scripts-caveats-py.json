@@ -1,0 +1,53 @@
+{
+  "at": "2026-09-30T15:29:18+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "db5a316",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the frame is the whole bucket, not the unread part",
+      "old": "        if row.get(\"verdict\") == \"deliberate\" and not row.get(CHECKED):\n            out.append(k)",
+      "new": "        if row.get(\"verdict\") == \"deliberate\":\n            out.append(k)",
+      "verdict": "caught",
+      "caught_by": [
+        "the frame is the unchecked rows and only those",
+        "a draw names a row out of the frame, never out of the bucket",
+        "the indices come back from the seed, which is what a guard checks"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a checked deliberate row need not name its draw",
+      "old": "        if verdict == \"deliberate\" and row.get(CHECKED) and not row.get(DRAW):",
+      "new": "        if verdict == \"deliberate\" and row.get(CHECKED) and row.get(DRAW):",
+      "verdict": "caught",
+      "caught_by": [
+        "a deliberate verdict carrying `checked` is accepted: somebody read it: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is deliberate and carries `checked` with no `draw`. A read against the tree names the draw it came out of, so a pass that sampled the whole bucket cannot be mistaken for one that drew from the frame.']",
+        "a checked deliberate verdict naming no draw is a problem: problems: wanted 1, got 0 []",
+        "and one that names a draw is not: problems: wanted 0, got 1 ['a.md: `It does not do the first thing.` is deliberate and carries `checked` with no `draw`. A read against the tree names the draw it came out of, so a pass that sampled the whole bucket cannot be mistaken for one that drew from the frame.']",
+        "the real tracker: every verdict is well formed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a draw wider than the frame is padded instead of refused",
+      "old": "        raise ValueError(f\"asked for {count} rows from a frame of {len(keys)}\")",
+      "new": "        count = len(keys)",
+      "verdict": "caught",
+      "caught_by": [
+        "a draw wider than the frame is refused, not padded"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

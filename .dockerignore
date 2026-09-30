@@ -1,0 +1,27 @@
+# What the build context must not carry.
+#
+# The `Dockerfile` COPYs explicitly, so nothing here changes what lands in the
+# image — this is about what is *sent to the daemon* before any of that runs.
+# `target/` alone is tens of gigabytes on a working checkout, and without this
+# file `docker build .` spends minutes uploading a build cache it then ignores.
+#
+# Everything is excluded and the few things the build needs are allowed back,
+# rather than the other way round: a deny-list forgets the next large
+# directory somebody adds, and the symptom is a slow build rather than a
+# failure, so nobody notices.
+*
+
+!Cargo.toml
+!Cargo.lock
+!crates/
+!clients/python/testserver/
+# Not because the image needs it — `slate-serverd` does not depend on it —
+# but because `cargo` resolves the whole workspace before building one
+# package, so its *manifest* has to be readable. `scripts/check_workspace.py`
+# holds this list and the Dockerfile's `COPY`s to the root `members`.
+!examples/helpdesk/
+
+# And, inside those, the build outputs a working checkout leaves behind.
+**/target/
+**/node_modules/
+**/__pycache__/

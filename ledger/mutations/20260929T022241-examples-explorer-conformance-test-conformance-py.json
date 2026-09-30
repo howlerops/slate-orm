@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T02:22:41+00:00",
+  "file": "examples/explorer/conformance/test_conformance.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "examples/explorer/conformance/test_conformance.py"
+  ],
+  "commit": "ef18e75",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a raised check group is swallowed rather than reported",
+      "old": "        return [(\n            f\"the {name} checks build without raising\",\n            False,\n            f\"{type(error).__name__}: {error}\",\n        )]",
+      "new": "        return []",
+      "verdict": "caught",
+      "caught_by": [
+        "a check group that raises becomes one failing check",
+        "and the check says which group and what it raised"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the failing check it returns says it passed",
+      "old": "            f\"the {name} checks build without raising\",\n            False,",
+      "new": "            f\"the {name} checks build without raising\",\n            True,",
+      "verdict": "caught",
+      "caught_by": [
+        "a check group that raises becomes one failing check"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

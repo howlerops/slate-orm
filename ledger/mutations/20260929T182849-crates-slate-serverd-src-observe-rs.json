@@ -1,0 +1,66 @@
+{
+  "at": "2026-09-29T18:28:49+00:00",
+  "file": "crates/slate-serverd/src/observe.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bins",
+    "--test",
+    "observing",
+    "--no-fail-fast"
+  ],
+  "commit": "428ff2b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the weight is a frame count, not a length",
+      "old": ".fetch_add(data.len() as u64, Ordering::Relaxed);",
+      "new": ".fetch_add(1, Ordering::Relaxed);",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "a frame counts twice",
+      "old": "self.row.body_frames.fetch_add(1, Ordering::Relaxed);",
+      "new": "self.row.body_frames.fetch_add(2, Ordering::Relaxed);",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "the summary line prints the two the other way round",
+      "old": "counters.body_bytes.load(Ordering::Relaxed),\n                counters.body_frames.load(Ordering::Relaxed),",
+      "new": "counters.body_frames.load(Ordering::Relaxed),\n                counters.body_bytes.load(Ordering::Relaxed),",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "the exported bytes family reads the frame count",
+      "old": "\"slate_response_bytes_total\",\n            &|method| method.body_bytes.load(Ordering::Relaxed),",
+      "new": "\"slate_response_bytes_total\",\n            &|method| method.body_frames.load(Ordering::Relaxed),",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "only an already-ended body is wrapped, so nothing is weighed",
+      "old": "Ok(response) if !failed && !response.body().is_end_stream() => {",
+      "new": "Ok(response) if !failed && response.body().is_end_stream() => {",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": null
+}

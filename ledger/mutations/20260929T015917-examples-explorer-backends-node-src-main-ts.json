@@ -1,0 +1,28 @@
+{
+  "at": "2026-09-29T01:59:17+00:00",
+  "file": "examples/explorer/backends/node/src/main.ts",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "2896ea3",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the node adapter loops where the other two batch",
+      "old": "        await session.batch({\n          atomicity: \"independent\",\n          operations: Array.from({ length: ROUND_TRIP_ROWS }, (_unused, n) => ({\n            kind: \"insert\" as const,\n            table: \"books\",\n            rows: [bookRow(ROUND_TRIP_FIRST + BigInt(n), `Round Trip ${n}`)],\n          })),\n        });",
+      "new": "        for (let n = 0; n < ROUND_TRIP_ROWS; n += 1) {\n          await session.insert(\"books\", bookRow(ROUND_TRIP_FIRST + BigInt(n), `Round Trip ${n}`));\n        }",
+      "verdict": "caught",
+      "caught_by": [
+        "four rows in a batch cost one request (app): the adapters disagree",
+        "the must-differ pair ('four singles cost four requests', 'four rows in a batch cost one request') is not comparable: 'four rows in a batch cost one request' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

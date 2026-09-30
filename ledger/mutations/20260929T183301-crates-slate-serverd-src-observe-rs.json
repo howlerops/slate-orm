@@ -1,0 +1,48 @@
+{
+  "at": "2026-09-29T18:33:01+00:00",
+  "file": "crates/slate-serverd/src/observe.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bins",
+    "--test",
+    "observing",
+    "--no-fail-fast"
+  ],
+  "commit": "428ff2b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the weight is a frame count, not a length",
+      "old": ".fetch_add(data.len() as u64, Ordering::Relaxed);",
+      "new": ".fetch_add(1, Ordering::Relaxed);",
+      "verdict": "caught",
+      "caught_by": [
+        "observe::tests::a_streamed_body_is_weighed_frame_by_frame",
+        "observe::tests::a_trailers_frame_weighs_nothing_and_is_not_a_frame",
+        "observe::tests::the_response_weight_is_exported_for_a_scraper",
+        "a_scrape_weighs_what_the_node_answered"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "a frame counts twice",
+      "old": "self.row.body_frames.fetch_add(1, Ordering::Relaxed);",
+      "new": "self.row.body_frames.fetch_add(2, Ordering::Relaxed);",
+      "verdict": "caught",
+      "caught_by": [
+        "observe::tests::a_streamed_body_is_weighed_frame_by_frame",
+        "observe::tests::a_trailers_frame_weighs_nothing_and_is_not_a_frame",
+        "observe::tests::the_response_weight_is_exported_for_a_scraper"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

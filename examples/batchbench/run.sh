@@ -25,27 +25,7 @@ done
 # spells out at length: a port drawn from the ephemeral range can be taken by
 # an outgoing connection between this script releasing it and the head node
 # binding it, and the failure reads as a broken benchmark.
-port="$(python3 - <<'PORTS'
-import random, socket
-try:
-    with open("/proc/sys/net/ipv4/ip_local_port_range") as handle:
-        ephemeral_low = int(handle.read().split()[0])
-except (OSError, ValueError):
-    ephemeral_low = 32768
-while True:
-    candidate = random.randint(10000, min(max(ephemeral_low - 1, 10100), ephemeral_low - 1))
-    probe = socket.socket()
-    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        probe.bind(("127.0.0.1", candidate))
-    except OSError:
-        continue
-    finally:
-        probe.close()
-    print(candidate)
-    break
-PORTS
-)"
+port="$(python3 "$root/scripts/free_ports.py")"
 addr="127.0.0.1:$port"
 
 # The same rule the client harnesses use: a prebuilt binary if one is named,
@@ -54,6 +34,13 @@ addr="127.0.0.1:$port"
 # binary from the one the caller asked for.
 if [ -n "${SLATE_SERVERD:-}" ]; then
   [ -x "$SLATE_SERVERD" ] || { echo "SLATE_SERVERD=$SLATE_SERVERD is not executable" >&2; exit 1; }
+  # And refuse one built before the source it came from. A prebuilt
+  # binary is a snapshot, and a stale one makes this whole stack test a
+  # server this tree did not produce -- which on 2026-09-30 cost a
+  # mutation of `slate-server` its finding, because the conformance
+  # runner scored it a survivor against a binary from before it.
+  python3 "$here/../../scripts/prebuilt.py" >/dev/null || {
+    python3 "$here/../../scripts/prebuilt.py" >&2; exit 1; }
   serverd="$SLATE_SERVERD"
 else
   (cd "$root" && cargo build -q -p slate-serverd)

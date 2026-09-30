@@ -377,14 +377,23 @@ export class Client {
    * the same proxy that sets its identity headers, and offering TLS here would
    * suggest the identity was protected by something. Pass `credentials` to
    * override.
+   *
+   * `options` is forwarded to the channel untouched, which is how a caller
+   * reaches interceptors, keepalive and message-size limits. It exists because
+   * the other two clients already have this door — Python's `Client` takes
+   * `channel=` and Go's `Dial` takes `...grpc.DialOption` — and this one had
+   * none, so a caller could configure the transport in two languages of three.
+   * Found while writing a round-trip counter for all three: the counter is an
+   * interceptor, and there was nowhere to put it.
    */
   static connect(
     target: string,
     identity: Identity,
     credentials: grpc.ChannelCredentials = grpc.credentials.createInsecure(),
+    options: grpc.ChannelOptions = {},
   ): Client {
     const Records = service();
-    const raw = new Records(target, credentials) as RawClient;
+    const raw = new Records(target, credentials, options) as RawClient;
     return new Client(raw, identity);
   }
 
@@ -407,10 +416,16 @@ export class Client {
   }
 
   /**
-   * Start one that does not carry its watermark.
+   * Start one whose *reads* do not advance its watermark.
    *
    * For a caller that wants the cheapest read available and has decided going
    * backwards in time is acceptable. Named at length so it is a decision.
+   *
+   * It still reads its own writes. This used to say "does not carry its
+   * watermark", and that is what it did: a session that wrote and read back
+   * could miss its own write, with no error anywhere. A caller who only reads
+   * is unaffected; the change is for the one who writes, for whom the old
+   * behaviour was a surprise rather than a saving.
    */
   sessionWithoutMonotonicReads(): Session {
     return new Session(this, false);
@@ -770,12 +785,32 @@ export class Session {
     }
   }
 
+  /**
+   * The floor this session's reads carry.
+   *
+   * Gated on the watermark alone, and *not* on `#monotonic`. The flag decides
+   * whether a read advances the watermark — see `#observeServedBy` — and a
+   * write advances it either way, so a session that has written carries a
+   * floor even with monotonic reads off. That is read-your-writes, a different
+   * guarantee from monotonic reads and not the one the flag names.
+   *
+   * It used to be gated here, which meant `sessionWithoutMonotonicReads()`
+   * silently dropped read-your-writes too: write, read back, miss your own
+   * write, no error anywhere. See
+   * `ledger/2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md`
+   * for the three-way comparison that found it.
+   */
   #freshness(): Record<string, unknown> | undefined {
-    if (!this.#monotonic || this.#watermark === undefined) return undefined;
+    if (this.#watermark === undefined) return undefined;
     return { atLeast: this.#watermark.toString() };
   }
 
   #observeServedBy(servedBy: unknown): void {
+    // The one place the flag belongs: folding a *read's* view into the
+    // watermark is what stops a later read going backwards, and is exactly
+    // what a caller turning monotonic reads off is asking not to pay for. A
+    // write's sequence is folded in elsewhere and is never gated.
+    if (!this.#monotonic) return;
     if (!servedBy || typeof servedBy !== "object") return;
     const seq = (servedBy as { sequence?: string }).sequence;
     if (seq !== undefined && seq !== null) this.observe(BigInt(seq));

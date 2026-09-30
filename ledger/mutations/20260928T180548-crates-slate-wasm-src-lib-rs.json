@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-28T18:05:48+00:00",
+  "file": "crates/slate-wasm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "having",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the two-table join call site drops the nested tree",
+      "old": "                        spec.having_predicate.as_ref(),\n                        &keys,\n                        &aggregates,\n                        &[&authors, &books],",
+      "new": "                        None,\n                        &keys,\n                        &aggregates,\n                        &[&authors, &books],",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_having_reaches_a_grouped_join_too"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

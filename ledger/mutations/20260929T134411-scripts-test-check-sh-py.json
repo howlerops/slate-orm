@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-29T13:44:11+00:00",
+  "file": "scripts/test_check_sh.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "8e8d485",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the glob narrows back to ci.yml, so a second workflow is invisible again",
+      "old": "    return sorted(directory.glob(\"*.yml\")) + sorted(directory.glob(\"*.yaml\"))",
+      "new": "    return sorted(directory.glob(\"ci.yml\"))",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "the sentinel between files goes, so a step can take the next file's working-directory",
+      "old": "        lines.append(\"\")\n",
+      "new": "",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

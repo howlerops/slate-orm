@@ -1,0 +1,41 @@
+{
+  "at": "2026-09-28T20:44:30+00:00",
+  "file": "crates/slate-serverd/src/main.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "ceilings"
+  ],
+  "commit": "475afd7",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the zero-concurrency refusal is dropped",
+      "old": "    if concurrency == Some(0) {",
+      "new": "    if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_concurrency_limit_of_zero_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the request timeout is never read from the file",
+      "old": "    let request_timeout = config::optional_duration(\n        document.limits.request_timeout.as_ref(),\n        \"limits.request_timeout\",\n    )?;",
+      "new": "    let request_timeout = None;",
+      "verdict": "caught",
+      "caught_by": [
+        "a_sub_millisecond_timeout_is_refused_by_name"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

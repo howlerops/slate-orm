@@ -90,14 +90,16 @@ part of the change.
 ## What runs, and where
 
 `main` is the trunk. `.github/workflows/ci.yml` runs on **every push, to every
-branch** — twenty-one jobs covering formatting, the Rust workspace, the Go,
+branch** — twenty-four jobs covering formatting, the Rust workspace, the Go,
 Python and TypeScript clients, the demo frontend, the pre-commit hook's own
 tests, a workspace-layout guard, the repository's *other* Python (every
 harness, script and site check outside `clients/python`), the landing page's
 quickstarts, the ten documentation pages rendered in a browser, the three-SDK
 conformance runner, a browser e2e, the workbench in a browser, MinIO, the whole
-stack deployed against object storage, four benchmark crates at `--smoke`, and
-the release build for both shipping targets.
+stack deployed against object storage, four benchmark crates at `--smoke`, the
+helpdesk application on SlateDB over an object store, the release build for
+both shipping targets, and the container image — built,
+started and checked for a shell it should not have.
 
 That count is a count of `jobs:` keys in `ci.yml` and nothing checks it, which
 is why it said *seventeen* for as long as it did: jobs were added and the
@@ -123,9 +125,12 @@ It runs all of them and reports at the end rather than stopping at the first,
 because a session that fixes one and re-runs pays the whole cost again to find
 the second. It needs no built binary, no browser, no container and no network,
 which is what makes it worth running before every commit — and is exactly why
-it is not enough. `scripts/test_check_sh.py`, which CI runs, fails if a step is
-added to `ci.yml` and neither listed in the script nor written down as one it
-cannot run.
+it is not enough. `scripts/test_check_sh.py`, which CI runs, holds the two to
+each other **both ways**: a step added to `ci.yml` fails it unless the script
+runs it or `ELSEWHERE` says why not, and a step added to `check.sh` fails it
+unless a workflow runs it or `ONLY_LOCAL` says why not. The second half is new,
+and adding it found fourteen steps — nine guards and five toolchain checks —
+that had been running here and nowhere else.
 
 Then the suites it cannot reach, whichever your change touches:
 
@@ -152,6 +157,13 @@ The client suites and the demo build `slate-serverd` with `cargo` by default.
 suite) points them at a prebuilt binary instead, which is how CI builds it once
 for every job and how you run a client suite with no Rust toolchain. A path
 that is set and missing is a hard error, never a silent fall back to building.
+So is one **older than the source it was built from**: `scripts/prebuilt.py`
+is the single refusal all six harnesses use, and `scripts/test_prebuilt.py`
+drives four of them with a binary timestamped in 2000 and requires a named
+drive test in the Go and TypeScript suites for the other two. A binary
+compared against nothing is how a mutation of `slate-server` survived the
+three-SDK conformance runner, so a `SLATE_*` variable naming an executable
+that `prebuilt.py` does not know is refused rather than run.
 
 ## Practical notes
 
@@ -215,7 +227,7 @@ that is set and missing is a hard error, never a silent fall back to building.
   which would have meant the site never deployed at all. Both are written up in
   the workflow files. Prefer running something cheap unconditionally.
 - **Read the run's conclusion; do not wait to be told.** A push starts
-  twenty-one jobs and nothing in this container reports how they ended. A
+  twenty-four jobs and nothing in this container reports how they ended. A
   session once set a watch that matched on the Pages string and expired after
   thirty minutes, and three red runs went by unnoticed —
   `ledger/2026-09-14-ci-clippy-is-newer-than-mine.md` recorded that the honest

@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T06:30:56+00:00",
+  "file": "crates/slate-server/src/convert.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "views",
+    "--no-fail-fast"
+  ],
+  "commit": "aeac8d8",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the join input resolution goes back to `no table named`",
+      "old": "        let table = catalog\n            .table_by_name(&query.table)\n            .ok_or_else(|| views::no_such_table(views, &query.table))?;",
+      "new": "        let table = catalog\n            .table_by_name(&query.table)\n            .ok_or_else(|| Status::not_found(format!(\"no table named `{}`\", query.table)))?;",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the aggregate input resolution goes back to `no table named`",
+      "old": "            let table = catalog\n                .table_by_name(&input.table)\n                .ok_or_else(|| views::no_such_table(views, &input.table))?;",
+      "new": "            let table = catalog\n                .table_by_name(&input.table)\n                .ok_or_else(|| Status::not_found(format!(\"no table named `{}`\", input.table)))?;",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

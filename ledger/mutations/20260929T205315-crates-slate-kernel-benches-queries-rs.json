@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-29T20:53:15+00:00",
+  "file": "crates/slate-kernel/benches/queries.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "9c3e356",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the soft-delete measurement is dropped from the bench",
+      "old": "let mut group = c.benchmark_group(\"soft_delete\");\n        group.bench_with_input(BenchmarkId::new(\"tenant_scan\", \"plain\")",
+      "new": "let mut group = c.benchmark_group(\"gone\");\n        group.bench_with_input(BenchmarkId::new(\"tenant_scan\", \"plain\")",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

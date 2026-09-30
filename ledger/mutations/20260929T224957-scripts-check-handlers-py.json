@@ -1,0 +1,55 @@
+{
+  "at": "2026-09-29T22:49:57+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "697a654",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the impl must start at column zero again",
+      "old": "IMPL_CATALOG = re.compile(r\"^(\\s*)impl Catalog\\b\")",
+      "new": "IMPL_CATALOG = re.compile(r\"^()impl Catalog\\b\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a lookup in an indented `impl Catalog` is reported"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the block ends at the first brace at any depth",
+      "old": "        if line.rstrip() == closing:",
+      "new": "        if line.rstrip().endswith(\"}\"):",
+      "verdict": "caught",
+      "caught_by": [
+        "a handler that authorises before fingerprinting passes",
+        "a fingerprint whose table arrives already authorised passes",
+        "a tree with no authenticators needs no roster",
+        "a handler that authorises its inputs first passes",
+        "a function taking a catalog but no request is not a converter",
+        "a converter holding a context can check for itself",
+        "one converter delegating to another is not a handler",
+        "a handler that authenticates passes, even with no table to authorise"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the block ends only at column zero, whatever its own indent",
+      "old": "            closing = opened.group(1) + \"}\"",
+      "new": "            closing = \"}\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a method after an indented block closes is not inside it"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-29T01:58:18+00:00",
+  "file": "examples/explorer/backends/go/main.go",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "examples/explorer/run.sh",
+    "--conformance"
+  ],
+  "commit": "2896ea3",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the go counter loses its stream interceptor, as it once had",
+      "old": "\t\tgrpc.WithChainStreamInterceptor(s.counter.stream),\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "three keyset pages cost three requests (app): the adapters disagree",
+        "the must-differ pair ('three keyset pages cost three requests', 'a relation for three parents costs one request') is not comparable: 'three keyset pages cost three requests' produced no agreed answer",
+        "the must-differ pair ('four singles cost four requests', 'three keyset pages cost three requests') is not comparable: 'three keyset pages cost three requests' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

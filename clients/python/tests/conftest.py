@@ -40,6 +40,7 @@ worth revisiting if isolation ever bites.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import pathlib
 import shutil
@@ -107,61 +108,26 @@ def _build() -> pathlib.Path:
     return BINARY
 
 
-#: Directories whose contents decide what the server does.
-#:
-#: The `.proto` is in there because the protocol is the thing this client and
-#: that binary have to agree about, and a stale binary speaking an older one is
-#: exactly the failure this check exists for.
-SERVER_SOURCES = (
-    REPO_ROOT / "crates",
-    REPO_ROOT / "clients" / "python" / "testserver",
+# The staleness refusal used to live here, in full. It is now
+# `scripts/prebuilt.py`, because three other harnesses take the same variable
+# and none of them had it — and on 2026-09-30 that cost a mutation of
+# `crates/slate-server/src/status.rs` its finding: it survived the conformance
+# runner, which was pointed at a binary built before the mutation. See that
+# module's docstring.
+#
+# Loaded by path rather than imported, and that is not stylistic: `ty` runs
+# over `clients/python` alone — the published package must typecheck without
+# the rest of the repository — so a plain `from prebuilt import ...` is an
+# unresolved import there however the runtime `sys.path` is arranged. A
+# conftest reaching outside its own package for a repository-wide rule is
+# exactly what an explicit load says.
+_spec = importlib.util.spec_from_file_location(
+    "slate_prebuilt", REPO_ROOT / "scripts" / "prebuilt.py"
 )
-
-
-def _newest_source() -> tuple[float, pathlib.Path] | None:
-    """The most recently modified file the server is built from."""
-    newest: tuple[float, pathlib.Path] | None = None
-    for root in SERVER_SOURCES:
-        if not root.exists():
-            continue
-        for path in root.rglob("*"):
-            # `target/` is build output, not source, and walking it is slow
-            # enough to notice: it is the biggest directory in the tree.
-            if "target" in path.parts or not path.is_file():
-                continue
-            if path.suffix not in {".rs", ".toml", ".proto"}:
-                continue
-            stamp = path.stat().st_mtime
-            if newest is None or stamp > newest[0]:
-                newest = (stamp, path)
-    return newest
-
-
-def _refuse_if_stale(binary: pathlib.Path, variable: str) -> None:
-    """Refuse a prebuilt binary older than the source it was built from.
-
-    This is here because it happened. A full run of this suite reported 153
-    passing tests against a `slate-testserver` built before that session's
-    server changes — so every test of the new behaviour was checking the *old*
-    server, and passing, because the client asked for something the old binary
-    politely ignored. It was found by three new tests failing once the binary
-    was rebuilt, which is luck rather than a process.
-
-    Compared by modification time, which is crude and catches the whole of the
-    real failure: a binary handed over by CI is minutes old, and one a
-    contributor built last week is not.
-    """
-    newest = _newest_source()
-    if newest is None:
-        return
-    stamp, source = newest
-    if binary.stat().st_mtime >= stamp:
-        return
-    raise RuntimeError(
-        f"{variable}={binary} was built before {source.relative_to(REPO_ROOT)} "
-        f"was last changed, so the suite would test a server this tree did not "
-        f"produce. Rebuild it, or unset {variable} to build from source."
-    )
+assert _spec is not None and _spec.loader is not None
+_prebuilt = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_prebuilt)
+_refuse_if_stale = _prebuilt.refuse_if_stale
 
 
 class Serving:

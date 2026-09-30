@@ -1,0 +1,75 @@
+{
+  "at": "2026-09-29T16:32:25+00:00",
+  "file": "scripts/check_proto_copies.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_proto_copies.py"
+  ],
+  "commit": "6d748f6",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "only the copy tree is walked, so a canonical file with no copy passes",
+      "old": "    for name in sorted(set(source) | set(mirror)):",
+      "new": "    for name in sorted(set(mirror)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a missing copy: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "only the canonical tree is walked, so an orphan copy passes",
+      "old": "    for name in sorted(set(source) | set(mirror)):",
+      "new": "    for name in sorted(set(source)):",
+      "verdict": "caught",
+      "caught_by": [
+        "a copy with no canonical file: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the byte comparison stops comparing",
+      "old": "        elif mirror[name].read_bytes() != source[name].read_bytes():",
+      "new": "        elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a copy that drifted: exit 0, wanted 1",
+        "a copy reformatted: exit 0, wanted 1",
+        "a second pair, one of them drifted: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "two empty trees read as nothing wrong",
+      "old": "    if not source and not mirror:",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "no protos under either tree: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the walk stops recursing, so only a top-level proto is compared",
+      "old": "        path.relative_to(under).as_posix(): path for path in sorted(under.rglob(\"*.proto\"))",
+      "new": "        path.relative_to(under).as_posix(): path for path in sorted(under.glob(\"*.proto\"))",
+      "verdict": "caught",
+      "caught_by": [
+        "a matching pair: exit 1, wanted 0",
+        "no .proto found under crates/slate-server/proto or clients/typescript/proto. Either the trees moved or the schema is gone \u2014 both need a person, not a pass.",
+        "a second pair, both matching: exit 1, wanted 0",
+        "no .proto found under crates/slate-server/proto or clients/typescript/proto. Either the trees moved or the schema is gone \u2014 both need a person, not a pass."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

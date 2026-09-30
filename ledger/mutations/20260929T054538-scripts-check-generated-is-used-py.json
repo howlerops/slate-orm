@@ -1,0 +1,115 @@
+{
+  "at": "2026-09-29T05:45:38+00:00",
+  "file": "scripts/check_generated_is_used.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_generated_is_used.py"
+  ],
+  "commit": "a251c23",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the scope widens to the whole repository",
+      "old": "[\"git\", \"grep\", \"-l\", \"-E\", shaped, \"--\", package_of(path)],",
+      "new": "[\"git\", \"grep\", \"-l\", \"-E\", shaped],",
+      "verdict": "caught",
+      "caught_by": [
+        "an importer in another package does not count: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the import shape is dropped for the bare stem",
+      "old": "        rf\"(from|import|require)[[:space:]]+[.\\\"'/]*{stem}\\b\"\n        rf\"|[\\\"'][^\\\"']*[./]{stem}(\\.[A-Za-z]+)?[\\\"']\"",
+      "new": "        rf\"\\b{stem}\\b\"\n        rf\"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a bare mention is not an import: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "package_of falls back to the repository root",
+      "old": "    return Path(path).parent.as_posix()",
+      "new": "    return \".\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the manifest walk stops before finding one",
+      "old": "        if any((here / manifest).exists() for manifest in MANIFESTS):",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "the real shape passes: exit 1, wanted 0",
+        "a generated file nothing imports fails: no 'nothing in web imports' in",
+        "a bare mention is not an import: no 'nothing in web imports' in",
+        "an importer in another package does not count: no 'nothing in web imports' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "rule 2 never checks the reaching call",
+      "old": "            if not contains(where, pattern):",
+      "new": "            if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "imported but no longer declared fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an absent generated file is skipped instead of refused",
+      "old": "        if not (ROOT / path).exists():",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a generated file that is not committed fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a missing REACHES entry is accepted",
+      "old": "        if reach is None:",
+      "new": "        if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a generated file with no roster entry fails: no 'REACHES has no entry for it' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an empty roster passes",
+      "old": "    if not files:",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a workflow naming no outputs fails: no 'no generated files' in"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a stale REACHES entry is accepted",
+      "old": "    for path in sorted(set(REACHES) - set(files)):",
+      "new": "    for path in sorted(set()):",
+      "verdict": "caught",
+      "caught_by": [
+        "a roster entry for a file no longer generated fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,31 @@
+{
+  "at": "2026-09-30T03:13:55+00:00",
+  "file": "crates/slate-server/src/service.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-server",
+    "--test",
+    "related_path",
+    "--no-fail-fast"
+  ],
+  "commit": "90ff601",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the refusal goes back to a bare Status carrying no details",
+      "old": "            return Err(status::refused(\n                Code::InvalidArgument,\n                format!(\n                    \"a relationship path of {} steps was asked for and the limit is \\\n                     {limit}; each step is a read, so the depth is how many reads one \\\n                     request performs. Shorten the path, or raise \\\n                     `[limits] max_relation_depth`\",\n                    steps.len()\n                ),\n                \"RELATION_DEPTH_EXCEEDED\",\n                HashMap::from([\n                    (\"limit\".to_owned(), limit.to_string()),\n                    (\"asked\".to_owned(), steps.len().to_string()),\n                ]),\n            ));",
+      "new": "            return Err(Status::new(\n                Code::InvalidArgument,\n                format!(\n                    \"a relationship path of {} steps was asked for and the limit is \\\n                     {limit}; each step is a read, so the depth is how many reads one \\\n                     request performs. Shorten the path, or raise \\\n                     `[limits] max_relation_depth`\",\n                    steps.len()\n                ),\n            ));",
+      "verdict": "caught",
+      "caught_by": [
+        "a_path_deeper_than_the_limit_is_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

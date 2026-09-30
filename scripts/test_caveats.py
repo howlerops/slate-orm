@@ -15,6 +15,7 @@ triaged caveat to untriaged where nobody looks at it again.
 from __future__ import annotations
 
 import json
+import random
 import sys
 import tempfile
 from pathlib import Path
@@ -39,6 +40,105 @@ ENTRY = """# An entry
 ## What this does not do
 
 **It does not do the first thing.** With a sentence after it.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: The ledger's "answered later" shape: the closure struck through, the original
+#: bullet left standing underneath. Both produce the same key, and only the
+#: standing one reaches the tracker — which is how a caveat closed in September
+#: was still recorded `open` in this repository months later.
+STRUCK = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed** by
+  `2026-09-20-the-entry-that-closed-it.md`, which cost one fixture table
+  rather than the rewrite estimated below.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: The same shape, with a strike that credits nobody.
+#:
+#: 30 of the 51 strikes in this ledger are prose like this — "Closed, the same
+#: afternoon" — and the `by` rule has nothing to check them against. A rule
+#: that demanded a citation from every strike would be a rule about how to
+#: write an entry, which is the `pre-commit` hook's business and not this file's.
+STRUCK_ANONYMOUS = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed**, later the same afternoon,
+  and it cost one fixture table rather than the rewrite estimated below.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: A strike that names its own entry, and no other.
+#:
+#: An entry naming its own filename in a strike is narrating itself, not
+#: pointing anywhere — a `by` citing it would send the reader back to the file
+#: they are already in. So it credits nobody and the `by` goes unchecked, the
+#: same as prose. No strike in this ledger does it today; the rule is here
+#: because "the entry that closed it" and "the entry it is in" are the same
+#: string when a session closes its own caveat in a later section.
+STRUCK_SELF = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed** further up
+  `2026-09-19-an-entry.md` itself, which cost one fixture table rather than
+  the rewrite estimated below.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: A strike crediting two entries, because a closure can take two steps.
+STRUCK_TWICE = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Closed** by
+  `2026-09-20-the-entry-that-closed-it.md`, after
+  `2026-09-19-the-entry-that-started-it.md` made it possible.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
+
+**It does not do the second thing.** Also with a sentence.
+"""
+
+
+#: A strike that mentions a Markdown file which is not a ledger entry.
+#:
+#: `docs/correctness.md` is where a finding gets written up, not somebody who
+#: closed a caveat, and a `by` should not have to name it. The date prefix is
+#: what separates an entry from every other `.md` in the tree, which is why
+#: `CREDITED` requires one.
+STRUCK_README = """# An entry
+
+## What this does not do
+
+- ~~**It does not do the first thing.**~~ **Withdrawn** — the property it
+  asks for is already written up in `docs/correctness.md`, so there was
+  nothing to do.
+
+- **It does not do the first thing.** With the original estimate, standing
+  unedited, because being wrong about it is the useful part.
 
 **It does not do the second thing.** Also with a sentence.
 """
@@ -233,12 +333,36 @@ def main() -> int:
         0,
     )
 
-    # `checked` is a claim about the tree and `--unread` reads it, so a settled
-    # verdict wearing one is a stamp nothing will ever look at again pretending
-    # to be one that will. The reverse sweep put `checked` on 316 `deliberate`
-    # rows before this told it not to.
+    # `checked` means read against the tree, and a `closed` caveat has no claim
+    # about the current tree left to read: it is answered. `reviewed` is the
+    # stamp for re-reading a settled verdict's reasoning.
     case(
-        "a settled verdict carrying `checked` rather than `reviewed` is refused",
+        "a closed verdict carrying `checked` rather than `reviewed` is refused",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "the entry argues it",
+                        "checked": "2026-09-26",
+                    }
+                ]
+            ),
+        },
+        {"closed": 1},
+        1,
+    )
+
+    # And the one that changed on 2026-09-30. `deliberate` was in that list
+    # until five sampling passes had read 246 of them against the tree with
+    # nowhere to say so; the reasoning was that nothing read the stamp, and
+    # the fix was to make `--unchecked` read it. See
+    # `ledger/2026-09-30-a-sample-that-pools-with-the-next-one.md`.
+    case(
+        "a deliberate verdict carrying `checked` is accepted: somebody read it",
         {
             "ledger/a.md": ENTRY,
             "docs/caveat-status.json": status(
@@ -248,13 +372,16 @@ def main() -> int:
                         "key": "It does not do the first thing.",
                         "verdict": "deliberate",
                         "by": "the entry argues it",
-                        "checked": "2026-09-26",
+                        "checked": "2026-09-30",
+                        # Which draw it came out of, required since the frame
+                        # got a guard: see the draw cases at the end.
+                        "draw": "2026-09-30-329",
                     }
                 ]
             ),
         },
         {"deliberate": 1},
-        1,
+        0,
     )
 
     # The third side, and the one that was written in the docstring and
@@ -453,6 +580,200 @@ def main() -> int:
         0,
     )
 
+    # The recall half, added 2026-09-28. The bold lead is a *convention*, and
+    # it firmed up around the 20th: 379 paragraphs in this repository's own
+    # `What this does not do` sections do not carry one, and every single one
+    # of them was invisible — 129 entries had no caveat the tracker could see
+    # at all. A tracker reporting "0 open" over 74% of the caveats is the
+    # never-fires shape wearing a headline number.
+    case(
+        "a paragraph with no bold lead is a caveat too",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "No deployment. The site is files in a directory.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "a bold-lead caveat and a plain one are both found, and counted once",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "**A bold one.** With a sentence after it.\n\n"
+                "A plain one, with no lead at all.\n"
+            )
+        },
+        {"untriaged": 2},
+        0,
+    )
+
+    # The key has to stay the bold text where there is one, or the widening
+    # orphans every verdict this repository has written. Measured before the
+    # change: 1065 keys before, 1065 of them still present after, 379 added,
+    # nothing colliding.
+    case(
+        "a bold caveat keeps its key when plain paragraphs are read too",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "**A bold one.** With a sentence after it.\n\n"
+                "A plain one.\n"
+            ),
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "A bold one.",
+                        "verdict": "open",
+                        "by": "",
+                    }
+                ]
+            ),
+        },
+        {"open": 1, "untriaged": 1},
+        0,
+    )
+
+    # A plain withdrawal is dropped for the same reason a bold one is. It
+    # could not arise before, because `WITHDRAWN` only ever saw bold text.
+    case(
+        "a plain withdrawal is not a caveat either",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "Withdrawn, 2026-09-14. The measurement did not hold.\n\n"
+                "A real one.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    # Three shapes that are *about* a caveat rather than being one. Each was
+    # met while widening: 26 blockquoted `> **Closed on …**` notes, 3 fenced
+    # blocks of captured output, and one `*(Closed, …)*` parenthetical. All
+    # three read as claims once whole paragraphs were read, and none is one.
+    case(
+        "a blockquoted closure note is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "A real one.\n\n"
+                "> **Closed on 2026-09-15** by `some-later-entry`.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "a fenced block of captured output is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "A real one.\n\n"
+                "```\nTerminate orphan process: pid (3524)\n```\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    case(
+        "a parenthetical closure note is not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "A real one.\n\n"
+                "*(Closed, 2026-09-14: the runner builds all three now.)*\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
+    # A tight list is several caveats, not one. 53 of this repository's 54
+    # list blocks hold more than one item, each with its own bold lead, and
+    # reading the block as a single caveat would key all of them on the first
+    # one's opening words — which is worse than missing them, because it looks
+    # triaged.
+    case(
+        "each item of a tight list is its own caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "- **The first.** With a sentence that\n  wraps onto a second line.\n"
+                "- **The second.** Another.\n"
+                "- **The third.** And another.\n"
+            )
+        },
+        {"untriaged": 3},
+        0,
+    )
+
+    case(
+        "a list item keys on its bold lead, not on the dash",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "- **The first.** With a sentence.\n"
+            ),
+            "docs/caveat-status.json": status(
+                [{"entry": "a.md", "key": "The first.", "verdict": "open", "by": ""}]
+            ),
+        },
+        {"open": 1, "untriaged": 0},
+        0,
+    )
+
+    # `.match`, never `.search`. 126 plain paragraphs in this repository carry
+    # emphasis somewhere in the middle, and a searched lead would key them on
+    # that fragment — 26 of them on the same six words, which collides.
+    case(
+        "mid-paragraph emphasis does not become a plain caveat's key",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "The runner is not wired in, and that is **the whole point**.\n"
+            ),
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "The runner is not wired in, and that is **the whole point**.",
+                        "verdict": "open",
+                        "by": "",
+                    }
+                ]
+            ),
+        },
+        {"open": 1, "untriaged": 0},
+        0,
+    )
+
+    # The half `WITHDRAWN` does not cover, and the reason `~~` is in
+    # `ANNOTATION` rather than left to it. 47 struck paragraphs here, and most
+    # open with the retracted sentence rather than with the word "Withdrawn" —
+    # "~~The runner is not wired into CI…~~". A mutation dropping `~~` from
+    # `ANNOTATION` survived every case in this file until this one, because
+    # every struck fixture happened to say the word.
+    case(
+        "a struck paragraph not worded as a withdrawal is still not a caveat",
+        {
+            "ledger/a.md": (
+                "# E\n\n## What this does not do\n\n"
+                "~~The runner is not wired into CI, so nothing runs it.~~\n\n"
+                "A real one.\n"
+            )
+        },
+        {"untriaged": 1},
+        0,
+    )
+
     case(
         "a struck-through withdrawal is not a caveat",
         {
@@ -634,6 +955,73 @@ def main() -> int:
         30,
         1,
     )
+    # --- `--unchecked`, the same worklist over the other bucket -----------
+    #
+    # `--unread` is 146 rows known to be undone; this is 1038 rows asserted to
+    # be fine, of which five sampling passes found seven not fine. Its whole
+    # value is that a read leaves a mark, so the next pass draws from what is
+    # left rather than re-drawing blind — which is what the four passes before
+    # 2026-09-30 had to do. Getting that wrong in either direction costs the
+    # same as it does above.
+    def unchecked_case(
+        name: str, verdicts: list[dict[str, str]], days: int | None, want: int
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree(root, {"ledger/a.md": ENTRY, "docs/caveat-status.json": status(verdicts)})
+            got = guard.unchecked(days, root, today="2026-09-30")
+            if len(got) != want:
+                print(f"FAIL  {name}: wanted {want} listed, got {len(got)}: {got}")
+                RESULTS.append(False)
+            else:
+                print(f"ok    {name}")
+                RESULTS.append(True)
+
+    both_deliberate = [
+        {"entry": "a.md", "key": "It does not do the first thing.",
+         "verdict": "deliberate", "by": "a reason"},
+        {"entry": "a.md", "key": "It does not do the second thing.",
+         "verdict": "deliberate", "by": "another reason"},
+    ]
+    unchecked_case("a deliberate caveat nobody has read is listed", both_deliberate, None, 2)
+    unchecked_case(
+        "one read against the tree drops off, which is what makes passes pool",
+        [dict(both_deliberate[0], checked="2026-09-30"), both_deliberate[1]],
+        None,
+        1,
+    )
+    # The distinction the whole change rests on. `reviewed` is the reverse
+    # sweep's stamp — an entry's prose re-read — and 316 rows carry one. If
+    # that counted, the frame would start two thirds full of rows nobody has
+    # checked against anything.
+    unchecked_case(
+        "`reviewed` does not count as read: it is prose against prose",
+        [dict(both_deliberate[0], reviewed="2026-09-30"), both_deliberate[1]],
+        None,
+        2,
+    )
+    unchecked_case(
+        "no window means ever, so an old read still counts",
+        [dict(both_deliberate[0], checked="2026-01-01"), both_deliberate[1]],
+        None,
+        1,
+    )
+    unchecked_case(
+        "a window asks the other question, and lists the old read again",
+        [dict(both_deliberate[0], checked="2026-01-01"), both_deliberate[1]],
+        30,
+        2,
+    )
+    unchecked_case(
+        "the open backlog is `--unread`'s and does not show up here",
+        [
+            {"entry": "a.md", "key": "It does not do the first thing.", "verdict": "open"},
+            both_deliberate[1],
+        ],
+        None,
+        1,
+    )
+
     # A date nobody can read is not a date somebody checked. The alternative —
     # treating it as absent — is the same list with the error invisible, and
     # the alternative to *that* is raising, which takes the whole run down for
@@ -692,6 +1080,320 @@ def main() -> int:
         else:
             print("ok    --residual lists what each narrowed caveat owes")
             RESULTS.append(True)
+
+    # The pair the strike rule exists for. `open` on a struck-and-standing
+    # claim is the failure; `closed` on the same tree is not.
+    case(
+        "a claim that also stands struck through cannot be open",
+        {
+            "ledger/a.md": STRUCK,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "open",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 2, "untriaged": 0},
+        1,
+    )
+
+    case(
+        "the same pair recorded closed is fine",
+        {
+            "ledger/a.md": STRUCK,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "ledger/2026-09-20-the-entry-that-closed-it.md, "
+                              "which the strike names",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # The gap the rule above left, which its own entry recorded: a `closed`
+    # row whose `by` describes the work instead of naming where it is written
+    # down. Two of the three real pairs were doing exactly this.
+    case(
+        "a closed claim whose `by` does not name the entry the strike credits",
+        {
+            "ledger/a.md": STRUCK,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "one fixture table, added later",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        1,
+    )
+
+    # And the limit of it: a strike naming no entry leaves nothing to check,
+    # so the same prose `by` passes. Written because a rule that fired on every
+    # `by` without a `.md` in it would pass the case above and reject most of
+    # this ledger.
+    case(
+        "a strike crediting nobody leaves the `by` unchecked",
+        {
+            "ledger/a.md": STRUCK_ANONYMOUS,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "one fixture table, added later",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # The self-credit case. Without the exclusion this reads as a strike
+    # crediting `a.md`, and the prose `by` below is then refused for not
+    # naming the file the caveat is already in.
+    case(
+        "a strike naming only its own entry credits nobody",
+        {
+            "ledger/2026-09-19-an-entry.md": STRUCK_SELF,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "2026-09-19-an-entry.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "one fixture table, added later",
+                    },
+                    {
+                        "entry": "2026-09-19-an-entry.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # Two credits, one named. `any`, not `all`: the second real pair took two
+    # entries to close — one gave `purge_deleted` a caller and the other gave
+    # it a schedule — and naming either gets a reader to the work, which is
+    # what `by` is for. Demanding both would make a `by` a bibliography.
+    case(
+        "a `by` naming one of two credited entries is enough",
+        {
+            "ledger/a.md": STRUCK_TWICE,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "ledger/2026-09-20-the-entry-that-closed-it.md",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # A `.md` that is not an entry is not a credit. Without the date in
+    # `CREDITED` this strike reads as crediting `correctness.md`, and the prose
+    # `by` below is refused for not naming a file that never closed anything.
+    case(
+        "a strike naming a non-entry Markdown file credits nobody",
+        {
+            "ledger/a.md": STRUCK_README,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "closed",
+                        "by": "the convention was already written down",
+                    },
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the second thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "closed": 1, "untriaged": 0},
+        0,
+    )
+
+    # And the other direction: an `open` caveat in an entry with *no* strike
+    # must not be flagged. Written because a rule that fired on every open
+    # caveat would pass the two cases above and be useless.
+    case(
+        "an open claim with nothing struck is not flagged",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [
+                    {
+                        "entry": "a.md",
+                        "key": "It does not do the first thing.",
+                        "verdict": "open",
+                    },
+                ]
+            ),
+        },
+        {"open": 1, "untriaged": 1},
+        0,
+    )
+
+    # --- the draw, which is what holds a read to the frame ----------------
+    #
+    # `unchecked` above is a worklist, and a worklist nothing enforces is a
+    # suggestion: a pass could sample the whole bucket, stamp thirty rows and
+    # move the number by thirty while pooling nothing with the next pass.
+    # `frame` and `draw` are what make "this came out of `--unchecked`"
+    # checkable, so the two rules worth pinning are that the frame *is* the
+    # unchecked list and that a draw reproduces from its seed.
+    def draw_case(name: str, ok: bool, detail: str = "") -> None:
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok and detail:
+            print(f"        {detail}")
+        RESULTS.append(ok)
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        tree(
+            root,
+            {
+                "ledger/a.md": ENTRY,
+                "docs/caveat-status.json": status(
+                    [dict(both_deliberate[0], checked="2026-09-30", draw="d"),
+                     both_deliberate[1]]
+                ),
+            },
+        )
+        got = guard.frame(root)
+        draw_case(
+            "the frame is the unchecked rows and only those",
+            got == ["a.md::It does not do the second thing."],
+            f"got {got}",
+        )
+        record = guard.draw(1, 11, root, today="2026-09-30")
+        draw_case(
+            "a draw names a row out of the frame, never out of the bucket",
+            record["keys"] == got and record["frame"] == 1,
+            f"got {record}",
+        )
+        # The reproduction the guard checks. Written out here rather than
+        # imported from `check_draws.py` so the two cannot agree on a wrong
+        # answer: if `draw` changed how it samples, this fails and that one
+        # would not.
+        again = random.Random(11).sample(range(1), 1)
+        draw_case(
+            "the indices come back from the seed, which is what a guard checks",
+            record["indices"] == again,
+            f"{record['indices']} against {again}",
+        )
+        draw_case(
+            "the filename a stamp points at is the date and the seed",
+            guard.draw_path(record, root).name == "2026-09-30-11.json",
+            guard.draw_path(record, root).name,
+        )
+        try:
+            guard.draw(9, 11, root)
+            drew = True
+        except ValueError:
+            drew = False
+        draw_case("a draw wider than the frame is refused, not padded", not drew)
+
+    # And the rule in `report`: a read against the tree says which draw it
+    # came from. Without it the two kinds of stamp are indistinguishable.
+    case(
+        "a checked deliberate verdict naming no draw is a problem",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [dict(both_deliberate[0], checked="2026-09-30"), both_deliberate[1]]
+            ),
+        },
+        {"deliberate": 2},
+        1,
+    )
+    case(
+        "and one that names a draw is not",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [dict(both_deliberate[0], checked="2026-09-30", draw="d"),
+                 both_deliberate[1]]
+            ),
+        },
+        {"deliberate": 2},
+        0,
+    )
+
+    # The real tracker, last, for the reason every guard's test here gives:
+    # the cases above are written trees, so every rule passes for as long as
+    # the fixtures stay correct, which is also what a rule aimed at nothing
+    # does. `report()` is the whole of what `check.sh` runs, so this is CI's
+    # own condition under a name a mutation run can score — and until it was
+    # here, `scripts/mutate.py` could not score a change to
+    # `docs/caveat-status.json` at all: no suite read the real file, so
+    # breaking a verdict left every suite green.
+    counts, problems, orphans = guard.report(guard.ROOT)
+    RESULTS.append(not problems and not orphans)
+    if problems or orphans:
+        print("FAIL  the real tracker: every verdict is well formed")
+        for one in (problems + orphans)[:10]:
+            print(f"        {one}")
+    else:
+        print(
+            "ok    the real tracker: every verdict is well formed  "
+            f"({sum(counts.values())} caveats)"
+        )
 
     print(f"\n{sum(RESULTS)} passed, {len(RESULTS) - sum(RESULTS)} failed")
     return 0 if all(RESULTS) else 1

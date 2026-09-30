@@ -8,11 +8,13 @@ import { Segmented } from "./parts";
 import {
   Agreement,
   Batches,
+  ConditionalWrites,
   Explore,
   Groups,
   Joins,
   PredicateWrites,
   Relationships,
+  Search,
   SoftDelete,
   Transactions,
 } from "./panels";
@@ -20,10 +22,12 @@ import "./styles.css";
 
 const TABS = [
   "rows",
+  "search",
   "joins",
   "groups",
   "relationships",
   "writes",
+  "conditional",
   "soft delete",
   "batches",
   "transactions",
@@ -94,6 +98,9 @@ function App(): JSX.Element {
         <Match when={tab() === "rows"}>
           <Explore {...context} />
         </Match>
+        <Match when={tab() === "search"}>
+          <Search {...context} />
+        </Match>
         <Match when={tab() === "joins"}>
           <Joins {...context} />
         </Match>
@@ -105,6 +112,9 @@ function App(): JSX.Element {
         </Match>
         <Match when={tab() === "writes"}>
           <PredicateWrites {...context} />
+        </Match>
+        <Match when={tab() === "conditional"}>
+          <ConditionalWrites {...context} />
         </Match>
         <Match when={tab() === "soft delete"}>
           <SoftDelete {...context} />

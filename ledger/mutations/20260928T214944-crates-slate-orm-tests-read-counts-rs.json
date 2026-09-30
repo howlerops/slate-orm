@@ -1,0 +1,43 @@
+{
+  "at": "2026-09-28T21:49:44+00:00",
+  "file": "crates/slate-orm/tests/read_counts.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--test",
+    "read_counts",
+    "--no-fail-fast"
+  ],
+  "commit": "abe7009",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "find_records stops counting, so the instrument reads zero",
+      "old": "        self.counted();\n        self.inner.find_records::<R>(context, filter, order).await",
+      "new": "        self.inner.find_records::<R>(context, filter, order).await",
+      "verdict": "caught",
+      "caught_by": [
+        "a_has_many_is_one_read_whatever_the_parent_count",
+        "nested_loading_is_two_reads_whatever_the_parent_count",
+        "a_many_to_many_is_two_reads_whatever_the_parent_count",
+        "keeping_the_join_rows_costs_no_extra_read"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the parent counts collapse to one N, so independence is untested",
+      "old": "    for parents in [2u64, 24] {\n        let (store, context, articles) = seeded(parents).await;\n        let txn = store.begin().await.unwrap();\n        let counting = Counting::new(&txn);\n\n        let tags: Vec<Vec<Tag>> = load_through::<_, Article, Tag>(&counting, &context, &articles)",
+      "new": "    for parents in [2u64] {\n        let (store, context, articles) = seeded(parents).await;\n        let txn = store.begin().await.unwrap();\n        let counting = Counting::new(&txn);\n\n        let tags: Vec<Vec<Tag>> = load_through::<_, Article, Tag>(&counting, &context, &articles)",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "narrowing the loop to one N removes a case rather than changing behaviour, so nothing can fail. It is here to record that the two-N loop is the whole measurement: the assertion is about independence of N and a single N cannot express it. A guard against somebody quietly dropping the 24 would have to read the literal, which is a test asserting a test's source."
+    }
+  ],
+  "restored_clean": true
+}

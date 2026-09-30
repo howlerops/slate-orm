@@ -40,11 +40,17 @@ async function check(what, run) {
   try {
     await run();
     passed += 1;
-    console.log(`  ok    ${what}`);
+    console.log(`ok    ${what}`);
   } catch (error) {
     failures.push(what);
-    console.log(`  FAIL  ${what}`);
-    console.log(`          ${String(error).split("\n")[0]}`);
+    // At column zero, and `FAIL  <what>` exactly: this is the house format
+    // every `scripts/test_*.py` prints and the one `scripts/mutate.py`'s
+    // `python` dialect reads. Indented by two, it matched the summary line
+    // and no failure line — so a mutation here scored as "unreadable" while
+    // the run in fact said `29 passed, 1 failed` with the right check named.
+    // A runner nobody can mutation-test is a runner taken on trust.
+    console.log(`FAIL  ${what}`);
+    console.log(`        ${String(error).split("\n")[0]}`);
   }
 }
 
@@ -78,6 +84,28 @@ async function settled(page) {
  * teardown then reports one failure as eight — which is exactly what the first
  * run of this file did.
  */
+/**
+ * Wait for the *chart* to say what we are about to read, not for the spinner.
+ *
+ * `settled` waits for no `.spinner`, and a query with data already cached
+ * keeps it on screen while it refetches — so there is no spinner and the old
+ * answer is still rendered. Switching the grouped panel's measure back to the
+ * count hit exactly that: the assertion read the money order and reported that
+ * the sort had not followed, on an unmutated tree.
+ */
+async function chartShowsPrices(page, showing) {
+  await page.waitForFunction(
+    (want) => {
+      const rows = [...document.querySelectorAll(".chart .row")];
+      if (rows.length === 0) return false;
+      const priced = rows.some((row) => /\u2014 \d+\.\d{2}/.test(row.textContent ?? ""));
+      return priced === want;
+    },
+    showing,
+    { timeout: 20_000 },
+  );
+}
+
 async function at(page, { sdk = "go", identity = "app", panel }) {
   await choose(page, "sdk", sdk);
   await choose(page, "identity", identity);
@@ -499,6 +527,81 @@ try {
   // The three panels N5 added, each asserting the thing its panel exists to
   // show rather than that it rendered. A panel that renders and teaches the
   // wrong thing is the failure worth catching here.
+  // Full-text, asserted on the thing the panel exists to show. Both paths
+  // return the same books by construction, so a check on the rows alone would
+  // pass against an adapter that ignored the path — the failure the panel's
+  // own prose names. The access line is the assertion.
+  await check("the two full-text paths return the same books by different plans", async () => {
+    await at(page, { panel: "search" });
+    const panel = page.locator('.panel:has(h2:text-is("Full-text search"))');
+
+    await panel.locator('[data-test="search-path"]').selectOption("index");
+    await settled(page);
+    const byIndex = await panel.locator('[data-test="search-summary"]').innerText();
+    const indexRows = await panel.locator("tbody tr").count();
+
+    await panel.locator('[data-test="search-path"]').selectOption("scan");
+    await settled(page);
+    const byScan = await panel.locator('[data-test="search-summary"]').innerText();
+    const scanRows = await panel.locator("tbody tr").count();
+
+    if (indexRows === 0) throw new Error("the seeded titles matched nothing by index");
+    if (indexRows !== scanRows) {
+      throw new Error(`index returned ${indexRows} rows and scan ${scanRows}`);
+    }
+    if (byIndex === byScan) {
+      throw new Error(`both paths reported the same plan, so neither is chosen: ${byIndex}`);
+    }
+  });
+
+  await check("a search matching nothing is an empty answer, not a failure", async () => {
+    await at(page, { panel: "search" });
+    const panel = page.locator('.panel:has(h2:text-is("Full-text search"))');
+    await panel.locator('[data-test="search-text"]').fill("zzzznotitle");
+    await settled(page);
+    const summary = await panel.locator('[data-test="search-summary"]').innerText();
+    if (!summary.includes("matched 0")) throw new Error(`matched: ${summary}`);
+    // An empty answer still carries a plan, which is how it differs from a
+    // refusal — the distinction the panel is making.
+    if (summary.includes("not visible")) throw new Error(`the app persona lost its plan: ${summary}`);
+  });
+
+  // Optimistic concurrency. The unguarded case is the control: without it,
+  // "refused" is satisfied by a panel that refuses everything.
+  await check("a conditional update lands, and is refused once somebody else writes", async () => {
+    await at(page, { panel: "conditional" });
+    const panel = page.locator('.panel:has(h2:text-is("Conditional writes"))');
+
+    await panel.locator('[data-test="conditional-run"]').click();
+    await settled(page);
+    const quiet = await panel.locator('[data-test="conditional-summary"]').innerText();
+    if (!quiet.includes("applied")) throw new Error(`unguarded: ${quiet}`);
+    if (!quiet.includes("12.50")) throw new Error(`the new price did not land: ${quiet}`);
+
+    await panel.locator('[data-test="conditional-meddle"]').selectOption("moved");
+    await panel.locator('[data-test="conditional-run"]').click();
+    await settled(page);
+    const stale = await panel.locator('[data-test="conditional-summary"]').innerText();
+    if (!stale.includes("refused")) throw new Error(`stale: ${stale}`);
+    // And the other writer's value is what is stored, not the refused one.
+    if (!stale.includes("11.00")) throw new Error(`the other writer's price is not there: ${stale}`);
+  });
+
+  await check("a conditional delete refuses a row that is gone, where a plain one would not", async () => {
+    await at(page, { panel: "conditional" });
+    const panel = page.locator('.panel:has(h2:text-is("Conditional writes"))');
+    await panel.locator('[data-test="conditional-write"]').selectOption("delete");
+    await panel.locator('[data-test="conditional-meddle"]').selectOption("gone");
+    await panel.locator('[data-test="conditional-run"]').click();
+    await settled(page);
+    const summary = await panel.locator('[data-test="conditional-summary"]').innerText();
+    if (!summary.includes("refused")) throw new Error(`gone: ${summary}`);
+    // The point of the case: a plain delete would say affected 0 and look the
+    // same as a successful one over an already-absent key.
+    if (!summary.includes("affected 0")) throw new Error(`affected: ${summary}`);
+    if (!summary.includes("row gone")) throw new Error(`the row should be absent: ${summary}`);
+  });
+
   await check("a predicate write hands back the rows it destroyed", async () => {
     await at(page, { panel: "writes" });
     const panel = page.locator('.panel:has(h2:text-is("Predicate writes"))');
@@ -545,8 +648,95 @@ try {
     // one written at the key it left free — the difference the badges cannot
     // show, because a replacement reports the same id and the same "not
     // stamped".
-    const note = await panel.locator(".note").last().innerText();
+    // By its own `data-test` rather than `.note` last(): the panel grew a
+    // second note below this one and `last()` silently started reading it,
+    // which is a locator that keeps passing while it checks the wrong thing.
+    const note = await panel.locator('[data-test="restore-carried"]').innerText();
     if (!note.includes("pending")) throw new Error(`status not carried through: ${note}`);
+  });
+
+  await check("the retired-rows flag is a privilege, not a filter", async () => {
+    await at(page, { panel: "soft delete" });
+    const panel = page.locator('.panel:has(h2:text-is("Soft delete, and undo"))');
+
+    // As `app`: the flag goes out and the read answers. Nothing is retired in
+    // the fixture, so the *count* is the same either way — which is exactly
+    // why the interesting half is the refusal below and not this number.
+    const plain = await panel.locator('[data-test="include-deleted-count"]').innerText();
+    if (!plain.includes("retired ones hidden")) throw new Error(`plain: ${plain}`);
+    await panel.locator('[data-test="include-deleted"]').selectOption("yes");
+    await settled(page);
+    const asked = await panel.locator('[data-test="include-deleted-count"]').innerText();
+    if (!asked.includes("retired ones included")) throw new Error(`asked: ${asked}`);
+
+    // As `reader`, which holds `read` and not `read_deleted`: the same request
+    // is refused. "There are none" and "you may not see them" are different
+    // answers, and this is the one that an ordinary filter could never give.
+    await at(page, { identity: "reader", panel: "soft delete" });
+    await panel.locator('[data-test="include-deleted"]').selectOption("yes");
+    await settled(page);
+    // Scoped to this read's own answer. The retire-and-undo above is refused
+    // for a reader too, so `panel.innerText()` carries a refusal either way —
+    // and a mutation that never set the flag survived that assertion.
+    const answer = panel.locator('[data-test="include-deleted-answer"]');
+    const refused = await answer.innerText();
+    if (!/permission-denied/i.test(refused)) {
+      throw new Error(`a reader was not refused the flag: ${refused.slice(0, 400)}`);
+    }
+    // And without the flag the same reader is served, which is what makes the
+    // refusal above about the flag rather than about the table.
+    await panel.locator('[data-test="include-deleted"]').selectOption("no");
+    await settled(page);
+    const served = await answer.innerText();
+    if (/permission-denied/i.test(served)) {
+      throw new Error(`a reader was refused an ordinary read: ${served.slice(0, 400)}`);
+    }
+    await at(page, { panel: "soft delete" });
+  });
+
+  await check("the chart can be drawn in money instead of rows", async () => {
+    await at(page, { panel: "groups" });
+    const panel = page.locator('.panel:has(h2:text-is("Grouped join"))');
+
+    // The panel's own controls survive a tab switch — `at` resets the sdk, the
+    // identity and the tab, and nothing inside a panel — so the checks above
+    // leave the grouping and the HAVING wherever they put them.
+    await panel.locator("select").first().selectOption("author");
+    await panel.locator('input[type="number"]').fill("0");
+    await settled(page);
+
+    await panel.locator('[data-test="groups-measure"]').selectOption("total");
+    await settled(page);
+    await chartShowsPrices(page, true);
+
+    // The bars are labelled with the sum rendered against the column's scale,
+    // so a label carrying a point is the decimal reaching the page — and the
+    // note says which aggregate the order is about.
+    const note = await panel.locator('[data-test="groups-note"]').innerText();
+    if (!note.includes("SUM(books.price)")) throw new Error(`note: ${note}`);
+    const labels = await panel.locator(".chart .row").allInnerTexts();
+    const totals = labels.map((one) => {
+      const found = /\u2014 (\d+\.\d{2})\b/.exec(one);
+      return found ? Number(found[1]) : null;
+    });
+    if (totals.some((one) => one === null) || totals.length < 2) {
+      throw new Error(`not every group is labelled with a price: ${labels.join(" | ")}`);
+    }
+
+    // And the order is the sum's, checked as a *property* rather than against
+    // a leader somebody read off the fixture once. It was written that way and
+    // it was wrong: the write panels above leave extra books on one author, so
+    // by the time this runs the count order and the money order agree at the
+    // head and differ further down. Descending by money means descending by
+    // money, whatever the data underneath has become.
+    for (let n = 1; n < totals.length; n += 1) {
+      if (totals[n] > totals[n - 1]) {
+        throw new Error(
+          `the bars are not in descending order of money, so the sort did not ` +
+            `follow the measure: ${totals.join(", ")}`,
+        );
+      }
+    }
   });
 
   await check("the two atomicities leave different numbers of rows", async () => {
@@ -610,11 +800,23 @@ try {
   await browser.close();
 }
 
-if (crashes.length) {
-  console.log("\nthe page threw:");
-  for (const crash of crashes) console.log(`  ${crash}`);
+// A page error is a *named* failure, not a bare exit code.
+//
+// It used to be neither: the summary said `30 passed, 0 failed` and the
+// process exited 1, which reads to anything parsing the output as a suite that
+// passed and to the shell as one that did not. `scripts/mutate.py` calls that
+// its second lie — "nothing ran" and "nothing failed" are the same empty
+// output — and it refused to score a run here for exactly this reason, on a
+// crash that was intermittent and nothing to do with the mutation.
+//
+// The same fix `examples/explorer/conformance/test_conformance.py` took an
+// hour earlier, for the same reason, in the other browser-free runner.
+for (const crash of crashes) {
+  failures.push("the page threw");
+  console.log("FAIL  the page threw");
+  console.log(`        ${crash.split("\n")[0]}`);
 }
 
 console.log();
 console.log(`${passed} passed, ${failures.length} failed`);
-process.exit(failures.length || crashes.length ? 1 : 0);
+process.exit(failures.length ? 1 : 0);

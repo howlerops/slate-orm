@@ -71,7 +71,186 @@ ROOT = Path(__file__).resolve().parent.parent
 #: exist. `path` is a `git grep` pathspec, so a directory covers its tree.
 WITNESS: dict[str, tuple[str | None, str]] = {
 
+ # --- the 2026-09-13/14 backlog, triaged 2026-09-28 --------------------------
+ #
+ # Forty closures in one batch, because the paragraph widening in
+ # `ledger/2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md` made
+ # two days of caveats visible at once and most had been answered by work
+ # nobody had connected back to them. Each needle was checked with `git grep`
+ # before its row was written, which is the step that turned one
+ # plausible-looking closure — "plan.rs costs a grouped join as grouped" —
+ # into the withdrawal below, which is what actually happened.
+ # --- 2026-09-30, the helpdesk ----------------------------------------------
+ #
+ # Both are closed by the same commit, and each names the thing a reader
+ # would go and look at rather than the entry that claims it: the runner that
+ # makes the crate's central claim a result, and the policy that replaced the
+ # two `Expr::True`s.
+ # And the `.dockerignore` half of the same guard, closed an hour after the
+ # caveat that said it would not be. The needle is the parser rather than the
+ # roster line, because the roster line is one `!` in a file and the rule is
+ # the thing that has to still exist.
+ "dockerignore-admits-members": ("def admitted", "scripts/check_workspace.py"),
+ # --- 2026-09-30, the five caveats today's entries left open ----------------
+ #
+ # Each needle is the thing a reader would go and look at, not the entry that
+ # claims it.
+ "grouped-by-name": ("fn get(&self, aggregate: Aggregate)", "crates/slate-orm/src/grouped.rs"),
+ "plan-measured": ("explain_most_urgent", "examples/helpdesk/src/lib.rs"),
+ "dockerignore-admits-whole": ("def re_excluded", "scripts/check_workspace.py"),
+ "absence-claims-anchored": ("ABSENCE = re.compile", "scripts/check_caveat_citations.py"),
+ "labelled-verdicts": ("RANKS", "scripts/test_read_deliberate.py"),
+ "helpdesk-on-slatedb": ("SlateStore::open_s3", "examples/helpdesk/examples/over_slatedb.rs"),
+ "helpdesk-real-policy": (
+     "agents_work_their_own_tickets",
+     "examples/helpdesk/src/lib.rs",
+ ),
+ "explain-aggregate-in-a-transaction": ("explainAggregateIn", "clients/typescript/src/client.ts"),
+ "quickstart-install-lines": ("check_install_lines", "site/check/quickstarts.py"),
+ "free-ports-guard": (
+     "every port is below the floor",
+     "scripts/test_free_ports.py",
+ ),
+ "ceilings": ("ExecutionLimits", "crates/slate-kernel/src/limits.rs"),
+ "readme-swept": ("Status", "README.md"),
+ "explain-grouped": ("grouped read narrows its", "crates/slate-kernel/src/explain.rs"),
+ "conformance-runner": ("conformance", "examples/explorer/run.sh"),
+ "pages-deploy": (None, ".github/workflows/pages.yml"),
+ "grouped-chain-wire": ("GroupedSource", "crates/slate-server/src/convert.rs"),
+ "go-schemacheck": ("SchemaCheck", "clients/go/slate/schema.go"),
+ "ts-renamed-column": (
+     "a renamed column is accepted under its previous name",
+     "clients/typescript/test/schema.test.ts",
+ ),
+ "go-scalar": ("Scalar", "clients/go/slate/query.go"),
+ "ts-scalar": (None, "clients/typescript/src/scalar.ts"),
+ "prebuilt-binary": ("SLATE_SERVERD", "clients/go/slate/harness_test.go"),
+ "testserver-member": ("clients/python/testserver", "Cargo.toml"),
+ "narrowed-chain": ("fn narrowed_chain", "crates/slate-kernel/src/read.rs"),
+ "authorise-before-convert": (
+     "before the query is converted",
+     "crates/slate-server/tests/security_probe.rs",
+ ),
+ "demo-frontend-tests": (None, "examples/explorer/web/test/api.test.ts"),
+ "demo-decade": ("decade", "examples/explorer/backends/go/handlers.go"),
+ "demo-ports": ("VITE_GO_URL", "examples/explorer/web/src/api.ts"),
+ "demo-grouped-plan": ("grouped", "examples/explorer/web/src/panels.tsx"),
+ "grouped-cost-withdrawn": (
+     "the_per_row_term_is_symmetric",
+     "crates/slate-kernel/tests/grouped_chain_oracle.rs",
+ ),
+ "workbench-having": ("HAVING", "site/workbench.js"),
+ "wasm-lazy-import": ("await import", "site/workbench.js"),
+ "wasm-chain": ("chain", "crates/slate-wasm/tests"),
+ "python-packaging": (None, "clients/python/tests/test_packaging.py"),
+ "runner-teardown": ("kill", "examples/explorer/run.sh"),
+ # --- the citation guard widened past docs/, 2026-09-29
+ #
+ # Both needles were checked with `git grep -F` against the staged tree before
+ # these rows were written. The second is a fixture *case name* rather than a
+ # line of the rule, because the rule it witnesses is three lines of `main()`
+ # that any rewording would move: a named case that fails when the rule goes is
+ # the thing that actually has to survive.
+ "cited-files-scope": ("README.md", "scripts/check_cited_files.py"),
+ # --- one port allocator instead of two, 2026-09-29
+ #
+ # A fixture case name and a source line. The first is the case that fails if a
+ # runner grows its own heredoc back, which is the duplicate returning; the
+ # second is the clamp with the dead `max` gone, because the caveat it
+ # witnesses was a question about which floors that `max` made matter, and the
+ # answer was that it never did.
+ "one-allocator": (
+     "carries no allocator of its own",
+     "scripts/test_free_ports.py",
+ ),
+ # --- the image, built by CI rather than asserted, 2026-09-29
+ #
+ # The job, not a test file: what settles the caveat is that the Dockerfile is
+ # built and started on every push, and the step that would go missing if
+ # somebody trimmed the job is the one that runs the image.
+ "image-built-in-ci": (
+     "It starts inside the image, and validates a configuration",
+     ".github/workflows/ci.yml",
+ ),
+ # --- the negation helper, walked through, 2026-09-29
+ #
+ # The Go file rather than one of the other two, because the mutation that
+ # proves the whole thing live -- the server dropping Expr::Not -- was scored
+ # against its two cases. Losing this file is losing the demonstration.
+ "not-in-through-a-client": (
+     "func TestAClientSendsNotInAsNotOfIn",
+     "clients/go/slate/not_in_test.go",
+ ),
+ "no-adversarial-floor": (
+     "candidate = draw(LOW, below - 1)",
+     "scripts/free_ports.py",
+ ),
+ "cited-files-ambiguous-suffix": (
+     "a relative citation matching two files that differ fails",
+     "scripts/test_check_cited_files.py",
+ ),
+
+ # --- the proto roster derived from the trees, 2026-09-29
+ #
+ # A fixture case name rather than a line of the guard, for the reason the two
+ # rows above give: the rule is a set comparison in `main()` that any rewording
+ # would move, and the case is named after what it proves. This one in
+ # particular is the case the hand-written roster could not have had, so it
+ # going missing means the derivation went with it.
+ "proto-copies-derived": (
+     "a second pair, one of them drifted",
+     "scripts/test_check_proto_copies.py",
+ ),
+ # --- the 2026-09-14/15/16 backlog, triaged 2026-09-28
+ 'wasm-in-ci': ('wasm', '.github/workflows/ci.yml'),
+ 'wasm-writes': ('insert', 'crates/slate-wasm/src/lib.rs'),
+ # --- the 2026-09-16/17 backlog, triaged 2026-09-28
+ 'demo-batch': ('batch', 'examples/explorer/web/src/panels.tsx'),
+ 'demo-predicate-write': ('predicate', 'examples/explorer/web/src/panels.tsx'),
+ 'demo-relations': ('relat', 'examples/explorer/web/src/panels.tsx'),
+ 'conformance-relations': ('relat', 'examples/explorer/conformance/conformance.py'),
+ 'through-nested': ('through', 'crates/slate-server/proto/slate/v1/records.proto'),
+ 'ts-related': ('related', 'clients/typescript/src/client.ts'),
+ 'ctes-decided': (None, 'docs/ctes.md'),
+ 'gap-list-reread': ('gap', 'README.md'),
+ # --- the 2026-09-18 backlog, triaged 2026-09-28
+ 'decimal-clients': (None, 'clients/go/slate/decimal_test.go'),
+ 'decimal-arith': ('Decimal', 'crates/slate-kernel/src/scalar.rs'),
+ 'metrics-endpoint': (None, 'crates/slate-serverd/src/metrics.rs'),
+ 'trailer-counted': ('trailer', 'crates/slate-serverd/src/observe.rs'),
+ # --- the rest of the 2026-09-18 backlog, triaged 2026-09-28
+ 'decimal-literal-sql': ('Decimal', 'crates/slate-sql/src/sql.rs'),
+ 'conformance-decimal': ('decimal', 'examples/explorer/conformance/conformance.py'),
+ 'root-python-checks': ('ruff', 'scripts/check.sh'),
+ 'poll-interval-answered': ('poll', 'crates/slate-kernel/src/pool.rs'),
+ 'generated-row-types': (None, 'scripts/codegen.py'),
+ # --- the 2026-09-19 backlog, triaged 2026-09-28
+ 'every-bad-field': ('violations', 'clients/typescript/src/details.ts'),
+ 'violation-column': ('column', 'clients/typescript/src/details.ts'),
+ 'conformance-shipments': ('shipments', 'examples/explorer/conformance/conformance.py'),
+ 'generated-decoders-run': (None, 'clients/go/slate/generated_test.go'),
+ 'soft-delete-restore': ('restore', 'crates/slate-kernel/src/record.rs'),
+ 'purge-counted': ('purge', 'crates/slate-serverd/src/observe.rs'),
+ 'published-checks': ('column', 'crates/slate-kernel/src/security.rs'),
+ 'must-differ-pairs': ('MUST_DIFFER', 'examples/explorer/conformance/conformance.py'),
+ # --- the 2026-09-20/21 backlog, triaged 2026-09-28
+ 'four-paths-probed': ('retired', 'ledger/2026-09-20-four-say-absent-one-says-present.md'),
+ # --- the last of the invisible backlog, triaged 2026-09-28
+ 'check-sh-venv': ('venv', 'scripts/check.sh'),
+ 'latency-quantiles': ('quantile', 'crates/slate-serverd/src/observe.rs'),
+ 'request-id': ('request_id', 'crates/slate-serverd/src/observe.rs'),
+ 'views-toml-declared': ('views', 'crates/slate-serverd/src/config.rs'),
+ 'sql-own-tests': (None, 'crates/slate-sql/tests/front_end.rs'),
+ 'sql-lowering': (None, 'crates/slate-sql/src/lower.rs'),
+ 'views-doc': (None, 'docs/views.md'),
+ 'site-html-citations': ('.html', 'scripts/check_cited_docs.py'),
+ # --- the scale hole, closed on 2026-09-18 and noticed on the 28th
+ 'scale-in-fingerprint': ('column.scale()', 'crates/slate-server/src/fingerprint.rs'),
  "alias-sql": ("alias", "crates/slate-sql/tests/front_end.rs"),
+ "having-brackets": ("having_predicate", "crates/slate-sql/src/lib.rs"),
+ "full-join-unmatched": ("BothUnmatchedSidesOfAFullJoin", "clients/go/slate/scalar_test.go"),
+ "array-in-the-ui": ("array", "examples/explorer/backends/go/seed.go"),
+ "sole-writer-refusal": ("SoleWriterNotEstablished", "crates/slate-kernel/src/migrate.rs"),
  "bad-section-run": ("refuses()", "scripts/run_examples.sh"),
  "ambiguity": ("ambigu", "crates/slate-sql/src"),
  "array-codegen": ("element", "scripts/codegen.py"),
@@ -203,7 +382,43 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "security-probe": ("explain_join", "crates/slate-server/tests/security_probe.rs"),
  "site-claims": (None, "scripts/check_site_claims.py"),
  "site-css": ("styles.css", "scripts/check_site_css.py"),
- "stale-binary": ("older", "clients/python/tests/conftest.py"),
+ # Moved from `conftest.py` to `scripts/prebuilt.py` on 2026-09-30, when the
+ # same refusal turned out to be missing from three other harnesses that take
+ # the same variable. The needle follows it: the refusal is the witness, not
+ # the file it started in.
+ "stale-binary": ("was built before", "scripts/prebuilt.py"),
+ # The roster is a second witness for the same closure's wider form, and a
+ # separate one because it can go while the refusal stays.
+ "stale-binary-roster": ("MUST_REFUSE", "scripts/test_prebuilt.py"),
+ # The roster's *drive*, which is a third witness and not the same one: the
+ # roster can be there and grep, which is what it did until the drives landed.
+ "stale-binary-driven": (
+     "refuses a stale prebuilt binary when driven",
+     "scripts/test_prebuilt.py",
+ ),
+ # The draw's provenance. The needle is the reproduction, not the file: a
+ # `check_draws.py` that stopped re-running the sample would still be there.
+ "draw-reproduces": ("does not reproduce", "scripts/check_draws.py"),
+ # The check that replaced `site/check/playground.py` when the landing page
+ # became the workbench. Both closures are of caveats about assertions in that
+ # deleted file, and the witness is the file that took its job: an absence
+ # cannot be witnessed, and this is the nearest thing in the tree to one.
+ "workbench-check": ("tree-columns", "site/check/workbench.py"),
+ # Every `INSIDE_AFTER_ALL` reason must name a path that is here, which is the
+ # one claim an exemption of that kind makes.
+ "exemption-names-a-path": (
+     "names no path here that exists",
+     "scripts/check_outside_premises.py",
+ ),
+ # A second prebuilt binary nobody added to `KNOWN` is refused by name.
+ "prebuilt-unknown": ("unknown_binaries", "scripts/prebuilt.py"),
+ # An expectation that would also pass against a report its case never
+ # produced. The needle is the check's own name, not the rule's code: the
+ # rule could be rewritten and the property is what matters.
+ "expectation-is-about-one-report": (
+     "is about one report and not another",
+     "scripts/test_check_toolchain_pins.py",
+ ),
  "stored-schema": ("schema", "crates/slate-kernel/src/migrate.rs"),
  "table-provenance": (None, "scripts/check_table_provenance.py"),
  "through-wire": ("through", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -223,7 +438,477 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  "window-wire": ("window", "crates/slate-server/proto/slate/v1/records.proto"),
  "workbench-chain": ("the aliased chain plans as three steps", "site/check/workbench.py"),
  "zones": (None, "crates/slate-kernel/src/zones.rs"),
- "zones-dst": ("tzdata", "crates/slate-kernel/src/zones.rs"),}
+ "zones-dst": ("tzdata", "crates/slate-kernel/src/zones.rs"),
+
+ # --- round trips counted in all three clients, 2026-09-28 -------------------
+ #
+ # Each needle is the instrument rather than the assertion: an interceptor
+ # installed on the client's own channel. A closure reverted by deleting the
+ # test takes the file with it; one reverted by loosening the assertion leaves
+ # the needle, which is the coarseness argued for above.
+ "ts-round-trips": (
+     "interceptors",
+     "clients/typescript/test/roundTrip.test.ts",
+ ),
+ "ts-channel-options": ("options", "clients/typescript/src/client.ts"),
+ "go-paging-count": (
+     "WithChainStreamInterceptor",
+     "clients/go/slate/related_test.go",
+ ),
+ "retired-row-only-predicate": (
+     "a_predicate_that_selects_only_the_retired_row_touches_nothing",
+     "crates/slate-kernel/tests/soft_delete.rs",
+ ),
+
+ # --- the census closures, 2026-09-29 ----------------------------------------
+ "offset-costs-the-same": (
+     "test_paging_by_offset_costs_the_same_calls_as_paging_by_cursor",
+     "clients/python/tests/test_round_trips.py",
+ ),
+
+ # --- the fifth ceiling and the node-wide limit, 2026-09-29 -------------------
+ "in-list-ceiling": ("max_in_values", "crates/slate-kernel/src/limits.rs"),
+ "node-wide-concurrency": (
+     "GlobalConcurrencyLimitLayer",
+     "crates/slate-serverd/src/serve.rs",
+ ),
+
+ # --- the demo panels the endpoints already served, 2026-09-29 ---------------
+ "demo-search-panel": ("Full-text search", "examples/explorer/web/src/panels.tsx"),
+ "demo-conditional-panel": (
+     "Conditional writes",
+     "examples/explorer/web/src/panels.tsx",
+ ),
+ "contains-conformance": (
+     "a search for terms in different rows",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- round trips compared across the three SDKs, 2026-09-29 -----------------
+ "round-trips-compared": (
+     "four rows in a batch cost one request",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "round-trips-endpoint": (
+     "func (s *server) roundTrips",
+     "examples/explorer/backends/go/roundtrips.go",
+ ),
+
+ # --- the corpus compares more precisely, 2026-09-29 --------------------------
+ "expected-access": (
+     "EXPECTED_ACCESS",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "must-differ-names-the-field": (
+     "def must_differ_findings",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- a decimal aggregate in the corpus, 2026-09-29 ---------------------------
+ "decimal-aggregate-case": (
+     "authors by what their books are worth",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "decimal-aggregate-sum": (
+     "slate.SumOf(slate.At(books, 7))",
+     "examples/explorer/backends/go/handlers.go",
+ ),
+ "decimal-renderers-shared-table": (
+     "twelve decimals rendered",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- the two demo controls, 2026-09-29 --------------------------------------
+ "demo-include-deleted": (
+     "the retired-rows flag is a privilege, not a filter",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+ "demo-money-measure": (
+     "the chart can be drawn in money instead of rows",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+
+ # --- the limit measured rather than read, 2026-09-29 -------------------------
+ "open-streams-unbounded": (
+     "open_streams_are_not_bounded_by_the_concurrency_limit",
+     "crates/slate-serverd/tests/ceilings.rs",
+ ),
+
+ # --- a door for the fourth client, 2026-09-29 --------------------------------
+ "transport-door": (
+     "a fourth client with no door fails and names it",
+     "scripts/test_check_transport_door.py",
+ ),
+
+ # --- a rename test for the fourth client, 2026-09-29 -------------------------
+ # The needle is the *fixture* case, not the guard's own report: the guard
+ # would keep printing three clients with its rule gutted, and did — the first
+ # draft searched the whole file and stayed green with the real declaration cut
+ # out of the real test.
+ "renamed-column-roster": (
+     "a fourth client with no test fails and names it",
+     "scripts/test_check_renamed_column.py",
+ ),
+
+ # --- the dialect mutate.py was missing, 2026-09-29 ---------------------------
+ # The needle is the suppression, not the runner's existence: a mutate_guard.py
+ # that passed a guard's exit code straight through would still be here, and
+ # would score every syntax-breaking mutation as caught.
+ "guard-dialect": (
+     "a guard that raises produces no result line at all",
+     "scripts/test_mutate_guard.py",
+ ),
+
+ # --- the mutations run again, 2026-09-29 -------------------------------------
+ # The needle is the completeness rule's headline case, not the runner: a
+ # run_mutations.py with an empty roster would run cleanly and prove nothing,
+ # which is the shape three of these caveats were about.
+ "mutations-roster": (
+     "a guard with neither fails — the headline case",
+     "scripts/test_check_mutations_roster.py",
+ ),
+
+ # --- a verdict that was stale, 2026-09-29 ------------------------------------
+ # The needle is the conformance case, not a decoder call: three adapters each
+ # decoding three tables is only a closure because something compares them.
+ "typed-rows-compared": (
+     "two rows through the generated decoders",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ # --- a convention inferred from one entry, 2026-09-29 -----------------------
+ # The needle is the corrected count, in the docstring of the rule the wrong
+ # reason was attached to: what closed the caveat is the measurement, and the
+ # measurement is what must not quietly go away.
+ "the-pair-is-three-entries": (
+     "Three of fifty-one, counted",
+     "scripts/caveats.py",
+ ),
+
+ # --- the framing cost decoded, 2026-09-29 -----------------------------------
+ "four-n-plus-two-decoded": (
+     "test_a_batchs_framing_cost_is_four_bytes_a_statement_and_two_for_the_envelope",
+     "clients/python/tests/test_round_trips.py",
+ ),
+
+ # --- the same framing cost in three clients, 2026-09-29 ---------------------
+ "go-weighs-a-read": (
+     "type sendingStream struct",
+     "clients/go/slate/related_test.go",
+ ),
+
+ # --- two caveats that were already answered, 2026-09-29 ---------------------
+ "bar-geometry-in-a-browser": (
+     "a bar has no width",
+     "examples/explorer/web/e2e/explorer.mjs",
+ ),
+ # The ordering, not the message: the wording was already right on every path
+ # that can produce it, and what makes that true is that every name resolves
+ # here before a converter sees it.
+ "view-named-before-converting": (
+     "fn authorize_join_inputs",
+     "crates/slate-server/src/service.rs",
+ ),
+
+ # --- a caveat closed by a line through it, 2026-09-29 -----------------------
+ "strike-is-not-open": (
+     "also stands struck through in that section",
+     "scripts/caveats.py",
+ ),
+
+ # --- the message that caused the regex detour, 2026-09-29 -------------------
+ "regex-spelling-hint": (
+     "a_word_where_a_comparison_belongs_names_the_spelling_that_exists",
+     "crates/slate-serverd/src/lang/pred.rs",
+ ),
+ # The needle is the *replacement* wording, not the retired phrase. It cannot
+ # be the phrase: `check_retired_claims.py` reads every file outside `ledger/`
+ # and would refuse this one for stating it. Two guards, one of which forbids
+ # what the other needs to grep for — found by writing the obvious needle and
+ # watching the retired-claims step go red on this file.
+ "check-can-hold-a-regex-once": (
+     "A check can hold a regular expression; what is not built",
+     "scripts/retired_claims.json",
+ ),
+
+ # --- the generated declaration nobody imports, 2026-09-29 --------------------
+ "generated-is-used": (
+     "imported but {where} no longer matches",
+     "scripts/check_generated_is_used.py",
+ ),
+
+ # --- the decimal renderers above scale four, 2026-09-29 ----------------------
+ "decimal-at-max-scale": (
+     "rendering_is_exact_at_the_schema_s_maximum_scale",
+     "crates/slate-orm/tests/money.rs",
+ ),
+ "negative-scale-refused": (
+     "a scale that is not a non-negative integer is refused",
+     "clients/typescript/test/decimal.test.ts",
+ ),
+
+ # --- a library that named a thread pool, 2026-09-29 --------------------------
+ "wasm-runtime-guard": (
+     "RUNTIME_ON_PURPOSE",
+     "scripts/check_wasm_runtime.py",
+ ),
+
+ # --- the two "I looked and it is fine" claims, 2026-09-29 --------------------
+ "python-rename-declared": (
+     "test_a_renamed_column_is_accepted_under_its_previous_name",
+     "clients/python/tests/test_fixture.py",
+ ),
+ "python-wheel-imports": (
+     "test_the_installed_package_imports",
+     "clients/python/tests/test_packaging.py",
+ ),
+
+ # --- the freshness floor read off the wire, 2026-09-29 -----------------------
+ "typescript-freshness-floor": (
+     "a session that has written sends a freshness floor, monotonic or not",
+     "clients/typescript/test/related.test.ts",
+ ),
+ "python-freshness-floor": (
+     "test_a_non_monotonic_session_still_reads_its_own_writes",
+     "clients/python/tests/test_round_trips.py",
+ ),
+ # The Go side, because Go is where the behaviour changed and where the
+ # two-read case that gives the flag its remaining meaning lives.
+ "read-your-writes-restored": (
+     "a read must not advance a non-monotonic session's",
+     "clients/go/slate/related_test.go",
+ ),
+ "ui-tab-order": (
+     "the UI's tabs are in the catalog's order",
+     "examples/explorer/web/test/api.test.ts",
+ ),
+ # The derivation itself, not a test: the caveat was that the list was
+ # hand-maintained, and what closes it is that it is not.
+ "ui-tables-derived": (
+     "export const TABLES: Record<string, string[]> = shown(CATALOG_TABLES);",
+     "examples/explorer/web/src/api.ts",
+ ),
+
+ # Every workflow, not only `ci.yml`, from 2026-09-29. The needle is the glob
+ # that does the widening rather than a step or a reason: narrowing it back to
+ # `ci.yml` is exactly the revert, and it takes this string with it. A reason
+ # in `ELSEWHERE` would be the wrong witness — those come and go with the
+ # workflows, and the closure is about the *scope*, not about any one step.
+ "every-workflow-roster": (
+     'sorted(directory.glob("*.yaml"))',
+     "scripts/test_check_sh.py",
+ ),
+
+ # `--help` prints the adapters, from 2026-09-29. The needle is the test that
+ # holds the help and the directory to each other, not the glob in `mutate.py`:
+ # a revert that kept the glob and dropped the section would leave the guard
+ # quiet, and the test is what fails in both of those directions.
+ "help-lists-adapters": (
+     "case_help_lists_every_adapter",
+     "scripts/test_mutate.py",
+ ),
+
+ # The demo runner's teardown, tested at last, 2026-09-29. Four needles for
+ # four closures, because they are four different claims and one needle would
+ # keep saying "done" after three of them regressed — the coarseness argued
+ # for above is about *renames*, not about collapsing distinct properties.
+ "teardown-passes": (
+     "the runner reaps everything it started, on SIGTERM",
+     "scripts/test_run_teardown.py",
+ ),
+ "teardown-in-ci": (
+     "python3 scripts/test_run_teardown.py",
+     ".github/workflows/ci.yml",
+ ),
+ # `--headless` is what made it able to pass at all: the mode whose readiness
+ # line the test waits for. A revert to the plain mode takes this with it.
+ "teardown-headless": ('MODE = "--headless"', "scripts/test_run_teardown.py"),
+ # And the SIGTERM-before-killpg that stopped the test leaking what it tests.
+ "teardown-cleanup-terms-first": (
+     "started.send_signal(signal.SIGTERM)",
+     "scripts/test_run_teardown.py",
+ ),
+
+ # A node-wide cap on open response streams, 2026-09-29. The needle is the
+ # permit moving into the body, which is the whole difference from the
+ # admission limit the caveat was about: a revert that kept the setting and
+ # dropped the permit when the handler returned would leave the config field,
+ # the layer and the test name in place and bound nothing.
+ "open-stream-cap": (
+     "Held { inner: body, held }",
+     "crates/slate-serverd/src/streams.rs",
+ ),
+
+ # Four loose ends, 2026-09-29. Each needle is the thing that would go away
+ # in a revert rather than the name of the check around it: a declaration, a
+ # helper, a call, a line of shell.
+ "adapter-dialect": ("DIALECT", "scripts/mutate_guard.py"),
+ "env-every-workflow": ("for path in workflows():", "scripts/test_check_sh.py"),
+ "job-count-checked": ("def job_count_matches", "scripts/test_check_sh.py"),
+ "runner-prints-its-logs": ('echo "logs $run"', "examples/explorer/run.sh"),
+
+ # Two closures on 2026-09-29, from reading the check.sh/ci.yml roster in the
+ # direction nothing read it. The first needle is the roster that did not
+ # exist; the second is the step itself, because "it has never run in CI" is
+ # closed by the line that runs it and by nothing else.
+ "check-sh-both-directions": ("ONLY_LOCAL", "scripts/test_check_sh.py"),
+ "teardown-runs-in-ci": (
+     "python3 scripts/test_run_teardown.py",
+     ".github/workflows/ci.yml",
+ ),
+
+ # The test that finally put a request weight and a response weight side
+ # by side. The needle is the test name, because the closure is that the
+ # comparison exists and a renamed test is a comparison somebody moved.
+ "request-against-response": (
+     "a_read_answers_far_more_than_it_asks",
+     "crates/slate-serverd/tests/observing.rs",
+ ),
+
+ # --- the deliberate audit's second half, 2026-09-29 -------------------------
+ #
+ # Two `deliberate` claims that reading 48 more verdicts found false. Both were
+ # true when written and were overtaken by later work, which is the only shape
+ # this audit has met in 216 reads. Written up in
+ # `ledger/2026-09-29-the-deliberate-sample-carried-to-216.md`.
+ #
+ # `undo()` in the retention example calls the generated accessor the caveat
+ # said only the demo called. The needle is the call rather than the function
+ # name, because a renamed `undo` that still calls it keeps the closure true.
+ "retired-outside-the-demo": (
+     "if not row.retired:",
+     "examples/retention/seed.py",
+ ),
+ # And the `scripts` job, which the caveat described as lint-and-typecheck
+ # only, now runs about sixty executable steps. `test_codegen.py` is the first
+ # in file order and the least likely to be renamed away, being the code
+ # generator's own suite — and if it ever is, the other fifty-odd `run:` lines
+ # mean this closure wants re-reading rather than silently re-witnessing.
+ "scripts-job-runs-things": (
+     "python3 scripts/test_codegen.py",
+     ".github/workflows/ci.yml",
+ ),
+
+ # --- what a soft-deleting table costs a read, 2026-09-29 --------------------
+ #
+ # The bench group that answered `2026-09-19-a-row-that-is-gone-but-still-there.md`'s
+ # "nothing measures the cost".
+ #
+ # The needle was `benchmark_group("soft_delete")` and that was wrong, found by
+ # mutating it: the string occurs **twice** in the file — once for the control
+ # and once for the retired cases — so renaming either group away left the
+ # closure green with half the measurement gone. `git grep -q` answers "is it
+ # anywhere", which is the wrong question for a needle that is not unique.
+ # The function signature occurs once and cannot. Its failure mode is the safe
+ # one: a rename that keeps the measurement turns this red and somebody
+ # re-reads, where the group name's was a deletion that stayed green.
+ "soft-delete-read-cost": (
+     "fn soft_delete(c: &mut Criterion)",
+     "crates/slate-kernel/benches/queries.rs",
+ ),
+
+ # --- the skip list that excused nothing, 2026-09-29 -------------------------
+ #
+ # `NOT_AN_INSTALLER` was the one roster in `scripts/` checked in neither
+ # direction. The needle is the function that checks it, which occurs once —
+ # the lesson from `soft-delete-read-cost` two rows up, where a group name that
+ # occurred twice let half the thing be deleted with the guard still green.
+ "skip-list-rot": (
+     "def stale_skips(",
+     "scripts/check_toolchain_pins.py",
+ ),
+
+ # --- the published shape says which shape it is, 2026-09-29 -----------------
+ #
+ # `--print-schema` grew two keys in two days with no version. The needle is
+ # the roster the version is pinned to, not `SCHEMA_VERSION` itself: a constant
+ # can survive with nothing holding it to the output, which is the state this
+ # closed. Unique in the file.
+ "print-schema-format": (
+     "const PUBLISHED_KEYS:",
+     "crates/slate-serverd/src/main.rs",
+ ),
+
+ # --- the parser's vocabulary is the parser, 2026-09-29 ----------------------
+ #
+ # The comparison list was an `else if` chain with a hand-written copy in the
+ # wasm crate's property strategy and nothing holding one to the other. The
+ # needle is the constant, which occurs once and is what `comparison_tail`
+ # loops over — a test name would go stale on a rename while the drift it
+ # guards against stayed fixed.
+ "sql-comparison-vocabulary": (
+     "pub const COMPARISONS:",
+     "crates/slate-sql/src/sql.rs",
+ ),
+
+ # --- the empty room has furniture now, 2026-09-29 --------------------------
+ #
+ # The view design rests on `Catalog::table_by_name` being the only public
+ # name-to-`TableDef` lookup, and rule 10 is what holds it. The needle is the
+ # roster rather than a rule number or a test name: the rule's whole content
+ # *is* the roster, a renumbering would go stale, and a test name would
+ # survive the rule being pointed at nothing. Occurs once in the guard and
+ # once in its tests, so the path pins which.
+ "catalog-lookup-roster": (
+     "HANDS_OUT_A_TABLE = {",
+     "scripts/check_handlers.py",
+ ),
+
+ # --- the lexer reads the table too, 2026-09-29 -----------------------------
+ #
+ # `lex` kept a hand-written copy of which two-character runs are one token,
+ # and that pairing is why the table's order does not matter. The needle is
+ # the derivation itself rather than the test: a test name would survive the
+ # line going back to a `matches!` arm, which is the mutation this closed.
+ "lex-reads-comparisons": (
+     "let paired = COMPARISONS.iter().any(",
+     "crates/slate-sql/src/sql.rs",
+ ),
+
+ # --- the never-fires halves are a never-fires hazard, 2026-09-30 -----------
+ #
+ # The GOTOOLCHAIN guard's two never-fires halves had cases and nothing held
+ # the cases to existing. The needle is the derivation, not a case name and
+ # not a printed line: a roster listed in a constant is exactly what this
+ # closure rejected, so the function that reads the halves off an empty tree
+ # is the thing whose absence means the closure has come undone.
+ # --- a refusal's numbers are values now, 2026-09-30 ------------------------
+ #
+ # The caveat was that a refused relation path reported its limit in prose.
+ # The needle is the reason token at the refusal site rather than the builder
+ # it calls: `status::refused` could survive the depth refusal going back to a
+ # bare `Status::new`, and that reversion is exactly what this closed.
+ "relation-depth-in-metadata": (
+     "\"RELATION_DEPTH_EXCEEDED\"",
+     "crates/slate-server/src/service.rs",
+ ),
+
+ # `checked` on a `deliberate` row is the distinction itself: the field means
+ # read against the tree, and until 2026-09-30 a deliberate verdict was
+ # refused one, so a read had nowhere to go but `reviewed`.
+ # The check that caught the re-run mutation, and the only thing that could:
+ # all three adapters agree on the empty map a metadata-less server sends, so
+ # the disagreement path cannot see it.
+ "details-agreed-on-nothing": (
+     "MUST_CARRY_DETAILS",
+     "examples/explorer/conformance/conformance.py",
+ ),
+
+ "deliberate-read-against-the-tree": (
+     "`deliberate` is no longer in",
+     "scripts/caveats.py",
+ ),
+
+  # Anchored per sentence rather than looped over the file, so the message can
+ # say which of CLAUDE.md's two job counts drifted. The needle is the roster,
+ # because the loop it replaced would leave the rest of the check standing.
+ "claude-md-counts-anchored": ("CLAUDE_MD_COUNTS", "scripts/test_check_sh.py"),
+
+ "never-fires-halves-derived": (
+     "def never_fires() -> list[str]:",
+     "scripts/test_check_toolchain_pins.py",
+ ),
+}
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
 #:
@@ -242,10 +927,34 @@ EXEMPT: dict[str, str] = {
         "re-examined under a wider frame, a set of gap rows re-read for their "
         "real shape. The output is prose and the entry is the artifact"
     ),
+    "deleted": (
+        "closed by deleting the thing the caveat was about. A removal leaves no "
+        "artifact by construction — the only witness would be a file asserting "
+        "that another file is gone, which goes stale the moment somebody writes "
+        "a third file with the same name"
+    ),
+    "tagged": (
+        "closed by a git tag, which is a ref rather than a file. `v0.0.1` is on "
+        "the remote — `git ls-remote --tags origin` shows it — and the working "
+        "tree carries the workflow that reacts to a tag, not the fact that one "
+        "was pushed. A file asserting the tag exists would be a second copy of it"
+    ),
+    "setting": (
+        "closed by a repository setting a person changed on the hosting "
+        "service. Like `tagged`, the fact lives on the remote and not in the "
+        "tree; unlike a tag, no file here even reacts to it, so the only "
+        "witness would be one asserting the setting, which is a copy that goes "
+        "stale silently the moment somebody changes it back. The check is one "
+        "API call, named in the closure's reason"
+    ),
     "stamped": (
         "closed by the state of `docs/caveat-status.json` itself — a count of "
-        "unread caveats, answered by every open verdict carrying a `checked` "
-        "date. `caveats.py --unread` is the check, and `check.sh` runs it"
+        "caveats in some state, answered by the file reaching a different "
+        "count. Unread ones are answered by every open verdict carrying a "
+        "`checked` date and untriaged ones by every caveat carrying a verdict "
+        "at all; `caveats.py --unread` and `caveats.py` are the two checks, "
+        "and `check.sh` runs both. A witness pointing at the file this guard "
+        "already parses would be circular"
     ),
 }
 
@@ -259,6 +968,66 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-30-two-imports-a-script-put-where-the-text-was.md',
+     "It does not check the session's other scripted edits for the"):
+        'closed by reading the diff — 1774 added lines over 34 files outside `ledger/` — for the class the caveat names: a replacement applied at several sites, one of whose contexts differs. There is none in that range, and a reading of a diff leaves nothing in the tree but the entry that records what it looked for',
+    ('2026-09-30-a-premise-nobody-here-can-falsify.md',
+     'The two exempted caveats were not themselves re-read.'):
+        'closed by reading both against the tree, which is the only method there is for a prose claim. One was stale and is narrowed with its own entry; the other holds and gained a `recheck`. The reading leaves nothing in the tree but the entry that records it -- a witness would have to be the `checked` date this guard already parses',
+    ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
+     'The sibling claim in the same entry could not be checked.'):
+        'the same closure as the Pages caveat it is about, reached from the other side: `https://howlerops.github.io/slate-orm/` answers 200. It leaves nothing in the tree for the same reason that one does -- the publishing workflow was already here while the claim was true -- and adding a second witness for one fact would be a copy',
+    ('2026-09-14-ci-that-had-never-run.md',
+     'Pages needs **Settings → Pages → Source: GitHub Actions** tu'):
+        'the same setting as the Pages caveat two entries along, and closed by the same evidence: the Pages workflow failed on `16a1db6` at 13:49:13 and succeeded on that same SHA at 14:06:41, so the hand-turn this left to whoever merges was done. The workflow it names was already in the tree while the claim was true, so it witnesses nothing',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     'Pages is not enabled, and cannot be enabled from here.'):
+        'closed by somebody with admin enabling Pages: `https://howlerops.github.io/slate-orm/` answers 200 and serves the site, where the entry recorded the deploy job failing on `Resource not accessible by integration`. The workflow that publishes is already in the tree and was already there while this was false, so it witnesses nothing; the published URL is the only evidence, and it is not a file',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`main` is not yet the **default** branch, and this session c'):
+        'closed by somebody with admin changing the setting: `GET /repos/howlerops/slate-orm` answers `"default_branch": "main"`, where the caveat recorded it opening on a feature branch. Nothing in the tree moved, and nothing in the tree could -- the entry says in the same breath that this session cannot write the setting -- so a witness would be a file asserting what the API answers',
+    ('2026-09-29-two-rows-for-one-gap.md',
+     'It does not sweep the other 124 open rows for duplicates.'):
+        'closed by running the sweep in the direction the caveat named missing -- all 137 open rows pairwise against each other -- and reading its output. The result is a null one for the mechanical route and a single real pair for the reading, and neither leaves an artifact: a fuzzy matcher over 60-character key prefixes was measured here and rejected, so there is no guard to point at',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It says nothing about the `deliberate` verdicts.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It still says nothing about the 890 `deliberate` verdicts.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-first-sample-of-the-deliberate-verdicts.md',
+     'One in fifteen is not a rate.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-census-finished-and-three-more-were-already-answered.md',
+     'The census is of `open` only.'):
+        'closed by reading sixty of the 900 `deliberate` verdicts and computing a rate, which leaves nothing in the tree but the entry that records it. The artifact would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
+        'closed by reading, which is the only method that works on a prose caveat and leaves nothing in the tree but the entry that records the reading. The six census entries are the artifact; a witness would have to be a count in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-14-the-testserver-joins-the-workspace.md',
+     '`scripts/build_testserver.sh` is now unnecessary — it existe'):
+        'closed by deleting `scripts/build_testserver.sh`. `git grep build_testserver` now finds only this entry\'s own sentence, and the entry records the deletion inline',
+    ('2026-09-14-the-settings-landed.md',
+     'The release upload is still the one thing in this repository'):
+        'closed by pushing `v0.0.1`, the tag `softprops/action-gh-release` waits for. A git ref is not a file, so the tree carries the workflow that reacts to a tag and not the fact that one was pushed',
+    ('2026-09-14-ci-that-had-never-run.md',
+     'What follows was true until that tag, and is left because it'):
+        'closed by pushing `v0.0.1`, which is a git tag and not a file. `git ls-remote --tags origin` shows it; nothing in the working tree records that the release workflow has now run, and adding a file that said so would be a second copy of the tag',
     ('2026-09-27-five-narrowed-caveats-were-invisible-to-the-staleness-report.md',
      'Three residuals are now on the worklist and have not been re'):
         'closed by re-reading the three residuals against the tree. Two still held '
@@ -333,6 +1102,35 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
      '267 open caveats are still unread'):
         'same as the row above: closed by the reading pass, whose artifact is '
         'the status file this guard parses',
+    ('2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md',
+     'The 468 are untriaged, and that is the work this surfaced ra'):
+        'closed by triaging all 468 over four commits on the same day. The '
+        'artifact is docs/caveat-status.json, which this guard already parses; '
+        'a witness pointing at it would be circular',
+    ('2026-09-28-the-first-two-days-of-the-invisible-backlog.md',
+     '364 remain, and they are the 2026-09-15 to 2026-09-27 entrie'):
+        'same as the row above: a progress marker in a batch, retired by the '
+        'batch after it. The count it names is a state of the status file',
+    ('2026-09-28-the-invisible-backlog-part-two.md', '283 remain'):
+        'same as the row above: a progress marker retired by the next batch',
+    ('2026-09-28-the-invisible-backlog-part-three.md', '130 remain'):
+        'same as the row above, and the last of the four. A caveat that counts '
+        'how much of itself is left is true only until the next commit, which '
+        'is an argument for writing fewer of them rather than for a witness',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It does not check whether other entries carry the withdrawn '):
+        'closed by reading the four entries and their commit timestamps against '
+        "35d9182's. All four predate the fix, so each was true when written and "
+        'nothing needed striking. A null result changes no file by construction',
+    ('2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md',
+     'Seventy-six open caveats last checked on 2026-09-28 were not'):
+        'closed by reading all 141 open caveats against the tree in one pass, which is a count of the tracker\'s own state: every open verdict now carries `checked: 2026-09-30` and `caveats.py --unread` reports zero. The witness would be the `checked` dates in `docs/caveat-status.json`, which this guard already parses',
+    ('2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md',
+     '747 remain unread.'):
+        'closed by the `deliberate` frame being empty: `caveats.py --unchecked` reports 26 and all 26 are verdicts written after the pass that emptied it. Like every unread count, it is answered by the file reaching a different number, and a witness pointing at that file would be circular',
+    ('2026-09-29-the-deliberate-sample-carried-to-168.md',
+     'It did not look for stale reasons systematically.'):
+        'closed by running the mechanical half systematically -- every backticked token in all 141 open claims resolved against `git ls-files` and `git grep` -- rather than by sampling. Zero failed to resolve, and a null result over a frame leaves nothing in the tree: the code that does the resolving is `scripts/read_deliberate.py`, which was already here while the claim was true, so it witnesses nothing',
 }
 
 #: Every `closed` caveat, and the witness that must still be in the tree.
@@ -342,6 +1140,635 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    (
+        "2026-09-30-the-image-that-copies-part-of-the-tree.md",
+        "It does not read `.dockerignore`.",
+    ): "dockerignore-admits-members",
+    (
+        "2026-09-30-the-helpdesk-on-slatedb.md",
+        "The roll-up decodes positionally.",
+    ): "grouped-by-name",
+    (
+        "2026-09-30-the-helpdesk-on-slatedb.md",
+        "Nothing asserts which plan runs.",
+    ): "plan-measured",
+    (
+        "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+        "It checks that a member is admitted, not that it is admitted",
+    ): "dockerignore-admits-whole",
+    (
+        "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+        "The correction is not a guard against the class it belongs t",
+    ): "absence-claims-anchored",
+    (
+        "2026-09-30-four-caveats-that-had-a-check-in-them.md",
+        "One of two is not a validation rate.",
+    ): "labelled-verdicts",
+    (
+        "2026-09-30-an-application-written-against-the-rust-surface.md",
+        "It is one slice.",
+    ): "helpdesk-on-slatedb",
+    (
+        "2026-09-30-an-application-written-against-the-rust-surface.md",
+        "The security catalog's two policies are `Expr::True`.",
+    ): "helpdesk-real-policy",
+    ("2026-09-30-a-premise-nobody-here-can-falsify.md", "Two of the ten are exempted by hand"): "exemption-names-a-path",
+    ("2026-09-30-the-exemptions-i-wrote-without-reading.md", "`prebuilt.py` compares one binary against the newest source "): "prebuilt-unknown",
+    ("2026-09-30-a-draw-that-reproduces-and-a-roster-that-runs.md", "`prebuilt.py` still compares one binary against the newest s"): "prebuilt-unknown",
+    ("2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md", "Substring matching is the whole harness's idiom: a case's ex"): "expectation-is-about-one-report",
+    ("2026-09-30-two-imports-a-script-put-where-the-text-was.md", "It does not check the session's other scripted edits for the"): "=read",
+    ("2026-09-14-a-playground-nobody-could-find.md", "The ordering assertion only pins `#playground` before `#what"): "workbench-check",
+    ("2026-09-14-a-playground-nobody-could-find.md", "The default-column assertion checks the *option label* ends "): "workbench-check",
+    ("2026-09-30-a-sample-that-pools-with-the-next-one.md", "Nothing checks that a draw actually came from `--unchecked`."): "draw-reproduces",
+    ("2026-09-30-the-exemptions-i-wrote-without-reading.md", "The roster cannot tell whether a file's refusal works"): "stale-binary-driven",
+    ('2026-09-30-the-exemptions-i-wrote-without-reading.md',
+     '`ledger/mutations/20260930T040901-crates-slate-server-src-st'):
+        'details-agreed-on-nothing',
+    ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
+     'A `reviewed` stamp does not distinguish a read like this one'):
+        'deliberate-read-against-the-tree',
+    ('2026-09-30-a-premise-nobody-here-can-falsify.md',
+     'The two exempted caveats were not themselves re-read.'): '=read',
+    ('2026-09-17-a-path-of-relationships-on-the-wire.md',
+     '`ErrorInfo.metadata` still is not surfaced'): 'relation-depth-in-metadata',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`main` is not yet the **default** branch, and this session c'): '=setting',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     'Pages is not enabled, and cannot be enabled from here.'): '=setting',
+    ('2026-09-14-ci-that-had-never-run.md',
+     'Pages needs **Settings → Pages → Source: GitHub Actions** tu'): '=setting',
+    ('2026-09-30-thirty-more-deliberate-verdicts-and-two-stale-premises.md',
+     'The sibling claim in the same entry could not be checked.'): '=setting',
+    ('2026-09-29-the-skip-list-that-excused-nothing.md',
+     'Nothing checks that the never-fires halves still fire.'):
+        'never-fires-halves-derived',
+    ('2026-09-29-the-parsers-vocabulary-is-the-parser.md',
+     'Nothing checks that `lex` pairs exactly the symbols `COMPARI'):
+        'lex-reads-comparisons',
+    ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
+     'It does not check the property it relies on.'): 'catalog-lookup-roster',
+    ('2026-09-21-contains-in-the-sql-front-end.md',
+     'The SQL operator list has the weakness the wire\'s had.'):
+        'sql-comparison-vocabulary',
+    ('2026-09-20-the-column-the-catalog-knew-about.md',
+     '`--print-schema`\'s output is not versioned.'): 'print-schema-format',
+    ('2026-09-29-two-rows-for-one-gap.md',
+     'It does not sweep the other 124 open rows for duplicates.'): '=read',
+    ('2026-09-20-the-attribute-the-builder-already-had.md',
+     'Nothing measures the cost.'): 'soft-delete-read-cost',
+    ('2026-09-29-a-guard-whose-roster-was-itself.md',
+     'The self-skip is by filename.'): 'skip-list-rot',
+    ('2026-09-19-a-row-that-is-gone-but-still-there.md',
+     'Nothing measures the cost. Every read of a soft-deleting tab'):
+        'soft-delete-read-cost',
+    ('2026-09-20-the-accessor-three-adapters-now-call.md',
+     'Nothing outside the demo calls it.'): 'retired-outside-the-demo',
+    ('2026-09-18-the-python-that-runs-ci-had-no-checker.md',
+     'Nothing here is *run* by the new job.'): 'scripts-job-runs-things',
+    ('2026-09-29-a-slow-reader-makes-a-response-later-not-larger.md',
+     'Nothing compares a request with its response.'): 'request-against-response',
+    ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
+     'Nothing checks that `check.sh` and `ci.yml` cover the same g'):
+        'check-sh-both-directions',
+    ('2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md',
+     'It has never run in CI.'): 'teardown-runs-in-ci',
+    ('2026-09-19-the-fifth-table-list.md',
+     "Nothing checks that the *order* of tables matches, only the "): 'ui-tab-order',
+    ('2026-09-19-the-fifth-table-list.md',
+     'The constant is still hand-maintained, and the next table to'):
+        'ui-tables-derived',
+    ('2026-09-29-the-third-client-sends-a-floor-the-other-two-do-not.md',
+     'It does not resolve the divergence.'): 'read-your-writes-restored',
+    # The witness is the divergence test rather than the plain one: the caveat
+    # asked for an assertion in this client, and what the assertion found is
+    # the thing worth keeping alive.
+    ('2026-09-29-a-control-that-controlled-nothing-in-two-clients.md',
+     'The Python client still has no such assertion.'): 'python-freshness-floor',
+    ('2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md',
+     'No freshness-floor assertion on the TypeScript side. The Go '):
+        'typescript-freshness-floor',
+    ('2026-09-14-withdrawing-the-rename-caveat.md',
+     'The Python client has no equivalent test. Its fingerprint is'):
+        'python-rename-declared',
+    # Closed by a file that already existed. The witness is the test that does
+    # the thing the caveat asked for — install the built wheel and import it —
+    # rather than the file, because three of its four tests would still pass
+    # with that one deleted.
+    ('2026-09-13-the-typescript-package-was-not-importable.md',
+     'The Go and Python clients are not checked this way. Go has n'):
+        'python-wheel-imports',
+    ('2026-09-14-the-kernel-on-wasm.md',
+     'Nothing else in the workspace is checked for the same proble'):
+        'wasm-runtime-guard',
+    ('2026-09-29-a-caveat-closed-by-a-line-through-it.md',
+     'Nothing stops the pair being created wrongly in the first pl'):
+        'the-pair-is-three-entries',
+    ('2026-09-29-bytes-do-not-need-a-network.md',
+     'Only the Python client weighs.'): 'go-weighs-a-read',
+    ('2026-09-29-bytes-do-not-need-a-network.md',
+     'It does not explain the `4n + 2` from the wire format.'):
+        'four-n-plus-two-decoded',
+    ('2026-09-14-frontend-tests-and-configurable-ports.md',
+     'The bar chart is asserted on count and threshold, not on geo'):
+        'bar-geometry-in-a-browser',
+    ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
+     "It leaves the refusal's wording wrong"):
+        'view-named-before-converting',
+    ('2026-09-19-the-count-a-refusal-did-not-write.md',
+     'The plain (non-conditional) delete arm\'s "failed having appl'):
+        'strike-is-not-open',
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not improve the error message that caused the mistak'):
+        'regex-spelling-hint',
+    # The witness is the retirement entry rather than the corrected prose: the
+    # fix is a paragraph, and prose can be rewritten into a new wrong shape
+    # without touching the words a needle could hold. What must not come back
+    # is the claim, and that is what the list holds.
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not audit the rest of the note for the same class of'):
+        'check-can-hold-a-regex-once',
+    ('2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md',
+     '`--check` proves the file matches the catalog, not that anyb'):
+        'generated-is-used',
+    ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
+     'Scale above 4 is untested.'): 'decimal-at-max-scale',
+    # The TypeScript test rather than Go's type: a refusal Go makes
+    # unrepresentable leaves nothing to grep for, and this one is the run-time
+    # half that a `git grep` can actually see.
+    ('2026-09-29-twelve-decimals-and-one-thing-the-three-do-not-agree-about.md',
+     'The negative-scale divergence is recorded, not resolved.'):
+        'negative-scale-refused',
+    # One guard closes both readings of the same gap: the door the third
+    # client was missing, and the door a fourth would be.
+    ('2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md',
+     'Nothing checks that a new client transport keeps this door.'): 'transport-door',
+    ('2026-09-29-the-three-counts-compared-and-a-door-only-one-client-had.md',
+     'Nothing still checks that a fourth client arrives with a tra'): 'transport-door',
+    ('2026-09-29-the-python-client-had-no-renamed-column-to-declare.md',
+     'Nothing stops the fourth client arriving without this test.'): 'renamed-column-roster',
+    ('2026-09-29-a-roster-of-test-names-is-weaker-and-worth-having.md',
+     'The three real-tree mutations were hand-run.'): 'guard-dialect',
+    ('2026-09-29-the-dialect-mutate-py-was-missing.md',
+     'Nothing makes the real-tree mutations run again.'): 'mutations-roster',
+    ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
+     'Nothing re-runs any of them.'): 'mutations-roster',
+    ('2026-09-29-a-guard-whose-roster-was-itself.md',
+     'Nothing re-runs any real-tree mutation, and this entry adds '): 'mutations-roster',
+    ('2026-09-29-three-more-guards-and-a-substring-that-was-a-use.md',
+     'Eight guards still have no mutation.'): 'mutations-roster',
+    ('2026-09-20-the-third-decoder-test.md',
+     'No live-row case for `authors`, `sales` or `editions` in any'): 'typed-rows-compared',
+    # One test closes two readings: that the permit is released before a row
+    # is read, and that open streams are therefore bounded by nothing.
+    ('2026-09-29-a-fifth-ceiling-and-a-limit-whose-name-was-a-lie.md',
+     'It bounds admission, not open streams.'): 'open-streams-unbounded',
+    ('2026-09-28-a-request-timeout-does-not-bound-a-fast-request.md',
+     'The streaming observation is read, not measured.'): 'open-streams-unbounded',
+    # The e2e check rather than the panel: a control that renders and sends
+    # nothing is still a control, and the check is what says it reaches the
+    # database. Both were mutation-tested through it.
+    ('2026-09-19-asking-for-the-rows-that-are-gone.md',
+     'The demo UI has no control for it \u2014 the identity switcher sh'):
+        'demo-include-deleted',
+    ('2026-09-29-the-panels-the-endpoints-were-already-serving.md',
+     'No `includeDeleted` control.'): 'demo-include-deleted',
+    ('2026-09-29-the-one-aggregate-that-returns-money.md',
+     "The demo's UI does not show it."): 'demo-money-measure',
+    # One shared table rather than three written independently, which is the
+    # distinction the caveat drew: three tables agreeing with three authors is
+    # not three renderers agreeing with each other.
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     'The corpus compares renderers at one scale.'):
+        'decimal-renderers-shared-table',
+    # The same sentence, written again forty minutes before the endpoint that
+    # answers it existed, and closed by the same witness.
+    ('2026-09-29-the-one-aggregate-that-returns-money.md', 'One scale, still.'):
+        'decimal-renderers-shared-table',
+    # Two entries, four days apart, saying the same thing: the one aggregate
+    # that returns money is compared by no client case. One names the case
+    # that sorts by it, one the adapter that asks for it — because a case
+    # comparing a field nobody computes compares three absences.
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     '`price` is not in any aggregate case.'): 'decimal-aggregate-case',
+    ('2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md',
+     'No `sum(price)` anywhere in the corpus.'): 'decimal-aggregate-sum',
+    # A roster for the plan text itself, which the pair check cannot see: it
+    # compares two plans to each other, so a server renaming both keeps every
+    # pair differing.
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     '`access` is compared only for equality between two cases.'):
+        'expected-access',
+    # The needle is the function rather than `MUST_DIFFER`, because the roster
+    # would still be there with the third element deleted; the check that
+    # reads it is what moved.
+    ('2026-09-19-which-guard-covers-which-field.md',
+     '`MUST_DIFFER` still compares whole answers. Two cases that d'):
+        'must-differ-names-the-field',
+    # Two entries asked, in two wordings, for the comparison the conformance
+    # runner now makes. One names the *case*, one the endpoint that serves it,
+    # because a case with no endpoint behind it is a case comparing three
+    # copies of a 404.
+    ('2026-09-28-the-go-client-was-already-counting.md',
+     'It does not check that the three agree.'): 'round-trips-compared',
+    ('2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md',
+     'No conformance case compares the three counts against each o'):
+        'round-trips-endpoint',
+    # A `deliberate` whose decision the next day's work reversed, found by the
+    # first random sample ever drawn from that verdict.
+    ('2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md',
+     '`.html` was added to one guard, and the sweep for others fou'):
+        'site-html-citations',
+    ('2026-09-14-ports-below-the-ephemeral-range.md',
+     'Nothing tests the allocator itself. There is no case asserti'):
+        'free-ports-guard',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It does not check whether other entries carry the withdrawn '): '=read',
+    # --- two open verdicts re-read against the tree on 2026-09-28 and found false
+    ('2026-09-14-explaining-a-grouped-read.md',
+     'No client exposes `ExplainAggregate` inside a transaction ex'):
+        'explain-aggregate-in-a-transaction',
+    ('2026-09-14-self-checking-quickstarts-and-conformance.md',
+     'The quickstart check does not verify the *prose* around the '):
+        'quickstart-install-lines',
+    # --- four progress markers, each retired by the batch after it
+    ('2026-09-28-the-tracker-could-not-see-a-third-of-the-caveats.md',
+     'The 468 are untriaged, and that is the work this surfaced ra'): '=stamped',
+    ('2026-09-28-the-first-two-days-of-the-invisible-backlog.md',
+     '364 remain, and they are the 2026-09-15 to 2026-09-27 entrie'): '=stamped',
+    ('2026-09-28-the-invisible-backlog-part-two.md', '283 remain'): '=stamped',
+    ('2026-09-28-the-invisible-backlog-part-three.md', '130 remain'): '=stamped',
+    # --- the scale hole, closed on 2026-09-18 and noticed on the 28th
+    ('2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md',
+     "Nothing checks a client's declared scale against the server'"):
+        'scale-in-fingerprint',
+    ('2026-09-18-decimals-and-conditional-updates-in-three-clients.md',
+     "Nothing checks a client's declared scale against the server'"):
+        'scale-in-fingerprint',
+    ('2026-09-18-nineteen-ninety-nine-is-a-decimal-not-a-float.md',
+     "Nothing checks a client's idea of a column's scale against t"):
+        'scale-in-fingerprint',
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     "Nothing here checks a client's declared scale against the se"):
+        'scale-in-fingerprint',
+    ('2026-09-18-three-clients-and-the-integer-they-would-all-have-reached-for.md',
+     'No client-side knowledge of scale.'):
+        'scale-in-fingerprint',
+    # --- the last of the invisible backlog, triaged 2026-09-28
+    ('2026-09-18-ty-resolves-against-whatever-you-happen-to-have.md',
+     'It does not make the two environments agree.'):
+        'check-sh-venv',
+    ('2026-09-18-what-the-node-says-about-its-requests.md',
+     'No histogram, so no percentiles.'):
+        'latency-quantiles',
+    ('2026-09-18-what-the-node-says-about-its-requests.md',
+     'A failure raised in a trailer counts as a success.'):
+        'trailer-counted',
+    ('2026-09-18-what-the-node-says-about-its-requests.md',
+     'No request id.'):
+        'request-id',
+    ('2026-09-21-refusing-a-view-everywhere-else-is-free.md',
+     'It builds no view.'):
+        'views-toml-declared',
+    ('2026-09-21-slate-sql-gets-its-own-tests.md',
+     "`Schema<'_>` is the only way in, and it takes a slice of `Ta"):
+        'views-toml-declared',
+    ('2026-09-21-slate-sql-is-its-own-crate.md',
+     'The lowering has not moved.'):
+        'sql-lowering',
+    ('2026-09-21-slate-sql-is-its-own-crate.md',
+     'No view exists yet'):
+        'views-toml-declared',
+    ('2026-09-21-slate-sql-is-its-own-crate.md',
+     '`slate-sql` has no tests of its own.'):
+        'sql-own-tests',
+    ('2026-09-21-the-lowering-follows-the-parser.md',
+     'No view exists yet.'):
+        'views-toml-declared',
+    ('2026-09-21-the-lowering-follows-the-parser.md',
+     '`slate-sql` still has no tests of its own.'):
+        'sql-own-tests',
+    ('2026-09-21-the-views-blocker-was-a-crate-name.md',
+     'It builds no view.'):
+        'views-toml-declared',
+    ('2026-09-21-the-views-blocker-was-a-crate-name.md',
+     'It does not prove the extraction is clean.'):
+        'sql-lowering',
+    ('2026-09-21-the-views-blocker-was-a-crate-name.md',
+     'It leaves the other two open questions open'):
+        'views-doc',
+    ('2026-09-22-four-dependencies-and-a-tool-that-was-lying.md',
+     'What survives the audit is narrower and worth more: **a muta'):
+        'mutation-records',
+    ('2026-09-27-the-guard-for-two-copies-could-not-read-the-second-one.md',
+     'What the grep cannot say is whether a guard *should* read th'):
+        'site-html-citations',
+    # --- the 2026-09-20/21 backlog, triaged 2026-09-28
+    ('2026-09-20-the-accessor-three-adapters-now-call.md',
+     'Still no `restore`.'):
+        'soft-delete-restore',
+    ('2026-09-20-the-attribute-the-builder-already-had.md',
+     'No `restore`.'):
+        'soft-delete-restore',
+    ('2026-09-20-the-column-the-catalog-knew-about.md',
+     'There is still no `restore`.'):
+        'soft-delete-restore',
+    ('2026-09-20-the-row-that-is-both-there-and-not.md',
+     'It does not check the other write paths.'):
+        'four-paths-probed',
+    # --- the 2026-09-19 backlog, triaged 2026-09-28
+    ('2026-09-19-a-check-that-names-its-field.md',
+     'The write path still stops at the first failing check, so a '):
+        'every-bad-field',
+    ('2026-09-19-a-check-that-names-its-field.md',
+     'No client reads the new metadata. Python, Go and TypeScript '):
+        'violation-column',
+    ('2026-09-19-a-real-enum-and-a-real-soft-delete.md',
+     'Nothing **reads** the new table yet. No conformance case que'):
+        'conformance-shipments',
+    ('2026-09-19-a-real-enum-and-a-real-soft-delete.md',
+     'The retired row is invisible to every current caller, becaus'):
+        'conformance-include-deleted',
+    ('2026-09-19-a-real-enum-and-a-real-soft-delete.md',
+     "No test asserts the demo's *generated* schema module imports"):
+        'generated-decoders-run',
+    ('2026-09-19-a-row-that-is-gone-but-still-there.md',
+     'There is no `restore` and no reaper. Un-deleting is an ordin'):
+        'soft-delete-restore',
+    ('2026-09-19-a-row-with-names-on-it.md',
+     'The Go and TypeScript decoders are **compiled but not execut'):
+        'generated-decoders-run',
+    ('2026-09-19-asking-for-the-rows-that-are-gone.md',
+     '`MUST_DIFFER` holds one pair. Several other flags have the s'):
+        'must-differ-pairs',
+    ('2026-09-19-asking-for-the-rows-that-are-gone.md',
+     'Nothing tests `include_deleted` on a *join* input, which is '):
+        'conformance-include-deleted',
+    ('2026-09-19-every-bad-field-at-once.md',
+     'No client surfaces the set. All three SDKs show the status m'):
+        'every-bad-field',
+    ('2026-09-19-every-bad-field-at-once.md',
+     'The third recommendation — publishing checks so a client can'):
+        'published-checks',
+    ('2026-09-19-forgetting-a-retired-row.md',
+     "No metric or log line counts purged rows, so a sweep's effec"):
+        'purge-counted',
+    ('2026-09-19-the-regex-hole-that-was-not-there.md',
+     'It does not build any of the three remaining recommendations'):
+        'published-checks',
+    ('2026-09-19-where-validation-lives.md',
+     'It does not build any of the four things it recommends, and '):
+        'published-checks',
+    ('2026-09-19-the-column-the-caller-cannot-set.md',
+     'No soft delete, and no other hooks.'):
+        'soft-delete-restore',
+    # --- the rest of the 2026-09-18 backlog, triaged 2026-09-28
+    ('2026-09-18-arithmetic-over-money-and-the-expressions-that-are-refused.md',
+     'The SQL front end still parses `19.99` as a float.'):
+        'decimal-literal-sql',
+    ('2026-09-18-decimals-and-conditional-updates-in-three-clients.md',
+     'No decimal arithmetic.'):
+        'decimal-arith',
+    ('2026-09-18-decimals-and-conditional-updates-in-three-clients.md',
+     'No three-SDK conformance case yet.'):
+        'conformance-decimal',
+    ('2026-09-18-pin-the-deployed-run-to-one-snapshot.md',
+     'It does not resolve the poll-interval discrepancy above'):
+        'poll-interval-answered',
+    ('2026-09-18-swap-mypy-for-ty-astrals-checker.md',
+     'It does not touch the other Python in this repository.'):
+        'root-python-checks',
+    ('2026-09-18-the-catalog-writes-the-declaration-nobody-should-type.md',
+     'It generates a declaration, not a row type.'):
+        'generated-row-types',
+    ('2026-09-18-the-docs-catch-up-with-two-shipped-items.md',
+     "The README's closed-items list was not audited."):
+        'gap-list-reread',
+    ('2026-09-18-the-failure-that-arrives-after-the-answer-has-started.md',
+     '`late` is cumulative, like everything else on the line.'):
+        'metrics-endpoint',
+    ('2026-09-18-the-python-checks-that-were-installed-and-never-run.md',
+     'It does not check the other Python in this repository.'):
+        'root-python-checks',
+    # --- the 2026-09-18 backlog, triaged 2026-09-28
+    ('2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md',
+     'No client speaks either of these yet.'):
+        'decimal-clients',
+    ('2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md',
+     'No decimal arithmetic anywhere.'):
+        'decimal-arith',
+    ('2026-09-18-a-decimal-and-a-conditional-update-on-the-wire.md',
+     '`delete_if_unchanged` does not exist'):
+        'delete-if-unchanged',
+    ('2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md',
+     "The quantiles are over the process's whole life, not the las"):
+        'metrics-endpoint',
+    ('2026-09-18-a-mean-and-a-maximum-do-not-describe-a-latency.md',
+     'A failure raised in a trailer still counts as a success'):
+        'trailer-counted',
+    # --- the 2026-09-16/17 backlog, triaged 2026-09-28
+    ('2026-09-16-batch-in-three-clients-and-a-token-that-only-survives-batched.md',
+     'The demo frontend still has no batch button, like predicate '):
+        'demo-batch',
+    ('2026-09-16-chains-were-never-missing-from-the-wire.md',
+     "The chain cases do not cover a chain's *computed* value or a"):
+        'conformance-runner',
+    ('2026-09-16-chains-were-never-missing-from-the-wire.md',
+     'The other `grep`-based rows in that table have not been re-c'):
+        'gap-list-reread',
+    ('2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md',
+     'No client has it. `load_related_through` is a record-layer f'):
+        'through-nested',
+    ('2026-09-16-many-to-many-is-a-composition-not-a-third-relationship.md',
+     'Nesting is not addressed: `load_related_through` goes one ho'):
+        'through-nested',
+    ('2026-09-16-nested-loading-and-a-depth-limit-with-nothing-to-limit.md',
+     'Still record-layer only. No client can nest, for the same re'):
+        'through-nested',
+    ('2026-09-16-predicate-writes-in-three-clients-and-a-guard-that-never-ran.md',
+     'The demo frontend does not show predicate writes. The adapte'):
+        'demo-predicate-write',
+    ('2026-09-16-predicate-writes-on-the-wire-and-eight-errors-that-read-as-a-crash.md',
+     'No client has these yet. The RPCs and the wire tests exist; '):
+        'conformance-runner',
+    ('2026-09-16-relations-in-typescript-and-a-proto-copy-that-had-drifted.md',
+     'The conformance runner still does not exercise relations. Al'):
+        'conformance-relations',
+    ('2026-09-16-the-go-relation-client-and-a-comment-that-cost-eight-minutes.md',
+     'No TypeScript `related` yet, so the conformance runner still'):
+        'ts-related',
+    ('2026-09-16-the-three-sdks-compared-on-relations-and-a-refusal-that-was-not-one.md',
+     "The demo's UI has no relationship view. The endpoint exists "):
+        'demo-relations',
+    ('2026-09-16-what-the-other-orms-have-that-this-does-not.md',
+     'Window functions, CTEs, views, arrays, full-text search and '):
+        'ctes-decided',
+    # --- the 2026-09-14/15/16 backlog, triaged 2026-09-28
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     'No joins, aggregates or grouped reads through the binding ye'):
+        'wasm-chain',
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     'Writes are not exposed. The store is seeded and then read; a'):
+        'wasm-writes',
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     '596 KiB gzipped is not free, and nothing lazy-loads it yet.'):
+        'wasm-lazy-import',
+    ('2026-09-14-the-kernel-in-a-browser.md',
+     'The wasm build is not in CI as of this commit, so nothing st'):
+        'wasm-in-ci',
+    ('2026-09-14-the-kernel-on-wasm.md',
+     'The wasm target is not in CI as of this commit, so nothing s'):
+        'wasm-in-ci',
+    ('2026-09-14-the-settings-landed.md',
+     'The release upload is still the one thing in this repository'):
+        '=tagged',
+    ('2026-09-14-the-testserver-joins-the-workspace.md',
+     '`scripts/build_testserver.sh` is now unnecessary — it existe'):
+        '=deleted',
+    ('2026-09-14-writes-in-the-playground.md',
+     'The panel does not expose any of this yet — this commit is t'):
+        'workbench-having',
+    ('2026-09-15-money-that-does-not-drift.md',
+     'This is now the third feature on this branch wanting the sam'):
+        'decimal-wire',
+    ('2026-09-16-a-durability-check-that-cried-data-loss.md',
+     "The deployed harness's *other* unfreshened reads are untouch"):
+        'deployed',
+    # --- the 2026-09-13/14 backlog, triaged 2026-09-28 ----------------------
+    ('2026-09-13-a-grouped-chain-on-the-wire.md',
+     '`EXPLAIN` still cannot describe a grouped chain, or a groupe'):
+        'explain-grouped',
+    ('2026-09-13-a-grouped-chain-on-the-wire.md',
+     'The three clients can now *reach* a grouped chain, and only '):
+        'conformance-runner',
+    ('2026-09-13-a-site.md',
+     'No deployment. The site is files in a directory; nothing pub'):
+        'pages-deploy',
+    ('2026-09-13-defects-found-by-review.md',
+     'Two security findings stay open and neither is a patch: the '):
+        'authorise-before-convert',
+    ('2026-09-13-go-client.md',
+     '`Join`, `Aggregate` and `ExplainJoin` are on the wire and ha'):
+        'go-schemacheck',
+    ('2026-09-13-go-client.md',
+     'Nothing here is a differential *against the Python client*. '):
+        'conformance-runner',
+    ('2026-09-13-go-client.md',
+     'The tests need `cargo` on the path and build the daemon, so '):
+        'prebuilt-binary',
+    ('2026-09-13-go-joins-and-aggregates.md',
+     'No computed values in a query or join input, no vector simil'):
+        'go-scalar',
+    ('2026-09-13-go-joins-and-aggregates.md',
+     "Nothing here compares the Go client's answers against the Py"):
+        'conformance-runner',
+    ('2026-09-13-grouped-joins-on-the-wire.md',
+     'Grouping a chain is not built, in the kernel or here. A grou'):
+        'grouped-cost-withdrawn',
+    ('2026-09-13-grouped-joins-on-the-wire.md',
+     '`aggregate_to_proto_query` still emits the single-table shap'):
+        'workbench-having',
+    ('2026-09-13-grouping-a-chain.md',
+     'A grouped chain reads wider than it needs to, as above. It i'):
+        'narrowed-chain',
+    ('2026-09-13-grouping-a-chain.md',
+     'There is no `EXPLAIN` for a grouped chain, or for a grouped '):
+        'explain-grouped',
+    ('2026-09-13-grouping-a-chain.md',
+     '`group_by_chain` is not on the wire. The server refuses a ch'):
+        'grouped-chain-wire',
+    ('2026-09-13-in-list-per-row-cost.md',
+     "Three of finding 7's four items are untouched here: `GROUP B"):
+        'ceilings',
+    ('2026-09-13-point-the-readme-at-everything-new.md',
+     "The README's Status section still describes the project as o"):
+        'readme-swept',
+    ('2026-09-13-python-grouped-join-and-a-rotted-testserver.md',
+     '`testserver` stays outside the root workspace, so nothing st'):
+        'testserver-member',
+    ('2026-09-13-python-grouped-join-and-a-rotted-testserver.md',
+     'Grouping a chain is still unbuilt in the kernel; the client '):
+        'grouped-chain-wire',
+    ('2026-09-13-security-findings-4-and-8.md',
+     'Only the four fingerprint-checking handlers authorise early.'):
+        'authorise-before-convert',
+    ('2026-09-13-the-explorer-and-what-it-found.md',
+     'No frontend yet — this is the backend and the contract.'):
+        'demo-frontend-tests',
+    ('2026-09-13-the-explorer-and-what-it-found.md',
+     '`groupBy: "decade"` is a documented refusal rather than a fe'):
+        'demo-decade',
+    ('2026-09-13-the-explorers-frontend.md',
+     'No tests. The panels are checked by having been driven in a '):
+        'demo-frontend-tests',
+    ('2026-09-13-the-explorers-frontend.md',
+     'No `groupBy: "decade"` — the UI offers it and the adapters r'):
+        'demo-decade',
+    ('2026-09-13-the-explorers-frontend.md',
+     'The frontend talks to three hard-coded localhost ports. Fine'):
+        'demo-ports',
+    ('2026-09-13-typescript-client.md',
+     '`Join`, `Aggregate` and `ExplainJoin` have no typed surface,'):
+        'ts-scalar',
+    ('2026-09-13-typescript-client.md',
+     'Nothing compares the three clients against *each other*. All'):
+        'conformance-runner',
+    ('2026-09-13-typescript-joins-and-aggregates.md',
+     'No computed values, vectors or `SchemaCheck`, matching the G'):
+        'ts-scalar',
+    ('2026-09-13-typescript-joins-and-aggregates.md',
+     "Still nothing compares the three clients' answers against ea"):
+        'conformance-runner',
+    ('2026-09-14-a-playground-that-runs-the-kernel.md',
+     'Filters, sort, projection, limit, offset. No joins, aggregat'):
+        'workbench-having',
+    ('2026-09-14-a-playground-that-runs-the-kernel.md',
+     'One filter, not a conjunction. `WHERE a = 1 AND b > 2` is ex'):
+        'workbench-having',
+    ('2026-09-14-a-playground-that-runs-the-kernel.md',
+     'Nothing lazy-loads the bundle: 596 KiB is paid by every visi'):
+        'wasm-lazy-import',
+    ('2026-09-14-ci-that-had-never-run.md',
+     'What follows was true until that tag, and is left because it'):
+        '=tagged',
+    ('2026-09-14-explaining-a-grouped-read.md',
+     "The demo's `/api/explain` still explains the ungrouped read;"):
+        'demo-grouped-plan',
+    ('2026-09-14-guards-against-the-recurring-mistakes.md',
+     'The Go and Python clients have no equivalent of the TypeScri'):
+        'python-packaging',
+    ('2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md',
+     '`authors` and `books` only — no chain of three, though the k'):
+        'wasm-chain',
+    ('2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md',
+     'No `HAVING` and no group ordering, both of which the kernel '):
+        'workbench-having',
+    ('2026-09-14-joins-conjunctions-and-aggregates-in-the-binding.md',
+     'The panel exposes none of this yet. This commit is the bindi'):
+        'workbench-having',
+    ('2026-09-14-ports-below-the-ephemeral-range.md',
+     "The orphaned `go` and `node` processes the job's cleanup rep"):
+        'runner-teardown',
+    ('2026-09-14-schema-checks-in-go-and-typescript.md',
+     "The reasoning was written from the client's side alone, with"):
+        'ts-renamed-column',
+    ('2026-09-14-self-checking-quickstarts-and-conformance.md',
+     'The conformance mode picks free ports for the adapters but t'):
+        'demo-ports',
+    ('2026-09-25-or-in-having-too.md',
+     'No parentheses, so still no nesting.'):
+        'having-brackets',
+    ('2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md',
+     'The unmatched side is produced by a left join only.'):
+        'full-join-unmatched',
+    ('2026-09-20-an-array-on-the-wire-and-in-three-clients.md',
+     'The demo and the docs site show no array.'):
+        'array-in-the-ui',
+    ('2026-09-27-the-last-twenty-six-and-a-hazard-nobody-had-written-down.md',
+     'The backfill hazard is documented and unenforced.'):
+        'sole-writer-refusal',
+    ('2026-09-25-parentheses-in-a-where.md',
+     'No brackets in a `HAVING`'):
+        'having-brackets',
     ('2026-09-26-a-mistyped-section-is-a-refusal-now.md',
      'Nothing in CI runs an example with a bad section.'):
         'bad-section-run',
@@ -1074,6 +2501,145 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-26-two-ways-to-find-a-stale-caveat-that-do-not-work.md',
      '267 open caveats are still unread'):
         '=stamped',
+    ('2026-09-28-round-trips-counted-at-the-clients-channel.md',
+     'TypeScript has no request counter at all, and only Python co'):
+        'ts-round-trips',
+    ('2026-09-28-the-go-client-was-already-counting.md',
+     'It does not instrument TypeScript.'):
+        'ts-channel-options',
+    ('2026-09-28-the-go-client-was-already-counting.md',
+     'Neither Go test counts paging.'):
+        'go-paging-count',
+    ('2026-09-20-four-say-absent-one-says-present.md',
+     'The predicate paths were probed at one shape.'):
+        'retired-row-only-predicate',
+    ('2026-09-21-contains-in-the-sql-front-end.md',
+     "No search box in the demo's web UI."):
+        'demo-search-panel',
+    ('2026-09-18-the-three-sdks-compared-on-a-decimal.md',
+     "The demo's UI does not show the conditional update."):
+        'demo-conditional-panel',
+    ('2026-09-18-deleting-a-row-somebody-else-just-edited.md',
+     "The demo's UI does not show it."):
+        'demo-conditional-panel',
+    ('2026-09-21-contains-on-the-wire.md',
+     'No conformance case.'):
+        'contains-conformance',
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     'No case covers a search that matches nothing *through the in'):
+        'contains-conformance',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It says nothing about the `deliberate` verdicts.'):
+        '=read',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It still says nothing about the 890 `deliberate` verdicts.'):
+        '=read',
+    ('2026-09-28-the-first-sample-of-the-deliberate-verdicts.md',
+     'One in fifteen is not a rate.'):
+        '=read',
+    ('2026-09-28-the-census-finished-and-three-more-were-already-answered.md',
+     'The census is of `open` only.'):
+        '=read',
+    ('2026-09-28-the-invisible-backlog-part-two.md',
+     'The four unmeasured round-trip claims are grouped here and n'):
+        'offset-costs-the-same',
+    ('2026-09-28-two-reads-counted-rather-than-argued.md',
+     'It leaves the other two unmeasured claims where they were.'):
+        'ts-round-trips',
+    ('2026-09-13-in-list-per-row-cost.md',
+     'It does not cap the list. A caller can still send a very lar'):
+        'in-list-ceiling',
+    ('2026-09-13-per-request-ceilings.md',
+     'Nothing here bounds the *number* of values in an `IN` list, '):
+        'in-list-ceiling',
+    ('2026-09-13-per-request-ceilings.md',
+     "`max_concurrent_requests` maps to tonic's per-connection lim"):
+        'node-wide-concurrency',
+    ('2026-09-28-fifty-one-of-ninety-nine-read-at-random.md',
+     'It leaves forty-eight of the ninety-nine unread'):
+        '=read',
+    ('2026-09-28-a-random-twelve-found-nothing.md',
+     'It reads twelve, so the interval is wide.'):
+        '=read',
+    ('2026-09-28-twenty-five-caveats-read-and-eight-greps-that-lied.md',
+     'It does not examine the other ninety-one.'):
+        '=read',
+    ('2026-09-28-the-scale-hole-was-closed-ten-days-ago.md',
+     'It does not re-read the other 113 open caveats against the t'):
+        '=read',
+    ('2026-09-28-reading-the-open-caveats-instead-of-grepping-them.md',
+     'It reads eleven of 116, and changes four.'):
+        '=read',
+    ('2026-09-28-two-limits-that-are-weaker-than-their-names.md',
+     'It does not re-read the rest of the open caveats.'):
+        '=read',    ('2026-09-29-a-weekly-run-and-a-button.md',
+     "Nothing checks this workflow's steps the way `test_check_sh."):
+        'every-workflow-roster',    ('2026-09-29-the-dialect-mutate-py-was-missing.md',
+     'It is a runner, not a dialect, so `mutate.py --help` does no'):
+        'help-lists-adapters',    ('2026-09-14-the-demo-runner-left-processes-behind.md',
+     'Nothing tests the teardown. There is no case that starts the'):
+        'teardown-passes',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'It closes nothing.'):
+        'teardown-headless',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'No mutation test.'):
+        'teardown-passes',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'The `SIGTERM`-to-`run.sh` observation is unresolved and may '):
+        'teardown-cleanup-terms-first',
+    ('2026-09-29-a-teardown-test-that-has-not-been-seen-to-pass.md',
+     'It is not in `check.sh` and not in `ci.yml`.'):
+        'teardown-in-ci',    ('2026-09-29-ten-streams-under-a-limit-of-one.md',
+     'Nothing bounds concurrent streams instead.'):
+        'open-stream-cap',    ('2026-09-29-the-tool-now-prints-its-own-adapters.md',
+     '`--help` still does not say which dialect an adapter targets'):
+        'adapter-dialect',
+    ('2026-09-29-a-rule-scoped-to-one-file-is-a-rule-about-that-file.md',
+     '`environment_matches` is still `ci.yml` only.'):
+        'env-every-workflow',
+    ('2026-09-29-i-filtered-the-summary-line-out-of-my-own-check.md',
+     'Nothing checks the job count, and this is the second time it'):
+        'job-count-checked',
+    ('2026-09-29-the-teardown-test-asked-for-the-wrong-mode.md',
+     '`RUN_DIR` duplicates an expression from `run.sh`.'):
+        'runner-prints-its-logs',
+    ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
+     'The suffix rule accepts a citation that resolves to the wron'):
+        'cited-files-ambiguous-suffix',
+    ('2026-09-29-mutating-the-real-tree-found-a-class-nothing-checked.md',
+     'Only `docs/` is in scope.'): 'cited-files-scope',
+    ('2026-09-21-a-window-crosses-the-wire-in-its-own-list.md',
+     'The stubs are regenerated and committed here. `COPIES` is st'):
+        'proto-copies-derived',
+    ('2026-09-28-the-port-allocator-runs-in-a-test-now.md',
+     'It does not remove the duplicate.'): 'one-allocator',
+    ('2026-09-28-the-port-allocator-runs-in-a-test-now.md',
+     'The 10050 floor is chosen, not found.'): 'no-adversarial-floor',
+    ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
+     'The image has never been built.'): 'image-built-in-ci',
+    ('2026-09-18-not-in-was-refused-on-a-claim-that-does-not-hold.md',
+     'No client can express it.'): 'not-in-through-a-client',
+
+    # --- 2026-09-30, the open frame read against the tree -------------------
+    #
+    # Three closures from one pass, all three exempt and for two different
+    # reasons. Two are counts of the tracker's own state, answered by the file
+    # reaching a different count; the third is a reading, and its output is
+    # the entry.
+    ('2026-09-29-three-verdicts-that-were-wrong-not-three-gaps.md',
+     'Seventy-six open caveats last checked on 2026-09-28 were not'):
+        '=stamped',
+    ('2026-09-29-forty-eight-more-and-the-lead-did-not-strengthen.md',
+     '747 remain unread.'): '=stamped',
+    ('2026-09-29-the-deliberate-sample-carried-to-168.md',
+     'It did not look for stale reasons systematically.'): '=read',
+    # The one open caveat that pass closed by fixing rather than by reading.
+    # The needle is the roster itself: an anchored pattern per sentence is the
+    # whole change, and reverting to the old loop deletes it.
+    ('2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md',
+     'CLAUDE.md\'s half is still a loop over every word before "job'):
+        'claude-md-counts-anchored',
 }
 
 

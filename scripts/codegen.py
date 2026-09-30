@@ -454,6 +454,49 @@ class Unknown(Exception):
 UNSUPPORTED: dict[str, str] = {}
 
 
+#: The `--print-schema` shapes this generator knows how to read.
+#:
+#: A set rather than a maximum, because the version is not a promise that a
+#: later shape is a superset — `SCHEMA_VERSION` in `crates/slate-serverd/src/main.rs`
+#: says a *removed* key bumps it too. "Anything up to N" would be this file
+#: guessing at a compatibility rule the server does not offer.
+KNOWN_FORMATS = frozenset({1})
+
+
+def refuse_unknown_format(printed: dict) -> None:
+    """Refuse a `--print-schema` document this generator was not written against.
+
+    This is the half that makes the version worth having. A number nothing reads
+    is the "generated, compiled, never called" shape this repository keeps
+    meeting — five entries long, per
+    `ledger/2026-09-20-the-accessor-three-adapters-now-call.md` — and the
+    failure it prevents is specific: this generator emits row types for three
+    languages by ordinal, so a server that renamed or dropped a key it reads
+    would produce decoders that compile and are wrong about which column is
+    which.
+
+    A *missing* `format` is a server older than the key, which is refused for
+    the same reason rather than assumed to be 1: the shape grew twice in two
+    days before it was versioned, so "no version" means "some shape from before
+    anybody was counting", not "the first one".
+    """
+    found = printed.get("format")
+    if found in KNOWN_FORMATS:
+        return
+    known = ", ".join(str(one) for one in sorted(KNOWN_FORMATS))
+    raise SystemExit(
+        f"`--print-schema` published format {found!r}, and this generator reads "
+        f"{known}.\n"
+        "  The server and this script are out of step. Regenerating against a "
+        "shape\n"
+        "  it does not know would emit decoders that compile and read the wrong "
+        "column,\n"
+        "  because the row types it writes are positional. Update "
+        "`KNOWN_FORMATS` here\n"
+        "  once this file has been read against the new shape — not before."
+    )
+
+
 def refuse_unsupported(tables: list[dict]) -> None:
     """Refuse a catalog this tool cannot generate, before emitting anything.
 
@@ -1747,6 +1790,7 @@ def main() -> int:
         parser.error("name at least one of --python, --go, --typescript, --web")
 
     printed = catalog(arguments.config, arguments.serverd)
+    refuse_unknown_format(printed)
     tables = printed["tables"]
     refuse_unsupported(tables)
     views = declared_views(printed, tables)

@@ -7,6 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+# Not published. The crates.io question is decided in `docs/releasing.md`:
+# these are libraries this repository consumes by path, and publishing them
+# commits to an API that changes weekly. Declared rather than left to the
+# absence of a token, because a token added for one crate publishes every
+# crate that did not say no.
+publish = false
 
 [[bin]]
 name = "slate-serverd"
@@ -85,6 +91,13 @@ clap = { version = "4", features = ["derive"] }
 subtle = "2"
 
 [dev-dependencies]
+# For `Message::encoded_len()` in `tests/observing.rs`, which weighs a request
+# in the same unit the server weighs its response — the comparison the two
+# halves of the byte measurement exist for. Already in the graph through
+# `slate-server`, so this compiles nothing new; `slate-server` does not
+# re-export it and widening that crate's public API for one test would be the
+# larger change.
+prost = "0.14"
 tempfile = "3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 tonic = "0.14"

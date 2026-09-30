@@ -60,7 +60,7 @@ from typing import Final, Protocol, runtime_checkable
 
 import grpc
 
-from ._details import CheckFailure, check_failures_of, reason_of
+from ._details import CheckFailure, check_failures_of, details_of, reason_of
 
 __all__ = [
     "AlreadyExists",
@@ -110,6 +110,7 @@ class SlateError(Exception):
         reason: str = "",
         request_id: str = "",
         violations: list[CheckFailure] | None = None,
+        details: dict[str, str] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -152,6 +153,20 @@ class SlateError(Exception):
         #: a row with three bad fields produces three entries and one round
         #: trip. `str(error)` summarises the same set for a log.
         self.violations = violations or []
+        #: The refusal's own numbers, as the server sent them.
+        #:
+        #: `ErrorInfo.metadata`, verbatim. A refusal that bounds something
+        #: puts the bound here as well as in the sentence, so a caller can act
+        #: on it without matching prose: `RELATION_DEPTH_EXCEEDED` carries
+        #: `limit` and `asked`. Which keys are present depends on `reason`,
+        #: and reading one without checking that is reading a different
+        #: failure's map.
+        #:
+        #: `{}` for a refusal that carries no `ErrorInfo`, which is most of
+        #: them, and for one this client raised without reaching the server.
+        #: `violations` is the one part of this map with a shape of its own,
+        #: parsed rather than left as strings.
+        self.details = details or {}
 
     def __str__(self) -> str:
         return f"{self.code.name.lower()}: {self.message}"
@@ -389,6 +404,7 @@ def from_batch_error(
         code=status,
         reason=reason,
         violations=check_failures_of(details),
+        details=details_of(details),
     )
 
 
@@ -477,6 +493,7 @@ def from_rpc_error(error: grpc.RpcError | RpcCall, request_id: str = "") -> Slat
         reason=_reason(error),
         request_id=request_id,
         violations=_check_failures(error),
+        details=_details_map(error),
     )
 
 
@@ -499,6 +516,28 @@ def _reason(error: grpc.RpcError | RpcCall) -> str:
         if entry[0] == _DETAILS_KEY and isinstance(entry[1], bytes):
             return reason_of(entry[1])
     return ""
+
+
+def _details_map(error: object) -> dict[str, str]:
+    """`ErrorInfo.metadata` from the call's trailers, or `{}`.
+
+    A third pass over the same trailers, for the reason `_check_failures`
+    gives about being a second: most failures carry no `ErrorInfo` at all, and
+    the two callers that want more than the token want different shapes out of
+    it. Three cheap passes over a blob that is usually absent beat one that
+    returns a tuple every caller has to unpack.
+    """
+    getter = getattr(error, "trailing_metadata", None)
+    if getter is None:
+        return {}
+    try:
+        metadata = getter()
+    except Exception:  # pragma: no cover - defensive, as in `_trailers`
+        return {}
+    for entry in metadata or ():
+        if entry[0] == _DETAILS_KEY and isinstance(entry[1], bytes):
+            return details_of(entry[1])
+    return {}
 
 
 def _check_failures(error: object) -> list[CheckFailure]:

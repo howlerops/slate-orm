@@ -1,0 +1,61 @@
+{
+  "at": "2026-09-29T23:10:08+00:00",
+  "file": "crates/slate-sql/src/sql.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-sql",
+    "--no-fail-fast"
+  ],
+  "commit": "d91c2a2",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "lex goes back to a hand-written pair list missing `<>`",
+      "old": "            let paired = COMPARISONS.iter().any(|one| one.spelling == two);",
+      "new": "            let paired = matches!(two.as_str(), \"<=\" | \">=\" | \"!=\");",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_having_reaches_a_join_and_a_chain",
+        "every_comparison_the_table_declares_parses_as_the_operator_it_names",
+        "every_operator_the_grammar_lists_parses"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "lex pairs every two-character run, not only the table's",
+      "old": "            let paired = COMPARISONS.iter().any(|one| one.spelling == two);",
+      "new": "            let paired = two.chars().count() == 2;",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_disjunction_in_a_having_is_anded_with_what_follows_it",
+        "a_column_the_cte_projected_away_is_not_in_scope",
+        "a_bracketed_having_reaches_a_join_and_a_chain",
+        "a_bracketed_disjunction_is_anded_with_what_follows_it",
+        "a_cte_body_with_no_where_contributes_nothing_to_the_filter",
+        "a_conjunction_on_either_side_of_the_merge_stays_flat",
+        "a_cte_body_may_not_sort_group_or_page",
+        "a_cte_nobody_reads_is_refused"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "a new two-character spelling the table declares is not paired",
+      "old": "    Comparison {\n        spelling: \"<>\",\n        keyword: false,\n        op: \"ne\",\n    },",
+      "new": "    Comparison {\n        spelling: \"=~\",\n        keyword: false,\n        op: \"ne\",\n    },",
+      "verdict": "caught",
+      "caught_by": [
+        "a_bracketed_having_reaches_a_join_and_a_chain",
+        "every_operator_the_grammar_lists_parses"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

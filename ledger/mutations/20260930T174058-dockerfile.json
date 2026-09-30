@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-30T17:40:58+00:00",
+  "file": "Dockerfile",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_workspace.py"
+  ],
+  "commit": "5c26531",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the Dockerfile stops copying a workspace member",
+      "old": "COPY examples/helpdesk examples/helpdesk",
+      "new": "COPY README.md README.md",
+      "verdict": "caught",
+      "caught_by": [
+        "check_workspace: the workspace and the image's copy list disagree:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,6 +1,7 @@
 package slate_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,8 @@ func collectComputed(t *testing.T, session *slate.Session, q slate.Query) map[ui
 	defer stream.Close()
 	out := map[uint64][]slate.Value{}
 	for stream.Next() {
-		// Computed first: Row advances the cursor.
+		// Either order is fine now; `Row` no longer advances. It used to,
+		// and reading `Computed` after it answered about the next row.
 		computed := stream.Computed()
 		row := stream.Row()
 		id, ok := row[eventID].(slate.Uint)
@@ -267,7 +269,8 @@ func TestAJoinsComputedValueReadsBothSides(t *testing.T) {
 
 	seen := 0
 	for stream.Next() {
-		// Computed first: Row advances the cursor.
+		// Either order is fine now; `Row` no longer advances. It used to,
+		// and reading `Computed` after it answered about the next row.
 		computed := stream.Computed()
 		row := stream.Row()
 		if len(computed) != 1 {
@@ -666,4 +669,216 @@ func TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide(t *testing.T) {
 		t.Fatalf("got %d matched and %d unmatched rows, want 4 and 1 (author 3 has no books)",
 			matched, unmatched)
 	}
+}
+
+// A full outer join has *two* unmatched sides, and a computed value must be
+// absent on each.
+//
+// `TestAnInputsComputedValueIsNilOnAnUnmatchedOuterSide` covers a left join,
+// where only the right input can go unmatched — so it establishes the shape in
+// one direction and argues the other from the decoder. That is what
+// `ledger/2026-09-27-the-unmatched-side-computed-nothing-and-nothing-said-so.md`
+// recorded as its residual: a server filling an unmatched *left* input with an
+// empty row rather than no row would pass every test there was, and the
+// client would read a computed value that was never computed.
+//
+// The fixture has one of each: author 3 has no books, and one book has no
+// author. Both inputs compute, so whichever side is missing, there is a value
+// that must not be there.
+func TestBothUnmatchedSidesOfAFullJoinComputeNothing(t *testing.T) {
+	session := library(t)
+
+	b := slate.NewJoin()
+	const authorsAt, booksAt = 0, 1
+	authors := b.Add(slate.JoinInput{
+		Table: "authors",
+		// Ten times the id. `authors` has no other number — it is id, name
+		// and country — and what this input computes does not matter; that it
+		// computes *something* an unmatched left side could wrongly carry
+		// does.
+		Compute: []slate.Scalar{
+			slate.Mul(slate.Ref(slate.At(authorsAt, 0)), slate.Lit(slate.Uint(10))),
+		},
+	})
+	books := b.Add(slate.JoinInput{
+		Table: "books",
+		Type:  slate.Full,
+		On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+		Compute: []slate.Scalar{
+			slate.Mul(
+				slate.Div(slate.Ref(slate.At(booksAt, 3)), slate.Lit(slate.Int(10))),
+				slate.Lit(slate.Int(10)),
+			),
+		},
+	})
+	if authors != authorsAt || books != booksAt {
+		t.Fatalf("inputs are %d and %d, and the computes name %d and %d",
+			authors, books, authorsAt, booksAt)
+	}
+
+	stream, err := session.Join(testContext(t), b.Query())
+	if err != nil {
+		t.Fatalf("joining: %v", err)
+	}
+	defer stream.Close()
+
+	matched, noBooks, noAuthor := 0, 0, 0
+	for stream.Next() {
+		// Both computed values *before* `Row`, which advances the cursor. Read
+		// after it they are the next row's, silently — which is how this test
+		// was first written, and what
+		// `ledger/2026-09-28-a-getter-that-advances-answered-about-the-next-row.md`
+		// is about.
+		ownAuthors := stream.InputComputed(authors)
+		ownBooks := stream.InputComputed(books)
+		row := stream.Row()
+
+		switch {
+		case row[booksAt] == nil:
+			// An author with no books. The *books* side computed nothing.
+			noBooks++
+			if ownBooks != nil {
+				t.Errorf("an unmatched books side computed %v, want nil", ownBooks)
+			}
+			if len(ownAuthors) != 1 {
+				t.Errorf("the present authors side computed %v, want one value", ownAuthors)
+			}
+		case row[authorsAt] == nil:
+			// A book with no author — the direction the left join could not
+			// reach, and the one this test exists for.
+			noAuthor++
+			if ownAuthors != nil {
+				t.Errorf("an unmatched authors side computed %v, want nil", ownAuthors)
+			}
+			if len(ownBooks) != 1 {
+				t.Errorf("the present books side computed %v, want one value", ownBooks)
+			}
+		default:
+			matched++
+			if len(ownAuthors) != 1 || len(ownBooks) != 1 {
+				t.Errorf("a matched row computed %v and %v, want one each", ownAuthors, ownBooks)
+			}
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("draining: %v", err)
+	}
+	// Both unmatched directions must actually occur, or the assertions above
+	// are about rows that were never produced.
+	if matched != 4 || noBooks != 1 || noAuthor != 1 {
+		t.Fatalf("got %d matched, %d without books and %d without an author; want 4, 1 and 1",
+			matched, noBooks, noAuthor)
+	}
+}
+
+// --- the cursor only `Next` moves --------------------------------------------
+
+// A getter is idempotent, and a computed value reads the same either side of it.
+//
+// `Row` used to do the `at++`, so `Computed` after it answered about the *next*
+// row — silently, with a plausible value. Only one of the three getters
+// documented that, and a test written in this file got it wrong the first time
+// it was written. See
+// `ledger/2026-09-28-a-getter-that-advances-answered-about-the-next-row.md`.
+//
+// Both streams are covered because the defect was per-stream: fixing
+// `RowStream` and leaving `JoinStream` would look identical from here.
+func TestOnlyNextMovesTheCursor(t *testing.T) {
+	session := library(t)
+
+	t.Run("a row stream", func(t *testing.T) {
+		stream, err := session.Query(testContext(t), slate.Query{
+			Table:   "books",
+			Compute: []slate.Scalar{slate.Mul(slate.Col(3), slate.Lit(slate.Int(2)))},
+		})
+		if err != nil {
+			t.Fatalf("querying: %v", err)
+		}
+		defer stream.Close()
+
+		rows := 0
+		for stream.Next() {
+			before := stream.Computed()
+			first := stream.Row()
+			again := stream.Row()
+			after := stream.Computed()
+
+			if len(first) == 0 {
+				t.Fatalf("row %d is empty", rows)
+			}
+			if fmt.Sprint(first) != fmt.Sprint(again) {
+				t.Errorf("Row twice gave %v then %v", first, again)
+			}
+			if fmt.Sprint(before) != fmt.Sprint(after) {
+				t.Errorf("Computed either side of Row gave %v then %v", before, after)
+			}
+			// And it is *this* row's value, not a neighbour's: twice the year.
+			year, ok := first[3].(slate.Int)
+			if !ok {
+				t.Fatalf("the year is %v", first[3])
+			}
+			if len(after) != 1 || after[0] != slate.Int(int64(year)*2) {
+				t.Errorf("computed %v for year %v, want %v", after, year, slate.Int(int64(year)*2))
+			}
+			rows++
+		}
+		if err := stream.Err(); err != nil {
+			t.Fatalf("draining: %v", err)
+		}
+		// Five books. A cursor advanced twice per iteration would return three.
+		if rows != 5 {
+			t.Fatalf("saw %d rows, want 5", rows)
+		}
+	})
+
+	t.Run("a join stream", func(t *testing.T) {
+		b := slate.NewJoin()
+		const booksAt = 1
+		authors := b.Add(slate.JoinInput{Table: "authors"})
+		books := b.Add(slate.JoinInput{
+			Table: "books",
+			Type:  slate.Left,
+			On:    []slate.On{{Earlier: slate.At(authors, 0), Own: 1}},
+			Compute: []slate.Scalar{
+				slate.Mul(slate.Ref(slate.At(booksAt, 3)), slate.Lit(slate.Int(2))),
+			},
+		})
+
+		stream, err := session.Join(testContext(t), b.Query())
+		if err != nil {
+			t.Fatalf("joining: %v", err)
+		}
+		defer stream.Close()
+
+		rows := 0
+		for stream.Next() {
+			before := stream.InputComputed(books)
+			first := stream.Row()
+			again := stream.Row()
+			after := stream.InputComputed(books)
+
+			if fmt.Sprint(first) != fmt.Sprint(again) {
+				t.Errorf("Row twice gave %v then %v", first, again)
+			}
+			if fmt.Sprint(before) != fmt.Sprint(after) {
+				t.Errorf("InputComputed either side of Row gave %v then %v", before, after)
+			}
+			if first[booksAt] != nil {
+				year, ok := first[booksAt][3].(slate.Int)
+				if !ok {
+					t.Fatalf("the year is %v", first[booksAt][3])
+				}
+				if len(after) != 1 || after[0] != slate.Int(int64(year)*2) {
+					t.Errorf("computed %v for year %v", after, year)
+				}
+			}
+			rows++
+		}
+		if err := stream.Err(); err != nil {
+			t.Fatalf("draining: %v", err)
+		}
+		if rows != 5 {
+			t.Fatalf("saw %d joined rows, want 5", rows)
+		}
+	})
 }

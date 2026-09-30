@@ -137,9 +137,9 @@ def reason_of(blob: bytes) -> str:
     the server's failure with its own, which is strictly worse than losing a
     token: the caller would no longer know why the call failed at all.
 
-    The `ErrorInfo.metadata` map is not returned *here*. The token alone is
-    what `errors.py` needs to branch below a status code. See
-    `check_failures_of` for the one part of that map this client reads.
+    The `ErrorInfo.metadata` map is not returned *here*, because most callers
+    want the token alone to branch below a status code. `details_of` returns
+    the map, and `check_failures_of` reads the one part of it with a shape.
     """
     # `Any`, because these classes are built at import from a descriptor and
     # `message_factory` types them as the base `Message`: the field names below
@@ -158,6 +158,31 @@ def reason_of(blob: bytes) -> str:
     except Exception:  # pragma: no cover - see the docstring
         return ""
     return ""
+
+
+def details_of(blob: bytes) -> dict[str, str]:
+    """The `ErrorInfo.metadata` map in a blob, or `{}`.
+
+    The server puts a refusal's numbers here as well as in its sentence, so a
+    caller can act on `limit` rather than matching prose for it. Which keys a
+    refusal carries depends on its `reason`; `RELATION_DEPTH_EXCEEDED` carries
+    `limit` and `asked`.
+
+    `{}` on anything that does not parse, for `reason_of`'s reason: replacing
+    the server's failure with this client's would lose why the call failed at
+    all, which is strictly worse than losing a number.
+    """
+    try:
+        status: Any = _Status()
+        status.ParseFromString(blob)
+        for detail in status.details:
+            if detail.type_url == ERROR_INFO_URL:
+                info: Any = _ErrorInfo()
+                info.ParseFromString(detail.value)
+                return {str(k): str(v) for k, v in info.metadata.items()}
+    except Exception:  # pragma: no cover - see the docstring
+        return {}
+    return {}
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-28T18:04:23+00:00",
+  "file": "crates/slate-wasm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "having",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the general join/chain call site drops the nested tree",
+      "old": "                        spec.having_predicate.as_ref(),\n                        &keys,\n                        &aggregates,\n                        &refs,",
+      "new": "                        None,\n                        &keys,\n                        &aggregates,\n                        &refs,",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

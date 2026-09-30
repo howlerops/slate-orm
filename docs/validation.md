@@ -108,6 +108,13 @@ not with a `matches` keyword, and the first draft tested `title matches '…'`,
 got `expected a comparison after the column, found \`matches\``, and concluded
 the feature was missing. The error was about a word that was never the syntax.
 
+That message now ends with *"A regular expression is spelt `~` here, as in
+Postgres — `~*` ignores case, and `!~` and `!~*` negate."* The alternative
+considered at the time was accepting `matches` as a second spelling, which was
+rejected and stays rejected: two ways to write one operator is a grammar with a
+synonym in it. Naming the one spelling costs a reader nothing to learn, and it
+is what turns "accurate and unhelpful" into "accurate".
+
 The grammar comment at the top of `lang/pred.rs` says so in as many words —
 *"Every `Expr` variant is reachable, which is the property that makes this a
 surface syntax for the kernel's predicates rather than a subset of them"* — and
@@ -270,17 +277,30 @@ one language. Every real form eventually wants a key rather than a sentence,
 and a key means the catalog carries an identifier whose meaning lives somewhere
 else entirely. Both options are defensible and neither was worked through here.
 
-**How a client-side rule would evaluate a regular expression.** Not a problem
-today, because a check cannot hold one — but it becomes the sharpest edge in
-recommendation (3) the moment the missing keyword is added. Handing a pattern
-to Python, Go and TypeScript means three regex engines with three subtly
-different dialects evaluating something the server compiled with a fourth, and
-a client that disagrees with the server about whether a row is valid is worse
-than a client that does not try. The conservative answer is to publish only the
-predicates whose client-side evaluation is provably identical — `In`,
-`Compare`, `IsNull` — and keep patterns server-side. That ordering is an
-argument for doing the parser keyword and the publishing work in that order,
-and not together.
+**How a client-side rule would evaluate a regular expression.** This paragraph
+used to open by calling it moot, on the grounds the correction above
+withdrew — the claim that the rule language had no regular expression. The
+correction reached the finding and not the consequence, so the same wrong
+sentence stood twice in one file for ten days. A check has always been able to
+hold a pattern; `~` is how it is spelt. The retired wording is in
+`scripts/retired_claims.json` now, so a third copy fails a check rather than
+being read as current.
+
+It is a problem today, then, for anyone who builds the half of recommendation
+(3) that is not built. Handing a pattern to Python, Go and TypeScript means
+three regex engines with three subtly different dialects evaluating something
+the server compiled with a fourth, and a client that disagrees with the server
+about whether a row is valid is worse than a client that does not try. The
+conservative answer is to *evaluate* only the predicates whose client-side
+result is provably identical — `In`, `Compare`, `IsNull` — and leave patterns
+to the server.
+
+That is about evaluation, not publication, and the two came apart in the
+build: `--print-schema` publishes the source text of **every** check, a regex
+one included, and `codegen.py` generates a type only from the shape it can
+read. So the pattern is already on the client, as data it can show beside a
+field, and the line to hold is that nothing off the server decides whether a
+row passes.
 
 **Whether any of this is wanted.** No user has asked. The gap table lists
 validations because seven other ORMs have them, which is a reason to have an

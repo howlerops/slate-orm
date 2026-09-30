@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-29T05:17:55+00:00",
+  "file": "clients/typescript/src/client.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsx --test test/related.test.ts"
+  ],
+  "commit": "b676a63",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "TS: the flag gates the floor again, as it used to",
+      "old": "    if (this.#watermark === undefined) return undefined;\n    return { atLeast: this.#watermark.toString() };",
+      "new": "    if (!this.#monotonic || this.#watermark === undefined) return undefined;\n    return { atLeast: this.#watermark.toString() };",
+      "verdict": "caught",
+      "caught_by": [
+        "a session that has written sends a freshness floor, monotonic or not"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "TS: a read's view is folded in even with the flag off",
+      "old": "    if (!this.#monotonic) return;\n    if (!servedBy || typeof servedBy !== \"object\") return;",
+      "new": "    if (!servedBy || typeof servedBy !== \"object\") return;",
+      "verdict": "caught",
+      "caught_by": [
+        "a read does not advance a non-monotonic session's watermark"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

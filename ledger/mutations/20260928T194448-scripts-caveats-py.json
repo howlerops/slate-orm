@@ -1,0 +1,106 @@
+{
+  "at": "2026-09-28T19:44:48+00:00",
+  "file": "scripts/caveats.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_caveats.py"
+  ],
+  "commit": "e1ac6fd",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a plain paragraph is skipped again",
+      "old": "            claim = lead.group(1) if lead else MARKER.sub(\"\", unit)",
+      "new": "            if not lead:\n                continue\n            claim = lead.group(1)",
+      "verdict": "caught",
+      "caught_by": [
+        "a paragraph with no bold lead is a caveat too: untriaged: wanted 1, got 0",
+        "a bold-lead caveat and a plain one are both found, and counted once: untriaged: wanted 2, got 1",
+        "a bold caveat keeps its key when plain paragraphs are read too: untriaged: wanted 1, got 0",
+        "a plain withdrawal is not a caveat either: untriaged: wanted 1, got 0",
+        "a blockquoted closure note is not a caveat: untriaged: wanted 1, got 0",
+        "a fenced block of captured output is not a caveat: untriaged: wanted 1, got 0",
+        "a parenthetical closure note is not a caveat: untriaged: wanted 1, got 0",
+        "mid-paragraph emphasis does not become a plain caveat's key: open: wanted 1, got 0; problems: wanted 0, got 1 ['a.md::The runner is not wired in, and that is **the whole point**.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the lead is searched rather than matched",
+      "old": "            lead = LEAD.match(MARKER.sub(\"\", unit))",
+      "new": "            lead = LEAD.search(MARKER.sub(\"\", unit))",
+      "verdict": "caught",
+      "caught_by": [
+        "mid-paragraph emphasis does not become a plain caveat's key: open: wanted 1, got 0; untriaged: wanted 0, got 1; problems: wanted 0, got 1 ['a.md::The runner is not wired in, and that is **the whole point**.']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a blockquote is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:~~|```|\\*?\\(Closed)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a blockquoted closure note is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a fenced block is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:~~|>|\\*?\\(Closed)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a fenced block of captured output is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a parenthetical closure is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```)\")",
+      "verdict": "caught",
+      "caught_by": [
+        "a parenthetical closure note is not a caveat: untriaged: wanted 1, got 2"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a struck paragraph is no longer an annotation",
+      "old": "ANNOTATION = re.compile(r\"\\A(?:~~|>|```|\\*?\\(Closed)\")",
+      "new": "ANNOTATION = re.compile(r\"\\A(?:>|```|\\*?\\(Closed)\")",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a tight list is read as one caveat rather than as its items",
+      "old": "            found.extend(part.strip() for part in ITEM.split(stripped) if part.strip())",
+      "new": "            found.append(stripped)",
+      "verdict": "caught",
+      "caught_by": [
+        "each item of a tight list is its own caveat: untriaged: wanted 3, got 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the list marker is left on, so the key starts with the dash",
+      "old": "            claim = lead.group(1) if lead else MARKER.sub(\"\", unit)",
+      "new": "            claim = lead.group(1) if lead else unit",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

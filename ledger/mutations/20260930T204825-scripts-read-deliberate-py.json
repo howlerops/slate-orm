@@ -1,0 +1,33 @@
+{
+  "at": "2026-09-30T20:48:25+00:00",
+  "file": "scripts/read_deliberate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_read_deliberate.py"
+  ],
+  "commit": "8767159",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the later-entry signal stops skipping the audit entry that quotes the claim",
+      "old": "if name <= entry or quoted in plain(body):",
+      "new": "if name <= entry:",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the signal widens its cut from three to ten",
+      "old": "return [f\"{n} ({g}/{len(rare)})\" for g, n in hits[:3]]",
+      "new": "return [f\"{n} ({g}/{len(rare)})\" for g, n in hits[:10]]",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

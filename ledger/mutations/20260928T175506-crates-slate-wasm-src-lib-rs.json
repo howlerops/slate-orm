@@ -1,0 +1,18 @@
+{
+  "at": "2026-09-28T17:55:06+00:00",
+  "file": "crates/slate-wasm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "having",
+    "--no-fail-fast"
+  ],
+  "commit": "b6e2c0d",
+  "python": "3.11.15",
+  "outcome": "interrupted",
+  "cases": []
+}

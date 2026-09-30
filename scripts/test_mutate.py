@@ -592,6 +592,53 @@ else:
 '''
 
 
+def case_help_lists_every_adapter() -> bool:
+    """`--help` names every `scripts/mutate_*.py` beside it, and nothing else.
+
+    Same rule as the dialect list below and for the same reason, one level out.
+    `mutate_guard.py` existed, worked, and appeared in nothing this script
+    printed — recorded in
+    `ledger/2026-09-29-the-dialect-mutate-py-was-missing.md` as the staleness
+    `mutate.py`'s docstring argues against, in the one place it could not fix
+    itself.
+
+    Both directions again. A help text naming an adapter that is not there
+    sends the reader to a file that does not exist, which is the same failure
+    walking the other way.
+    """
+    name = "--help lists exactly the adapters beside it, each with a real dialect"
+    spelled = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "mutate.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    rows = dict(re.findall(r"^    (mutate_\w+\.py)\s+(\S+)", spelled, re.M))
+    beside = {path.name for path in (ROOT / "scripts").glob("mutate_*.py")}
+    said = []
+    if not beside:
+        said.append("scripts/ holds no adapters at all; the glob is not matching")
+    if set(rows) != beside:
+        said.append(f"help lists {sorted(rows)}, scripts/ holds {sorted(beside)}")
+    # And the dialect each reports is one the table holds. A declared name is
+    # only worth printing if it resolves: `--help` naming a dialect that does
+    # not exist sends the next reader somewhere worse than silence did.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import mutate
+
+    for adapter, dialect in sorted(rows.items()):
+        if dialect not in mutate.DIALECTS:
+            said.append(
+                f"{adapter} reports dialect {dialect!r}, which is not one of "
+                f"{sorted(mutate.DIALECTS)}"
+            )
+    ok = not said
+    print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+    for one in said:
+        print(f"        {one}")
+    return ok
+
+
 def case_help_lists_every_dialect() -> bool:
     """`--help` names every dialect the table holds, and nothing it does not.
 
@@ -1149,6 +1196,7 @@ def main() -> int:
         case_fresh_bytecode(),
         *case_recovers_from_a_kill(),
         case_help_lists_every_dialect(),
+        case_help_lists_every_adapter(),
         *case_no_dialect_reads_a_clean_run_as_a_failure(),
         *case_every_dialect_reads_its_own_runner(),
         case_every_dialect_has_a_sample(),
