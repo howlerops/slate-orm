@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-30T17:39:46+00:00",
+  "file": "Dockerfile",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "-c",
+    "import subprocess; r = subprocess.run(['python3', 'scripts/check_workspace.py']); print('1 passed, 0 failed' if r.returncode == 0 else '0 passed, 1 failed')"
+  ],
+  "commit": "5c26531",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the Dockerfile stops copying a workspace member",
+      "old": "COPY examples/helpdesk examples/helpdesk",
+      "new": "COPY README.md README.md",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -33,6 +33,15 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 COPY clients/python/testserver clients/python/testserver
+# And every other workspace member, manifest included. `cargo` resolves the
+# *whole* workspace before it builds one package, so a member this image does
+# not copy is `failed to load manifest for workspace member` and a red job on
+# a change that touched nothing in `crates/`. That is not hypothetical: adding
+# `examples/helpdesk` to `members` turned this job red while the other
+# twenty-two stayed green, because it is the only one that builds from a
+# partial copy of the tree. `scripts/check_workspace.py` now holds this list
+# to `members` so the next one is caught before the push.
+COPY examples/helpdesk examples/helpdesk
 
 RUN cargo build --release --locked -p slate-serverd --bin slate-serverd \
     && strip target/release/slate-serverd

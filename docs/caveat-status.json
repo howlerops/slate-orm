@@ -15419,6 +15419,27 @@
       "entry": "2026-09-30-the-helpdesk-on-slatedb.md",
       "key": "Nothing asserts which plan runs.",
       "verdict": "open"
+    },
+    {
+      "entry": "2026-09-30-the-image-that-copies-part-of-the-tree.md",
+      "key": "It does not read `.dockerignore`.",
+      "verdict": "deliberate",
+      "by": "this entry: nothing in .dockerignore currently excludes a directory holding a workspace member, and a second parser for a second file is cost against a failure nobody has had. The failure it would catch is the one CI already catches loudly",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-image-that-copies-part-of-the-tree.md",
+      "key": "It checks one Dockerfile, named by path.",
+      "verdict": "deliberate",
+      "by": "this entry: the absence of the named Dockerfile is itself a refusal, with a message saying which of the two things happened - the never-fires half made loud rather than left silent. Discovering images instead would make the rule fire on any Dockerfile in the tree, including ones that build nothing cargo reads",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-image-that-copies-part-of-the-tree.md",
+      "key": "It says nothing about what the image copies that it need not",
+      "verdict": "deliberate",
+      "by": "this entry: a COPY no build reads is a slow image, not a broken one, and the guard exists for the failure that is silent. The other direction fails loudly in CI the moment it happens",
+      "reviewed": "2026-09-30"
     }
   ]
 }

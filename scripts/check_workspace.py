@@ -12,6 +12,21 @@ So this refuses a `Cargo.toml` that declares a package the root workspace does
 not list, and it refuses one that declares a `[workspace]` of its own — the
 detachment marker, which is how the testserver got out in the first place.
 
+# And the Dockerfile's copy list
+
+A third rule, added after the failure it describes. `Dockerfile` copies part
+of the tree and runs `cargo build -p slate-serverd` in it, and cargo resolves
+the **whole** workspace before it builds one package — so a member the image
+does not copy is `failed to load manifest for workspace member` and a red
+`container image` job. Adding `examples/helpdesk` to `members` did exactly
+that: twenty-two jobs green and one red, on a change that touched nothing the
+image contains.
+
+Nothing local reproduces it, because every other command runs in a complete
+checkout. That is the shape this file already exists for — a list maintained
+by hand, in a place where being wrong is silent — so the rule is here rather
+than in a comment in the Dockerfile.
+
 Run it directly, or let CI: `python3 scripts/check_workspace.py`.
 """
 
@@ -49,9 +64,52 @@ def manifests() -> list[Path]:
     return sorted(found)
 
 
+def copied(dockerfile: Path) -> list[Path]:
+    """The build context paths a `Dockerfile` copies into the image.
+
+    `COPY --from=<stage>` is skipped: it copies out of an earlier stage rather
+    than out of the tree, so it says nothing about what the context needs. The
+    destination argument is dropped — only the sources matter here.
+    """
+    out: list[Path] = []
+    for line in dockerfile.read_text().splitlines():
+        words = line.split()
+        if not words or words[0].upper() != "COPY":
+            continue
+        words = [w for w in words[1:] if not w.startswith("--")]
+        # The last word is the destination. A `COPY a b c dst` copies three.
+        for source in words[:-1]:
+            out.append((ROOT / source).resolve())
+    return out
+
+
 def main() -> int:
     listed = members()
     problems: list[str] = []
+
+    dockerfile = ROOT / "Dockerfile"
+    if not dockerfile.exists():
+        # The never-fires case: a renamed or deleted Dockerfile would make the
+        # rule below check nothing and say nothing, which is the failure this
+        # whole file is about one level up.
+        problems.append(
+            "there is no Dockerfile, so the copy rule below checks nothing. "
+            "Either it moved — point this at it — or the image is gone and "
+            "the rule should go with it."
+        )
+    else:
+        sources = copied(dockerfile)
+        for member in sorted(listed):
+            if any(member == one or one in member.parents for one in sources):
+                continue
+            problems.append(
+                f"the Dockerfile copies no path containing "
+                f"{member.relative_to(ROOT)}, which the root workspace lists "
+                f"in `members`. `cargo` resolves the whole workspace before it "
+                f"builds one package, so the image's `cargo build` will fail "
+                f"with `failed to load manifest for workspace member`. Add a "
+                f"`COPY` for it, or take it out of `members`."
+            )
 
     for manifest in manifests():
         where = manifest.parent.resolve()
@@ -86,7 +144,7 @@ def main() -> int:
             )
 
     if problems:
-        print("crates outside the workspace:\n", file=sys.stderr)
+        print("the workspace and the image's copy list disagree:\n", file=sys.stderr)
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         print(
@@ -96,7 +154,10 @@ def main() -> int:
         )
         return 1
 
-    print(f"{len(manifests())} crate(s), all members of the root workspace")
+    print(
+        f"{len(manifests())} crate(s), all members of the root workspace, and "
+        f"all {len(listed)} member(s) inside a path the Dockerfile copies"
+    )
     return 0
 
 
