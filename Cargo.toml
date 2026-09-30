@@ -13,6 +13,12 @@ members = [
     "crates/slate-headbench",
     "crates/slate-sql",
     "crates/slate-wasm",
+    # An example application rather than part of the database: a small
+    # multi-tenant helpdesk written against `slate-orm` the way somebody
+    # building on it would write one. A member, for the reason the testserver
+    # note below gives at length — a crate outside the workspace is a crate
+    # `cargo test --workspace` never builds.
+    "examples/helpdesk",
     # Not under `crates/`, because it is not part of the database: it is the
     # Python client's test fixture, and it lives beside the tests that need it.
     #

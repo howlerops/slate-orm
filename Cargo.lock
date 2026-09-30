@@ -3796,6 +3796,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "slate-helpdesk"
+version = "0.0.1"
+dependencies = [
+ "slate-kernel",
+ "slate-orm",
+ "slate-schema",
+ "thiserror 2.0.20",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "slate-kernel"
 version = "0.0.1"
 dependencies = [

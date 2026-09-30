@@ -15360,6 +15360,30 @@
       "verdict": "deliberate",
       "by": "a guard would have to decide whether a sentence of English is still true of the tree, which is the prose parsing every guard in scripts/ declines. The habit is the mechanism and CLAUDE.md states it; this entry is the record that it ran",
       "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-an-application-written-against-the-rust-surface.md",
+      "key": "It is one slice.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-30-an-application-written-against-the-rust-surface.md",
+      "key": "The security catalog's two policies are `Expr::True`.",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-30-an-application-written-against-the-rust-surface.md",
+      "key": "Three findings are not an audit of the derive.",
+      "verdict": "deliberate",
+      "by": "this entry: three ordinary requirements hitting the surface is the exercise, and what they hit is what an application would hit. Enumerating what the derive cannot say means reading crates/slate-derive rather than using it, which finds what the macro omits and not what an application misses - a different exercise, rejected in the entry",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-an-application-written-against-the-rust-surface.md",
+      "key": "Nothing here is measured.",
+      "verdict": "deliberate",
+      "by": "this entry: the crate is a correctness exercise against the Rust surface. Four benchmark crates measure speed and CI runs them at --smoke; a ninth timing harness with no baseline and no prior run would report numbers nobody could compare against anything",
+      "reviewed": "2026-09-30"
     }
   ]
 }
