@@ -12676,9 +12676,9 @@
     {
       "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
       "key": "Nothing checks that the never-fires halves still fire.",
-      "verdict": "open",
-      "by": "the seeded fixture is now a precondition every synthetic case inherits, so a case could satisfy it wrongly and the never-fires halves would go untested without anything saying so. scripts/test_check_toolchain_pins.py has cases for both halves today and nothing holds them to existing.",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/test_check_toolchain_pins.py derives the halves from an empty tree and requires a case above to be about each; see ledger/2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md",
+      "reviewed": "2026-09-30"
     },
     {
       "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
@@ -12956,6 +12956,27 @@
       "verdict": "open",
       "by": "the sibling caveat of the same entry, untouched here: crates/slate-wasm/tests/sql.rs matches on the operator and panics on one it has no spelling for, pinning the two at run time rather than at compile time. Tracked on the entry that recorded it, 2026-09-29-the-parsers-vocabulary-is-the-parser.md",
       "checked": "2026-09-29"
+    },
+    {
+      "entry": "2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md",
+      "key": "`NO_PINNED_WORKFLOW` is targeted by two cases, so deleting o",
+      "verdict": "deliberate",
+      "by": "the claim is \"at least one case is about each half\", not \"exactly one\", and the check tests what the claim says",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md",
+      "key": "Substring matching is the whole harness's idiom: a case's ex",
+      "verdict": "open",
+      "by": "the fourth mutation in this entry demonstrates it: broadening a case's expectation to `go install` left every check green. It is the harness's idiom throughout the file, not something this change introduced",
+      "checked": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-never-fires-halves-are-a-never-fires-hazard.md",
+      "key": "Nothing holds the guard's *forward* rule \u2014 the per-installer",
+      "verdict": "deliberate",
+      "by": "ten cases exercise the per-installer report, so it is not a branch nobody reaches; the halves were covered because a caveat recorded that they were not",
+      "reviewed": "2026-09-30"
     }
   ]
 }

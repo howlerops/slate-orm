@@ -1,0 +1,38 @@
+{
+  "at": "2026-09-30T01:04:34+00:00",
+  "file": "scripts/test_check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "c56af77",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the only case targeting the go-install half is deleted",
+      "old": "    (\n        # And the one that matters most: if `GO_INSTALL` stops matching, every\n        # installer is clean by vacuity.\n        \"a tree with no pinned `go install` at all is reported, not passed over\",\n        {\".github/workflows/ci.yml\": PINNED, \"scripts/gen.py\": UNPINNED},\n        \"nothing in this repository runs `go install\",\n    ),\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a case above is about 'nothing in this repository runs `go install <pkg>@<version>`'"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a case still named but no longer about that half",
+      "old": "        \"nothing in this repository runs `go install\",",
+      "new": "        \"is reported\",",
+      "verdict": "caught",
+      "caught_by": [
+        "a tree with no pinned `go install` at all is reported, not passed over",
+        "a case above is about 'nothing in this repository runs `go install <pkg>@<version>`'"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

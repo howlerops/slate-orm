@@ -70,6 +70,18 @@ def run(files: dict[str, str | None]) -> list[str]:
         return guard.problems(root)
 
 
+def never_fires() -> list[str]:
+    """The guard's never-fires reports, read off an empty tree, not listed here.
+
+    A tree with nothing in it violates every precondition those halves guard,
+    so it names all of them — which makes it the roster, and makes a half added
+    later join without anyone remembering to. Listing them in a constant, here
+    or in the guard, would have been the obvious answer and rots exactly the
+    way the thing it is checking for rots.
+    """
+    return run({"README.md": "nothing here\n"})
+
+
 #: name, the tree, the text the report must carry ("" means clean).
 CASES: list[tuple[str, dict[str, str | None], str]] = [
     (
@@ -230,17 +242,50 @@ CASES: list[tuple[str, dict[str, str | None], str]] = [
 def main() -> int:
     failed = 0
     ran = 0
+    # What each case asked for and what it got, so the checks after the loop
+    # can ask which halves a case is *about* rather than which case names are
+    # still spelled the way someone remembers.
+    asked: list[tuple[str, list[str]]] = []
     for name, files, wanted in CASES:
         try:
             found = run(files)
         except Exception as raised:  # noqa: BLE001 - a crash is this case failing
             found = [f"raised {raised!r} instead of reporting a problem"]
+        asked.append((wanted, found))
         ok = (not found) if not wanted else any(wanted in one for one in found)
         failed += not ok
         ran += 1
         print(f"{'ok  ' if ok else 'FAIL'}  {name}")
         if not ok:
             print(f"        expected {wanted!r}, got {found}")
+
+    # The never-fires halves are themselves a never-fires hazard, which is the
+    # caveat in `ledger/2026-09-29-the-skip-list-that-excused-nothing.md`: two
+    # cases above covered them and nothing held those cases to existing, while
+    # the seeded fixture is a precondition every case inherits, so a case could
+    # satisfy it wrongly and a half would stop firing with nothing saying so.
+    # A case counts only if it both *targets* the half — its expectation is
+    # text from that report and not from another — and observed it, so a case
+    # edited into asking for something else stops counting rather than keeps
+    # covering by name.
+    halves = never_fires()
+    # The regress stops here. Deriving the roster from a tree rather than a
+    # constant moves the hazard up one level: a `never_fires` that came back
+    # empty would make every check below vacuously true, which is the failure
+    # this whole block exists to catch. That it is non-empty is the one thing
+    # about the roster statable without maintaining the count by hand.
+    failed += not halves
+    ran += 1
+    print(f"{'ok  ' if halves else 'FAIL'}  an empty tree names at least one half")
+
+    for text in halves:
+        ok = any(want and want in text and text in got for want, got in asked)
+        failed += not ok
+        ran += 1
+        half = text.split(",")[0]
+        print(f"{'ok  ' if ok else 'FAIL'}  a case above is about {half!r}")
+        if not ok:
+            print("        no case expects that report, or none made it fire")
 
     # The real tree, last, so a failure here reads as "the tree drifted"
     # rather than as a broken test.

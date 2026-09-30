@@ -803,6 +803,18 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "let paired = COMPARISONS.iter().any(",
      "crates/slate-sql/src/sql.rs",
  ),
+
+ # --- the never-fires halves are a never-fires hazard, 2026-09-30 -----------
+ #
+ # The GOTOOLCHAIN guard's two never-fires halves had cases and nothing held
+ # the cases to existing. The needle is the derivation, not a case name and
+ # not a printed line: a roster listed in a constant is exactly what this
+ # closure rejected, so the function that reads the halves off an empty tree
+ # is the thing whose absence means the closure has come undone.
+ "never-fires-halves-derived": (
+     "def never_fires() -> list[str]:",
+     "scripts/test_check_toolchain_pins.py",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -1000,6 +1012,9 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ('2026-09-29-the-skip-list-that-excused-nothing.md',
+     'Nothing checks that the never-fires halves still fire.'):
+        'never-fires-halves-derived',
     ('2026-09-29-the-parsers-vocabulary-is-the-parser.md',
      'Nothing checks that `lex` pairs exactly the symbols `COMPARI'):
         'lex-reads-comparisons',
