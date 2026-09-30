@@ -111,6 +111,8 @@ caveat-citations|.|python3 scripts/check_caveat_citations.py
 caveat-citations-guard|.|python3 scripts/test_check_caveat_citations.py
 closed-caveats|.|python3 scripts/check_closed_caveats.py
 closed-caveats-guard|.|python3 scripts/test_check_closed_caveats.py
+draws|.|python3 scripts/check_draws.py
+draws-guard|.|python3 scripts/test_check_draws.py
 none-last|.|python3 scripts/check_none_last.py
 none-last-guard|.|python3 scripts/test_check_none_last.py
 guard-scope|.|python3 scripts/check_guard_scope.py

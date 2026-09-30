@@ -15,6 +15,7 @@ triaged caveat to untriaged where nobody looks at it again.
 from __future__ import annotations
 
 import json
+import random
 import sys
 import tempfile
 from pathlib import Path
@@ -372,6 +373,9 @@ def main() -> int:
                         "verdict": "deliberate",
                         "by": "the entry argues it",
                         "checked": "2026-09-30",
+                        # Which draw it came out of, required since the frame
+                        # got a guard: see the draw cases at the end.
+                        "draw": "2026-09-30-329",
                     }
                 ]
             ),
@@ -1282,6 +1286,92 @@ def main() -> int:
             ),
         },
         {"open": 1, "untriaged": 1},
+        0,
+    )
+
+    # --- the draw, which is what holds a read to the frame ----------------
+    #
+    # `unchecked` above is a worklist, and a worklist nothing enforces is a
+    # suggestion: a pass could sample the whole bucket, stamp thirty rows and
+    # move the number by thirty while pooling nothing with the next pass.
+    # `frame` and `draw` are what make "this came out of `--unchecked`"
+    # checkable, so the two rules worth pinning are that the frame *is* the
+    # unchecked list and that a draw reproduces from its seed.
+    def draw_case(name: str, ok: bool, detail: str = "") -> None:
+        print(f"{'ok  ' if ok else 'FAIL'}  {name}")
+        if not ok and detail:
+            print(f"        {detail}")
+        RESULTS.append(ok)
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        tree(
+            root,
+            {
+                "ledger/a.md": ENTRY,
+                "docs/caveat-status.json": status(
+                    [dict(both_deliberate[0], checked="2026-09-30", draw="d"),
+                     both_deliberate[1]]
+                ),
+            },
+        )
+        got = guard.frame(root)
+        draw_case(
+            "the frame is the unchecked rows and only those",
+            got == ["a.md::It does not do the second thing."],
+            f"got {got}",
+        )
+        record = guard.draw(1, 11, root, today="2026-09-30")
+        draw_case(
+            "a draw names a row out of the frame, never out of the bucket",
+            record["keys"] == got and record["frame"] == 1,
+            f"got {record}",
+        )
+        # The reproduction the guard checks. Written out here rather than
+        # imported from `check_draws.py` so the two cannot agree on a wrong
+        # answer: if `draw` changed how it samples, this fails and that one
+        # would not.
+        again = random.Random(11).sample(range(1), 1)
+        draw_case(
+            "the indices come back from the seed, which is what a guard checks",
+            record["indices"] == again,
+            f"{record['indices']} against {again}",
+        )
+        draw_case(
+            "the filename a stamp points at is the date and the seed",
+            guard.draw_path(record, root).name == "2026-09-30-11.json",
+            guard.draw_path(record, root).name,
+        )
+        try:
+            guard.draw(9, 11, root)
+            drew = True
+        except ValueError:
+            drew = False
+        draw_case("a draw wider than the frame is refused, not padded", not drew)
+
+    # And the rule in `report`: a read against the tree says which draw it
+    # came from. Without it the two kinds of stamp are indistinguishable.
+    case(
+        "a checked deliberate verdict naming no draw is a problem",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [dict(both_deliberate[0], checked="2026-09-30"), both_deliberate[1]]
+            ),
+        },
+        {"deliberate": 2},
+        1,
+    )
+    case(
+        "and one that names a draw is not",
+        {
+            "ledger/a.md": ENTRY,
+            "docs/caveat-status.json": status(
+                [dict(both_deliberate[0], checked="2026-09-30", draw="d"),
+                 both_deliberate[1]]
+            ),
+        },
+        {"deliberate": 2},
         0,
     )
 

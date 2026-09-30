@@ -1,0 +1,17 @@
+{
+  "at": "2026-09-30T15:30:52+00:00",
+  "file": "clients/go/slate/harness_test.go",
+  "dialect": "go",
+  "command": [
+    "go",
+    "test",
+    "./slate",
+    "-run",
+    "Prebuilt",
+    "-count=1"
+  ],
+  "commit": "db5a316",
+  "python": "3.11.15",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

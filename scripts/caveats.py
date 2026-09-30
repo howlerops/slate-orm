@@ -204,6 +204,33 @@ RESIDUAL = "residual"
 #: than to forbid the stamp. See
 #: `ledger/2026-09-30-a-sample-that-pools-with-the-next-one.md`.
 CHECKED, REVIEWED = "checked", "reviewed"
+
+#: Which draw a `checked` stamp came out of.
+#:
+#: `ledger/2026-09-30-a-sample-that-pools-with-the-next-one.md` recorded the
+#: hole this fills, and it is the one that makes the frame worth having:
+#:
+#:   > **Nothing checks that a draw actually came from `--unchecked`.** The
+#:   > next pass could sample the whole bucket again and stamp what it read;
+#:   > the count would move by the same amount while pooling nothing.
+#:
+#: A stamp with no draw behind it is indistinguishable from one with, and the
+#: two mean different things: rows drawn from the frame never repeat, rows
+#: drawn from the bucket repeat at whatever rate the bucket's size implies. So
+#: the stamp names the draw, the draw is a file in `ledger/draws/`, and
+#: `scripts/check_draws.py` reproduces it from its seed. What that buys is
+#: not honesty — a determined hand can still write both halves — but that the
+#: *accidental* version, a pass that samples the bucket because it forgot the
+#: frame exists, cannot produce a record that reproduces.
+DRAW = "draw"
+
+#: Where a draw records itself.
+#:
+#: `ledger/`, not `docs/`, and not inside `caveat-status.json`. A draw is a
+#: dated event, which is what the ledger is for; and a record living inside
+#: the file it is evidence *about* could be written by the same edit that
+#: writes the stamps, which is the loop this exists to break.
+DRAWS = "ledger/draws"
 #: How much of a bullet keys its verdict. Long enough that two caveats in one
 #: entry do not collide, short enough that fixing a typo later in the sentence
 #: does not orphan the verdict.
@@ -394,6 +421,19 @@ def report(root: Path = ROOT) -> tuple[dict[str, int], list[str], list[str]]:
         # this list — it is a live assertion about how things are, `--unchecked`
         # reads its `checked` date, and 246 reads had nowhere to record
         # themselves while it was.
+        # A read against the tree must say which draw it came out of. Without
+        # it the stamp cannot be told from one a pass wrote after sampling the
+        # whole bucket, and those two mean different things — the first never
+        # repeats a row and the second repeats at the bucket's rate. The file
+        # the name points at is checked by `scripts/check_draws.py`; this only
+        # refuses the stamp with nothing behind it at all.
+        if verdict == "deliberate" and row.get(CHECKED) and not row.get(DRAW):
+            problems.append(
+                f"{c['entry']}: `{key(c['claim'])}` is deliberate and carries "
+                f"`{CHECKED}` with no `{DRAW}`. A read against the tree names "
+                f"the draw it came out of, so a pass that sampled the whole "
+                f"bucket cannot be mistaken for one that drew from the frame."
+            )
         if verdict in ("closed", "moment") and row.get(CHECKED):
             problems.append(
                 f"{c['entry']}: `{key(c['claim'])}` is {verdict} and carries "
@@ -593,6 +633,63 @@ def unchecked(days: int | None, root: Path = ROOT, today: str | None = None) -> 
     return out
 
 
+def frame(root: Path = ROOT) -> list[str]:
+    """The keys `--unchecked` lists, in the order `caveats()` yields them.
+
+    A deterministic order is the whole of what makes a draw reproducible: the
+    seed picks *indices*, and an index means nothing without the order it
+    indexes into. `caveats()` walks `sorted(ledger.glob("*.md"))` and reads
+    each section top to bottom, so the order is the tree's and not the
+    filesystem's.
+    """
+    status = load(root)
+    out = []
+    for c in caveats(root):
+        k = f"{c['entry']}::{key(c['claim'])}"
+        row = status.get(k, {})
+        if row.get("verdict") == "deliberate" and not row.get(CHECKED):
+            out.append(k)
+    return out
+
+
+def draw(count: int, seed: int, root: Path = ROOT, today: str | None = None) -> dict:
+    """Draw `count` rows from the unchecked frame, as a record that reproduces.
+
+    The record carries the seed, the frame's size and digest, the indices and
+    the keys. `scripts/check_draws.py` re-runs the sample from the seed and
+    the size and refuses a record whose indices do not come back — which is
+    what makes "this came out of `--unchecked`" a checkable statement rather
+    than a promise in an entry.
+
+    The digest is over the frame's *contents*, and it is recorded rather than
+    checked: the frame shrinks as rows are stamped, so a record written today
+    cannot be re-derived tomorrow. What it is for is the opposite direction —
+    two records claiming the same frame must agree about what was in it.
+    """
+    import hashlib
+    import random
+    from datetime import date
+
+    keys = frame(root)
+    if count > len(keys):
+        raise ValueError(f"asked for {count} rows from a frame of {len(keys)}")
+    indices = random.Random(seed).sample(range(len(keys)), count)
+    return {
+        "drawn": today or date.today().isoformat(),
+        "seed": seed,
+        "frame": len(keys),
+        "digest": hashlib.sha256("\n".join(keys).encode()).hexdigest(),
+        "indices": indices,
+        "keys": [keys[i] for i in indices],
+    }
+
+
+def draw_path(record: dict, root: Path = ROOT) -> Path:
+    """Where a draw record belongs. One file per draw, never a shared log —
+    the same reason `ledger/README.md` gives for entries."""
+    return root / DRAWS / f"{record['drawn']}-{record['seed']}.json"
+
+
 def main(root: Path = ROOT) -> int:
     argv = sys.argv[1:]
     if argv and argv[0] == "--unread":
@@ -613,6 +710,30 @@ def main(root: Path = ROOT) -> int:
             print(line)
         since = f" in {days} days" if days is not None else " against the tree, ever"
         print(f"{len(lines)} deliberate and not read{since}")
+        return 0
+    if argv and argv[0] == "--draw":
+        # A seed is required, not generated. A generated one would be printed
+        # and then have to be copied into the record by hand, which is the
+        # step that goes wrong; asking for it makes the reproducible thing the
+        # only thing you can do.
+        if len(argv) < 3:
+            print("usage: caveats.py --draw <count> <seed>")
+            return 2
+        record = draw(int(argv[1]), int(argv[2]), root)
+        path = draw_path(record, root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            print(f"{path.relative_to(root)} already exists; pick another seed")
+            return 2
+        path.write_text(json.dumps(record, indent=1) + "\n", encoding="utf-8")
+        status = load(root)
+        for k in record["keys"]:
+            print(f"{k}\n    by: {status.get(k, {}).get('by', '')}")
+        print(
+            f"\n{len(record['keys'])} drawn from a frame of {record['frame']}, "
+            f"recorded in {path.relative_to(root)}. Stamp each row you read "
+            f"with `{CHECKED}` and `\"{DRAW}\": \"{path.stem}\"`."
+        )
         return 0
     if argv and argv[0] == "--residual":
         lines = residuals(root)

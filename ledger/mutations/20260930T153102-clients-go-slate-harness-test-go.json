@@ -1,0 +1,32 @@
+{
+  "at": "2026-09-30T15:31:02+00:00",
+  "file": "clients/go/slate/harness_test.go",
+  "dialect": "go",
+  "command": [
+    "go",
+    "test",
+    "-C",
+    "clients/go",
+    "./slate",
+    "-run",
+    "Prebuilt",
+    "-count=1"
+  ],
+  "commit": "db5a316",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the Go harness stats the binary and forgets to refuse a stale one",
+      "old": "\tif err := refuseIfStale(named, info); err != nil {\n\t\treturn \"\", err\n\t}",
+      "new": "\t_ = info",
+      "verdict": "caught",
+      "caught_by": [
+        "TestAStalePrebuiltBinaryIsRefused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

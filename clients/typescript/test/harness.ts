@@ -72,7 +72,10 @@ function repositoryRoot(): string {
   }
 }
 
-const ROOT = repositoryRoot();
+/** Exported so a test does not recompute it from a relative depth, which
+ * the comment above `repositoryRoot` warns is right from one of `test/` and
+ * `dist-test/test/` and silently wrong from the other. */
+export const ROOT = repositoryRoot();
 
 let built = false;
 
@@ -89,7 +92,16 @@ let built = false;
  * back to `cargo` there would quietly test a different binary from the one the
  * caller named.
  */
-function binary(): string {
+/**
+ * Exported so that the refusal below can be *driven*, not just read.
+ *
+ * `scripts/test_prebuilt.py` holds every harness that takes `SLATE_SERVERD`
+ * to refusing a stale one, and until this was exported it could only see that
+ * this file mentions `refuseIfStale` — a harness that defines the function and
+ * never calls it passes that. `test/prebuilt.test.ts` calls this with a
+ * deliberately stale binary, which is the same path `start()` takes.
+ */
+export function binary(): string {
   const named = process.env["SLATE_SERVERD"];
   if (named) {
     if (!existsSync(named)) throw new Error(`SLATE_SERVERD=${named} does not exist`);

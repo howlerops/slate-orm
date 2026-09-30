@@ -1,0 +1,27 @@
+{
+  "at": "2026-09-30T15:31:11+00:00",
+  "file": "clients/typescript/test/harness.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json && node --test dist-test/test/prebuilt.test.js"
+  ],
+  "commit": "db5a316",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the TypeScript harness defines the refusal and never calls it",
+      "old": "    refuseIfStale(named);",
+      "new": "    void refuseIfStale;",
+      "verdict": "caught",
+      "caught_by": [
+        "a prebuilt binary older than the source is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

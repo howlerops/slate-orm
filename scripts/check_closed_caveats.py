@@ -365,6 +365,15 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # The roster is a second witness for the same closure's wider form, and a
  # separate one because it can go while the refusal stays.
  "stale-binary-roster": ("MUST_REFUSE", "scripts/test_prebuilt.py"),
+ # The roster's *drive*, which is a third witness and not the same one: the
+ # roster can be there and grep, which is what it did until the drives landed.
+ "stale-binary-driven": (
+     "refuses a stale prebuilt binary when driven",
+     "scripts/test_prebuilt.py",
+ ),
+ # The draw's provenance. The needle is the reproduction, not the file: a
+ # `check_draws.py` that stopped re-running the sample would still be there.
+ "draw-reproduces": ("does not reproduce", "scripts/check_draws.py"),
  "stored-schema": ("schema", "crates/slate-kernel/src/migrate.rs"),
  "table-provenance": (None, "scripts/check_table_provenance.py"),
  "through-wire": ("through", "crates/slate-server/proto/slate/v1/records.proto"),
@@ -1069,6 +1078,8 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    ("2026-09-30-a-sample-that-pools-with-the-next-one.md", "Nothing checks that a draw actually came from `--unchecked`."): "draw-reproduces",
+    ("2026-09-30-the-exemptions-i-wrote-without-reading.md", "The roster cannot tell whether a file's refusal works"): "stale-binary-driven",
     ('2026-09-30-the-exemptions-i-wrote-without-reading.md',
      '`ledger/mutations/20260930T040901-crates-slate-server-src-st'):
         'details-agreed-on-nothing',
