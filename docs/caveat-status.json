@@ -15423,8 +15423,8 @@
     {
       "entry": "2026-09-30-the-image-that-copies-part-of-the-tree.md",
       "key": "It does not read `.dockerignore`.",
-      "verdict": "deliberate",
-      "by": "this entry: nothing in .dockerignore currently excludes a directory holding a workspace member, and a second parser for a second file is cost against a failure nobody has had. The failure it would catch is the one CI already catches loudly",
+      "verdict": "closed",
+      "by": "2026-09-30-the-caveat-that-came-true-in-an-hour.md: the reason recorded here - 'nothing currently excludes such a directory' - was a claim about a file nobody had opened, and it was false. .dockerignore is an allow-list, the very next CI run failed on '/examples/helpdesk': not found, and check_workspace.py now reads both files",
       "reviewed": "2026-09-30"
     },
     {
@@ -15440,6 +15440,30 @@
       "verdict": "deliberate",
       "by": "this entry: a COPY no build reads is a slow image, not a broken one, and the guard exists for the failure that is silent. The other direction fails loudly in CI the moment it happens",
       "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+      "key": "It still reads one shape of `.dockerignore`.",
+      "verdict": "deliberate",
+      "by": "this entry: the file has one shape - a bare * and a few ! lines - and a parser for the general grammar would be a hundred lines that can disagree with BuildKit silently, which is this failure again. Anything else is refused with a message rather than mis-parsed",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+      "key": "It checks that a member is admitted, not that it is admitted",
+      "verdict": "open"
+    },
+    {
+      "entry": "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+      "key": "Two rules that could have been one question.",
+      "verdict": "deliberate",
+      "by": "this entry: the one question is answered by running docker build, which is the CI job that found both halves and which check.sh cannot run - it promises no container. Two static reads that catch the failure in a second beat one true answer that costs a push",
+      "reviewed": "2026-09-30"
+    },
+    {
+      "entry": "2026-09-30-the-caveat-that-came-true-in-an-hour.md",
+      "key": "The correction is not a guard against the class it belongs t",
+      "verdict": "open"
     }
   ]
 }

@@ -27,6 +27,20 @@ checkout. That is the shape this file already exists for — a list maintained
 by hand, in a place where being wrong is silent — so the rule is here rather
 than in a comment in the Dockerfile.
 
+**And `.dockerignore` is the second half, added an hour later because the
+first half was not enough.** That rule shipped with a recorded caveat saying
+it did not read `.dockerignore` and that "nothing currently excludes a
+directory holding a member" — a claim about a file nobody had opened. The
+file is an *allow-list*: `*` and then a handful of `!` re-inclusions, chosen
+so a new large directory is excluded by default rather than forgotten. So the
+very next run failed on the other side of the same mistake:
+
+    failed to compute cache key: "/examples/helpdesk": not found
+
+Two lists, both hand-maintained, and a member has to be in both. Checking one
+and reasoning about the other is how the second push failed for the same
+reason as the first.
+
 Run it directly, or let CI: `python3 scripts/check_workspace.py`.
 """
 
@@ -83,6 +97,27 @@ def copied(dockerfile: Path) -> list[Path]:
     return out
 
 
+def admitted(ignore: Path) -> list[Path] | None:
+    """The paths a deny-everything `.dockerignore` lets back in.
+
+    `None` when the file does not have that shape — no bare `*` line — which
+    means it is a deny-list and this parser cannot say what it admits. The
+    caller refuses rather than passing: a rule that cannot read its input and
+    says nothing is the failure this whole file is about.
+
+    Trailing slashes are stripped so `!crates/` and `!crates` are one thing,
+    and a `!` re-inclusion of a *parent* admits everything under it, which is
+    how `!crates/` covers eleven members.
+    """
+    lines = [one.strip() for one in ignore.read_text().splitlines()]
+    lines = [one for one in lines if one and not one.startswith("#")]
+    if "*" not in lines:
+        return None
+    return [
+        (ROOT / one[1:].rstrip("/")).resolve() for one in lines if one.startswith("!")
+    ]
+
+
 def main() -> int:
     listed = members()
     problems: list[str] = []
@@ -110,6 +145,35 @@ def main() -> int:
                 f"with `failed to load manifest for workspace member`. Add a "
                 f"`COPY` for it, or take it out of `members`."
             )
+
+    ignore = ROOT / ".dockerignore"
+    if not ignore.exists():
+        # No `.dockerignore` means nothing is excluded, so every `COPY` above
+        # finds its source. Not a problem — but say so, because a reader of
+        # the pass line below would otherwise assume this rule ran.
+        print("note  there is no .dockerignore, so nothing is excluded from the context")
+    else:
+        allowed = admitted(ignore)
+        if allowed is None:
+            problems.append(
+                ".dockerignore has no bare `*` line, so it is a deny-list and "
+                "the rule below cannot say what it admits. It was an "
+                "allow-list — `*` and a few `!` re-inclusions — chosen so a "
+                "new large directory is excluded by default. Read it, and "
+                "either restore that shape or teach `admitted()` the new one."
+            )
+        else:
+            for member in sorted(listed):
+                if any(member == one or one in member.parents for one in allowed):
+                    continue
+                problems.append(
+                    f".dockerignore admits no path containing "
+                    f"{member.relative_to(ROOT)}, which the root workspace "
+                    f"lists in `members`. The file excludes everything and "
+                    f"names what comes back, so a `COPY` of this path finds "
+                    f"nothing: `failed to compute cache key: not found`. Add "
+                    f"a `!` line for it beside the `COPY`."
+                )
 
     for manifest in manifests():
         where = manifest.parent.resolve()
@@ -156,7 +220,8 @@ def main() -> int:
 
     print(
         f"{len(manifests())} crate(s), all members of the root workspace, and "
-        f"all {len(listed)} member(s) inside a path the Dockerfile copies"
+        f"all {len(listed)} member(s) inside a path the Dockerfile copies and "
+        f"the .dockerignore admits"
     )
     return 0
 

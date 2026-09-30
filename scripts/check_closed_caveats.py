@@ -86,6 +86,11 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # would go and look at rather than the entry that claims it: the runner that
  # makes the crate's central claim a result, and the policy that replaced the
  # two `Expr::True`s.
+ # And the `.dockerignore` half of the same guard, closed an hour after the
+ # caveat that said it would not be. The needle is the parser rather than the
+ # roster line, because the roster line is one `!` in a file and the rule is
+ # the thing that has to still exist.
+ "dockerignore-admits-members": ("def admitted", "scripts/check_workspace.py"),
  "helpdesk-on-slatedb": ("SlateStore::open_s3", "examples/helpdesk/examples/over_slatedb.rs"),
  "helpdesk-real-policy": (
      "agents_work_their_own_tickets",
@@ -1112,6 +1117,10 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    (
+        "2026-09-30-the-image-that-copies-part-of-the-tree.md",
+        "It does not read `.dockerignore`.",
+    ): "dockerignore-admits-members",
     (
         "2026-09-30-an-application-written-against-the-rust-surface.md",
         "It is one slice.",
