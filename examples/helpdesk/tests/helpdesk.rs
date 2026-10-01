@@ -84,10 +84,12 @@ async fn a_ticket_is_raised_and_read_back_by_its_reference() {
 
 #[tokio::test]
 async fn a_status_the_application_does_not_know_is_refused() {
-    // And it is refused *here*, by the service method, not by the schema. A
-    // `CHECK` is what should do this and `#[derive(Record)]` cannot declare
-    // one — see the note on `Ticket::status`. The test asserts what is true
-    // rather than what should be.
+    // Refused *here*, by the service method, before any I/O — which is why
+    // the application check stays now that the schema has one too. The two
+    // refusals are not the same experience: this one names the four words in
+    // a typed error, and the schema's arrives after a round trip. The one
+    // below the service is pinned by
+    // `the_same_status_written_past_the_service_is_refused_by_the_schema`.
     let desk = seeded().await;
     let dana = caller(DANA, ACME, "agent");
     let mut wrong = ticket(ACME, 11, "ACME-2", "Typo", 3);
@@ -418,10 +420,11 @@ async fn logged_time_accumulates_in_hundredths() {
 #[tokio::test]
 async fn the_hand_written_tickets_table_matches_the_derived_one() {
     // The cost of the text-index workaround, made into a test rather than
-    // left as a comment. `TICKETS_TABLE` restates every column
-    // `#[derive(Record)]` produced so that it can add two indexes the derive
-    // cannot declare; if a field is added to `Ticket` and not here, the row
-    // codec and the schema disagree and nothing else would say so.
+    // left as a comment. `TICKETS_TABLE` restates every column and every
+    // constraint `#[derive(Record)]` produced so that it can add two text
+    // indexes, which is the one thing the derive still cannot declare; if a
+    // field or a check is added to `Ticket` and not here, the row codec and
+    // the schema disagree and nothing else would say so.
     let derived = Ticket::table();
     let written = Indexed::table();
 
@@ -450,6 +453,30 @@ async fn the_hand_written_tickets_table_matches_the_derived_one() {
         shape(written),
         shape(derived),
         "the hand-written tickets table has drifted from `#[derive(Record)]`"
+    );
+
+    // The checks, field by field. `CheckDef`'s `PartialEq` compares the name
+    // and nothing else — its own doc comment says so — so comparing the
+    // lists would pass with the column and the message dropped, which is
+    // exactly the drift that leaves a form rendering a message beside
+    // nothing. Found the same way in `crates/slate-orm/tests/derive_checks.rs`.
+    let rules = |table: &slate_orm::TableDef| {
+        table
+            .checks()
+            .iter()
+            .map(|c| {
+                (
+                    c.name().to_owned(),
+                    c.column().map(str::to_owned),
+                    c.message().map(str::to_owned),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        rules(written),
+        rules(derived),
+        "the constraint the writes enforce is not the one the derive declares"
     );
 
     // And the only difference is the two text indexes.

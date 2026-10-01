@@ -15565,6 +15565,20 @@
       "by": "The distinction is the point and is why the entry states it: zero means every recorded caveat has reasoning behind it, not that nothing is left to build. docs/orm-comparison.md's gap table is the list of what this does not have and is long on purpose. Conflating the two would make the tracker a progress bar, which is the misreading the `deliberate` verdict exists to prevent."
     },
     {
+      "entry": "2026-10-01-the-drift-test-compares-the-constraints-too.md",
+      "key": "Nothing checks that a comment is true.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "The general problem is reading English against code, which no guard here attempts. What the repository has instead is `check_retired_claims.py` for the half a program can see \u2014 a claim the tree has retired \u2014 plus the citation guards, which refuse a comment naming a path or a test that is not there. A comment that is merely out of date while every name in it resolves is found by a sweep, and a sweep is a session."
+    },
+    {
+      "entry": "2026-10-01-the-drift-test-compares-the-constraints-too.md",
+      "key": "The drift test still compares what somebody listed.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "A hand-maintained comparison, and the alternative is worse than it sounds. `assert_eq!(written, derived)` cannot be used because the two tables are *meant* to differ by the two text indexes, so the honest version is a difference-modulo-known-additions comparison \u2014 more machinery than the one line a new field costs, for a table that exists only until `#[record(index(text))]` does. The guard's job is to make the duplication uncomfortable, and a list somebody extends does that."
+    },
+    {
       "entry": "2026-10-01-the-example-says-the-rule-now.md",
       "key": "Nothing exercises these constraints through a client.",
       "verdict": "deliberate",

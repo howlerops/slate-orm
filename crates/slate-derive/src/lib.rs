@@ -25,6 +25,8 @@
 //! #[record(check(name = "priced",
 //!                predicate(Expr::compare(price, CmpOp::Ge, Value::I64(0))),
 //!                column = "price", message = "Price cannot be negative."))]
+//! #[record(foreign_key(name = "books_author", parent = Author,
+//!                      column = "author_id", on_delete = cascade))]
 //! #[record(has_many(Book, foreign = author_id))]       // one-to-many
 //! #[record(belongs_to(Author, local = author_id))]     // the other direction
 //! ```
@@ -38,7 +40,22 @@
 //! #[record(index(name = "by_email", id = 10, unique, desc))]
 //! #[record(check(name = "has_an_at", predicate(Expr::matches(email, "@")),
 //!                message = "That is not an email address."))]
+//! #[record(foreign_key(name = "books_author", parent = Author))]
 //! ```
+//!
+//! # Foreign keys
+//!
+//! `foreign_key(...)` names the parent as a **type**, so a typo is a compile
+//! error rather than a `NOT_FOUND` from the catalog at startup, and the id
+//! comes from `slate_orm::Record::table_id` rather than from `table()` —
+//! because `table()` caches behind a `OnceLock` and reading it here would
+//! re-enter that lock the moment a table referenced itself.
+//!
+//! Written on a field, the referencing column is that field, after `rename`.
+//! Written on the struct, every column is named and **order is
+//! load-bearing**: they are matched against the parent's primary key in the
+//! order written, so a key into a tenant-scoped parent names the tenant
+//! column first. `on_delete` is `restrict` unless it says `cascade`.
 //!
 //! # Checks
 //!
