@@ -648,26 +648,50 @@ def unchecked(days: int | None, root: Path = ROOT, today: str | None = None) -> 
     return out
 
 
-def frame(root: Path = ROOT) -> list[str]:
-    """The keys `--unchecked` lists, in the order `caveats()` yields them.
+def frame(root: Path = ROOT, verdict: str = "deliberate") -> list[str]:
+    """The keys a sampling pass draws from, in the order `caveats()` yields them.
 
     A deterministic order is the whole of what makes a draw reproducible: the
     seed picks *indices*, and an index means nothing without the order it
     indexes into. `caveats()` walks `sorted(ledger.glob("*.md"))` and reads
     each section top to bottom, so the order is the tree's and not the
     filesystem's.
+
+    Two frames, and they are shaped differently on purpose.
+
+    `deliberate` is the **unchecked** rows — what `--unchecked` lists. It is a
+    worklist that shrinks as rows are stamped, so a pass draws from what is
+    left and the passes pool.
+
+    `moment` is **every** moment row, stamped or not. A moment verdict says
+    the claim described one run and so has nothing to re-read, which means
+    there is no "unread" subset to draw from: the only question a reader can
+    ask is whether the row was a moment *at all*, and that question is as open
+    on a row somebody stamped as on one nobody has. So the frame is the whole
+    population and a second audit may draw a row the first one read. It costs
+    the pooling that the deliberate frame buys, and buys the thing pooling
+    cannot: a second reader disagreeing with the first.
     """
     status = load(root)
     out = []
     for c in caveats(root):
         k = f"{c['entry']}::{key(c['claim'])}"
         row = status.get(k, {})
-        if row.get("verdict") == "deliberate" and not row.get(CHECKED):
-            out.append(k)
+        if row.get("verdict") != verdict:
+            continue
+        if verdict == "deliberate" and row.get(CHECKED):
+            continue
+        out.append(k)
     return out
 
 
-def draw(count: int, seed: int, root: Path = ROOT, today: str | None = None) -> dict:
+def draw(
+    count: int,
+    seed: int,
+    root: Path = ROOT,
+    today: str | None = None,
+    verdict: str = "deliberate",
+) -> dict:
     """Draw `count` rows from the unchecked frame, as a record that reproduces.
 
     The record carries the seed, the frame's size and digest, the indices and
@@ -685,13 +709,19 @@ def draw(count: int, seed: int, root: Path = ROOT, today: str | None = None) -> 
     import random
     from datetime import date
 
-    keys = frame(root)
+    keys = frame(root, verdict)
     if count > len(keys):
         raise ValueError(f"asked for {count} rows from a frame of {len(keys)}")
     indices = random.Random(seed).sample(range(len(keys)), count)
     return {
         "drawn": today or date.today().isoformat(),
         "seed": seed,
+        # Which frame, because there are two and they are different
+        # populations. Omitted means `deliberate`: the five records written
+        # before `moment` had a frame are all from that one, and rewriting
+        # them to say so would edit a dated record to carry a fact it did not
+        # know, which is the thing this directory exists not to do.
+        "verdict": verdict,
         "frame": len(keys),
         "digest": hashlib.sha256("\n".join(keys).encode()).hexdigest(),
         "indices": indices,

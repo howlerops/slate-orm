@@ -1594,8 +1594,9 @@
     {
       "entry": "2026-09-15-having-on-a-join.md",
       "key": "No mutation testing yet.",
-      "verdict": "moment",
-      "by": ""
+      "verdict": "closed",
+      "by": "all three HAVING lowering paths in crates/slate-wasm/src/lib.rs mutated and caught; ledger/mutations/20261001T152145-crates-slate-wasm-src-lib-rs.json and ledger/mutations/20261001T152453-crates-slate-wasm-src-lib-rs.json; ledger/2026-10-01-twenty-moments-read-and-two-that-were-not.md",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-15-having-on-a-join.md",
@@ -5320,8 +5321,9 @@
     {
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
       "key": "`ValueType::ALL` is new public API.",
-      "verdict": "moment",
-      "by": ""
+      "verdict": "deliberate",
+      "by": "Not a moment: the constant is still public and the question it raises \u2014 should slate-derive and the three client generators enumerate through it rather than mapping types one at a time \u2014 is as open as it was. Decided no: each generator maps a type to a *different* target language's spelling, so a shared roster would give them one list and three incompatible bodies, and the thing that actually goes wrong (a tenth type nobody mapped) is caught by the exhaustive match each generator already has. Re-marked from `moment` by the 2026-10-01 audit.",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-20-eight-of-nine-types-fuzzed.md",
@@ -13271,10 +13273,9 @@
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
       "key": "Nothing stops the *next* crate defaulting to publishable.",
-      "verdict": "narrowed",
-      "by": "all thirteen workspace members now declare publish = false in their own Cargo.toml, each with the reason; the nine that were held back only by the absence of a CARGO_REGISTRY_TOKEN say so themselves.",
-      "residual": "a fourteenth member added later defaults to publishable, and nothing checks scripts/check_workspace.py's member list for the declaration",
-      "checked": "2026-09-29"
+      "verdict": "closed",
+      "by": "scripts/check_workspace.py's publish-declaration rule; ledger/2026-10-01-a-default-nobody-chose.md",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-29-everything-this-repository-ships-can-now-be-published.md",
@@ -13802,10 +13803,9 @@
     {
       "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
       "key": "It says nothing about the 110 `narrowed` rows or the 1018 `d",
-      "verdict": "narrowed",
-      "by": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md: the deliberate rows were read in full and the frame is empty",
-      "checked": "2026-09-30",
-      "residual": "The narrowed rows are still unswept: each carries a residual and nothing has read them against the tree as a group"
+      "verdict": "closed",
+      "by": "ledger/2026-10-01-the-live-frame-driven-down.md swept the narrowed frame; ledger/2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md the deliberate one",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md",
@@ -14758,10 +14758,9 @@
     {
       "entry": "2026-09-29-twelve-limits-read-the-day-they-were-written.md",
       "key": "`moment` and `deliberate` are not audited by anything.",
-      "verdict": "narrowed",
-      "by": "2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md and scripts/caveats.py --unchecked: deliberate is audited now - the whole frame was read and --unchecked <days> keeps it re-readable",
-      "checked": "2026-09-30",
-      "residual": "`moment` still is not. Nothing reads a moment verdict again, by design - it described a moment - but nothing checks that a row marked moment really was one"
+      "verdict": "closed",
+      "by": "scripts/caveats.py's frame takes a verdict; ledger/draws/2026-10-01-1001.json; ledger/2026-10-01-twenty-moments-read-and-two-that-were-not.md",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-29-two-caveats-that-were-already-answered.md",
@@ -15340,14 +15339,16 @@
     {
       "entry": "2026-09-30-the-open-frame-read-against-the-tree.md",
       "key": "The 124 narrowed rows were not swept as a group.",
-      "verdict": "open",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "reviewed": "2026-10-01",
+      "by": "ledger/2026-10-01-the-live-frame-driven-down.md read all 268 live rows, narrowed included, and found four stale verdicts among them"
     },
     {
       "entry": "2026-09-30-the-open-frame-read-against-the-tree.md",
       "key": "`moment` is still audited by nothing.",
-      "verdict": "open",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "reviewed": "2026-10-01",
+      "by": "the same draw and entry: 20 of 146 moment rows read, two found wrong"
     },
     {
       "entry": "2026-09-30-the-two-documents-this-session-made-wrong.md",
@@ -15495,6 +15496,27 @@
       "checked": "2026-10-01"
     },
     {
+      "entry": "2026-10-01-a-default-nobody-chose.md",
+      "key": "It does not read the root manifest's `[workspace.package]`.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "A false positive waiting for a pattern nothing in the tree uses: `Cargo.toml`'s `[workspace.package]` block holds version, edition, rust-version, license, repository and authors and no `publish`, and `git grep -n 'publish' -- '*/Cargo.toml' Cargo.toml` finds the setting only as `publish = false` in each member. Writing the alternative now means guessing at a shape nobody has needed, and the failure when it arrives is a loud refusal naming the member -- a reader adds one alternative to the regex. The direction that matters, a member silently defaulting to publishable, is the one covered."
+    },
+    {
+      "entry": "2026-10-01-a-default-nobody-chose.md",
+      "key": "It says nothing about whether `publish = false` is the right",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "Right, and that is the rule's whole shape. A check on the *answer* would encode docs/releasing.md's current decision and stop being satisfiable the first time somebody wants to publish something, at which point it gets deleted rather than argued with. A check on the *statement* cannot be wrong. The residual \u2014 a careless edit flipping false to true \u2014 is a diff somebody reads, not a default nobody saw."
+    },
+    {
+      "entry": "2026-10-01-a-default-nobody-chose.md",
+      "key": "The roster still runs one mutation per suite and one suite p",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "A hand-maintained list, which is what every roster here is, and the alternative is deriving suites from the guards \u2014 a program guessing what breaking a guard's subject looks like, which is exactly the judgement the `why` field exists to hold. check_mutations_roster.py is the thing that makes the list loud when it goes stale, and that is the trade this repository makes for all of them."
+    },
+    {
       "entry": "2026-10-01-a-foreign-key-the-derive-could-not-declare.md",
       "key": "No client surface, and no conformance case.",
       "verdict": "open",
@@ -15625,6 +15647,33 @@
       "verdict": "deliberate",
       "by": "this entry: the whole-frame re-read is the mechanism and it is a session rather than a check, because reading a prose claim against a tree is the one thing no guard here can do. What *is* a check is that every verdict carries a date and --unread lists the stale ones, which is how the narrowed frame came to be read at all.",
       "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-twenty-moments-read-and-two-that-were-not.md",
+      "key": "No guard, and the caveat asked for one.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "The only mechanical signal for 'was this a moment' is vocabulary \u2014 yet, so far, this session, a run number \u2014 which is the REACHED_FOR roster shape this repository has been wrong about twice, and here it would also pass on every input it was built from. `deliberate` has a sample and not a guard for the same reason. Recorded as a claim rather than a proof: it rests on having failed to think of a non-roster signal."
+    },
+    {
+      "entry": "2026-10-01-twenty-moments-read-and-two-that-were-not.md",
+      "key": "The borderline three are not resolved, and nothing resolves ",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-twenty-moments-read-and-two-that-were-not.md",
+      "key": "The false rate is one reader's.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "The ceiling every reading-based pass here carries, and the frame is drawn from the whole population precisely so a second reader can re-read a row the first one judged. That is the answer available without a second person, and the entry says so rather than pretending the number is independent."
+    },
+    {
+      "entry": "2026-10-01-twenty-moments-read-and-two-that-were-not.md",
+      "key": "Twenty of 146, once.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "A sampling rate, not a shortfall. Twenty of 146 is a seventh of the frame and was chosen to be big enough to show a terrible rate on a first pass; it did not show one. Reading all 146 would cost a session and answer a question the sample already bounds. The entry says the next pass should draw a fresh seed, which is the whole of what remains to be remembered."
     }
   ]
 }

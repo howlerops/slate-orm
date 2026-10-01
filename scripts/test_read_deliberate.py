@@ -98,7 +98,18 @@ ROOT = Path(__file__).resolve().parent.parent
 #: vocabulary alone, which is the signal's failure mode stated as cheaply as
 #: it can be: the answer is still not a candidate and the noise grew by one.
 #: Recorded rather than tuned, for the reason above.
-RANKS: list[tuple[int | None, int]] = [(16, 19), (None, 9)]
+#:
+#: **2026-10-01, again: 9 → 10, and the rank still did not move.** The tenth
+#: is `ledger/2026-10-01-twenty-moments-read-and-two-that-were-not.md`, which
+#: shares "default", "assertion" and "column" with the same claim for the same
+#: reason — it quotes a verdict about a default column. Two entries in one day
+#: joined this shortlist by vocabulary, which makes the point the first note
+#: made as a one-off into a rate: **this denominator grows with the ledger and
+#: the numerator does not.** A signal whose candidate list grows and whose
+#: answer does not appear is one whose precision decays as the repository
+#: does, and that is worth more than either number on its own. Still not
+#: tuned, and the reason has not changed: the labelled set has two rows.
+RANKS: list[tuple[int | None, int]] = [(16, 19), (None, 10)]
 
 
 def bodies() -> dict[str, str]:

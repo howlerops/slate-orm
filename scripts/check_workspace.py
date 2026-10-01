@@ -41,6 +41,20 @@ Two lists, both hand-maintained, and a member has to be in both. Checking one
 and reasoning about the other is how the second push failed for the same
 reason as the first.
 
+# And whether a crate is publishable
+
+A fourth rule. `publish` defaults to **true**, so a new member says nothing
+and is a crate a `cargo publish --workspace` would push to crates.io. Every
+member today says `publish = false` and the reasoning is written out in
+`docs/releasing.md`; what was missing is anything that notices the next one
+not saying so. The failure is not loud — it is a crate appearing on crates.io
+that nobody decided to put there, and that cannot be taken back.
+
+So the rule is only that the manifest *states* it. `publish = true` passes,
+because that is a decision somebody made; silence does not, because it is a
+default somebody inherited. Same shape as `members` above: the cost is one
+line, and the thing being prevented is silent.
+
 Run it directly, or let CI: `python3 scripts/check_workspace.py`.
 """
 
@@ -268,6 +282,23 @@ def main() -> int:
                 f"`members` lists {member.relative_to(ROOT)}, which has no Cargo.toml"
             )
 
+    # Every member says whether it is publishable, because the default is yes.
+    #
+    # Read with a regex rather than a TOML parser for the reason the rest of
+    # this file is: `tomllib` would also accept `publish` nested under a table
+    # it does not belong in, and a line-anchored match is what a reader
+    # checking this by eye would look for.
+    for member in sorted(listed):
+        manifest = member / "Cargo.toml"
+        if not manifest.exists():
+            continue
+        text = manifest.read_text(encoding="utf-8")
+        if not re.search(r"^publish\s*=", text, re.MULTILINE):
+            problems.append(
+                f"{manifest.relative_to(ROOT)} does not say whether it is "
+                f"publishable, and `publish` defaults to true"
+            )
+
     if problems:
         print("the workspace and the image's copy list disagree:\n", file=sys.stderr)
         for problem in problems:
@@ -281,8 +312,8 @@ def main() -> int:
 
     print(
         f"{len(manifests())} crate(s), all members of the root workspace, and "
-        f"all {len(listed)} member(s) inside a path the Dockerfile copies and "
-        f"the .dockerignore admits"
+        f"all {len(listed)} member(s) inside a path the Dockerfile copies, "
+        f"the .dockerignore admits, and each saying whether it publishes"
     )
     return 0
 

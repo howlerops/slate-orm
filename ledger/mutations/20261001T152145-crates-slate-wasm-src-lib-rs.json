@@ -1,0 +1,53 @@
+{
+  "at": "2026-10-01T15:21:45+00:00",
+  "file": "crates/slate-wasm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-wasm",
+    "--test",
+    "taxi",
+    "--no-fail-fast"
+  ],
+  "commit": "34ee68b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the joined path drops its HAVING",
+      "old": "                    grouping = grouping.having(group_predicate(\n                        &spec.having,\n                        &spec.having_any_of,\n                        spec.having_predicate.as_ref(),\n                        &keys,\n                        &aggregates,\n                        &[&authors, &books],\n                    )?);",
+      "new": "                    let _ = group_predicate(\n                        &spec.having,\n                        &spec.having_any_of,\n                        spec.having_predicate.as_ref(),\n                        &keys,\n                        &aggregates,\n                        &[&authors, &books],\n                    )?;",
+      "verdict": "caught",
+      "caught_by": [
+        "having_ands_its_terms_over_different_aggregates",
+        "having_keeps_exactly_the_groups_that_pass",
+        "having_is_refused_where_it_cannot_mean_anything"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the chain path drops its HAVING",
+      "old": "                    grouping = grouping.having(group_predicate(\n                        &spec.having,\n                        &spec.having_any_of,\n                        spec.having_predicate.as_ref(),\n                        &keys,\n                        &aggregates,\n                        &refs,\n                    )?);",
+      "new": "                    let _ = group_predicate(\n                        &spec.having,\n                        &spec.having_any_of,\n                        spec.having_predicate.as_ref(),\n                        &keys,\n                        &aggregates,\n                        &refs,\n                    )?;",
+      "verdict": "caught",
+      "caught_by": [
+        "having_works_on_a_chain_and_on_a_group_key"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the single-table path drops its HAVING",
+      "old": "            grouping = grouping.having(group_predicate(\n                &spec.having,\n                &spec.having_any_of,\n                spec.having_predicate.as_ref(),\n                &keys,\n                &aggregates,\n                &[table],\n            )?);",
+      "new": "            let _ = group_predicate(\n                &spec.having,\n                &spec.having_any_of,\n                spec.having_predicate.as_ref(),\n                &keys,\n                &aggregates,\n                &[table],\n            )?;",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

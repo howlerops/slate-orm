@@ -134,6 +134,18 @@
       ]
     },
     {
+      "guard": "check_workspace",
+      "file": "crates/slate-derive/Cargo.toml",
+      "why": "`publish` defaults to **true**, so a member that says nothing is a crate `cargo publish` would push to crates.io that nobody decided to publish \u2014 and that cannot be taken back. A second suite for this guard rather than a second case in the one above, because the rule watches a different file: the one above mutates the root manifest's member list and this one mutates a member.",
+      "cases": [
+        {
+          "name": "a member stops saying whether it publishes, keeping the comment that says why",
+          "old": "# crate that did not say no.\npublish = false",
+          "new": "# crate that did not say no."
+        }
+      ]
+    },
+    {
       "guard": "check_none_last",
       "file": "scripts/test_mutate.py",
       "why": "CI's ruff is newer than this container's and RUF036 turned the scripts job red twice on one annotation.",

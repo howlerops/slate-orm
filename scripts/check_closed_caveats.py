@@ -920,6 +920,33 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "crates/slate-derive/src/lib.rs",
  ),
 
+ # The three HAVING lowering paths in `slate-wasm`, mutation-tested at last.
+ # The needle is the single-table test, because that is the path whose
+ # coverage was in doubt: the joined and chained ones were predicted caught
+ # by the caveat itself and were, and this one was the open question.
+ "having-is-mutation-tested": (
+     "a_bracketed_having_reaches_the_kernel_and_is_not_silently_dropped",
+     "crates/slate-wasm/tests/having.rs",
+ ),
+
+ # The `moment` frame. The needle is `frame()`'s verdict parameter rather
+ # than the draw file beside it: a draw is one audit and goes out of date,
+ # and what the caveat asked for is that the frame *exists* to be drawn from
+ # again. A revert taking the parameter takes every future draw with it.
+ "moment-has-a-frame": (
+     'def frame(root: Path = ROOT, verdict: str = "deliberate")',
+     "scripts/caveats.py",
+ ),
+
+ # Every member says whether it publishes. The needle is the refusal's own
+ # sentence rather than the regex: a pattern is a line somebody tunes, and
+ # what must survive is a rule that *refuses* silence — `publish` defaults to
+ # true, so a member that says nothing is one `cargo publish` would push.
+ "member-declares-publish": (
+     "does not say whether it is ",
+     "scripts/check_workspace.py",
+ ),
+
  # The sweep, not the `NOT_THE_JOB_COUNT` roster beside it: a revert leaving
  # the roster standing would be a list of exemptions nothing consults, which
  # reads exactly like a working guard.
@@ -1013,6 +1040,12 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-30-the-open-frame-read-against-the-tree.md',
+     'The 124 narrowed rows were not swept as a group.'):
+        'closed by the sweep in ledger/2026-10-01-the-live-frame-driven-down.md, which read all 268 live rows -- narrowed included -- and found four stale verdicts among them, two in each half. What a sweep leaves in the tree is changed verdicts in docs/caveat-status.json, so a witness would be one of the rows it changed, which is the tracker witnessing itself',
+    ('2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md',
+     'It says nothing about the 110 `narrowed` rows or the 1018 `d'):
+        'both halves are now swept, by two readings: the narrowed frame in ledger/2026-10-01-the-live-frame-driven-down.md and the deliberate one in ledger/2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md. Same shape as the row above -- the artifact of a sweep is the verdicts it changed',
     ('2026-09-14-main-and-the-documentation-sweep.md',
      '`enablement: true` is kept rather than reverted, even though'):
         'closed by observing the setting it is about: actions/configure-pages@v5 with `enablement: true` succeeds in every recent run and the \'If that failed, here is why\' step beside it is skipped, so the decision this caveat defends is the one in force. The evidence is a run on the remote, not a file -- the workflow line it argues for was already in the tree while the claim was unsettled, so it witnesses nothing',
@@ -2698,6 +2731,34 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-19-a-check-that-names-its-field.md',
      '`#[derive(Record)]` cannot declare either field. A check wri'):
         'derive-declares-a-check',
+
+    # --- 2026-10-01, a default nobody chose --------------------------------
+    ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
+     'Nothing stops the *next* crate defaulting to publishable.'):
+        'member-declares-publish',
+
+    # --- 2026-10-01, the moment audit -------------------------------------
+    ('2026-09-29-twelve-limits-read-the-day-they-were-written.md',
+     '`moment` and `deliberate` are not audited by anything.'):
+        'moment-has-a-frame',
+    ('2026-09-30-the-open-frame-read-against-the-tree.md',
+     '`moment` is still audited by nothing.'):
+        'moment-has-a-frame',
+
+    # The narrowed frame, swept as a group. A sweep is a reading: what it
+    # left in the tree is 168 changed verdicts and an entry, and a witness
+    # would have to be one of those verdicts, which is circular.
+    ('2026-09-30-the-open-frame-read-against-the-tree.md',
+     'The 124 narrowed rows were not swept as a group.'): '=read',
+    ('2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md',
+     'It says nothing about the 110 `narrowed` rows or the 1018 `d'): '=read',
+
+    #
+    # Marked `moment` on 2026-09-15 and it never was one: it named work and
+    # named the mutation to run. The mutation was run; all three paths are
+    # caught.
+    ('2026-09-15-having-on-a-join.md', 'No mutation testing yet.'):
+        'having-is-mutation-tested',
 
     # --- 2026-10-01, the derive's foreign key ------------------------------
     ('2026-10-01-a-check-the-derive-could-not-declare.md',
