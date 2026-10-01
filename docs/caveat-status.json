@@ -15612,6 +15612,27 @@
       "key": "No guard stops the next message having the shape.",
       "verdict": "open",
       "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-verdicts-that-were-stale-and-the-moment-that-was-not.md",
+      "key": "The hook can be bypassed and the message says so.",
+      "verdict": "deliberate",
+      "by": "this entry and ledger/README.md: an escape hatch exists so that a check with none does not get switched off permanently the first time it blocks a recovery. The message naming --no-verify is the decision, not an omission.",
+      "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-verdicts-that-were-stale-and-the-moment-that-was-not.md",
+      "key": "It does not read `.gitignore` at all.",
+      "verdict": "deliberate",
+      "by": "this entry: the five names are what this repository's toolchains write, and a sixth is a line in the roster. Reading .gitignore instead would mean the hook parsing a file whose semantics BuildKit, git and this script would each have to agree on -- the second-parser cost scripts/check_workspace.py already weighed and refused.",
+      "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-verdicts-that-were-stale-and-the-moment-that-was-not.md",
+      "key": "The stale-verdict class is not fixed by this.",
+      "verdict": "deliberate",
+      "by": "this entry: the whole-frame re-read is the mechanism and it is a session rather than a check, because reading a prose claim against a tree is the one thing no guard here can do. What *is* a check is that every verdict carries a date and --unread lists the stale ones, which is how the narrowed frame came to be read at all.",
+      "reviewed": "2026-10-01"
     }
   ]
 }

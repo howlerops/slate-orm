@@ -1,0 +1,38 @@
+{
+  "at": "2026-10-01T02:48:00+00:00",
+  "file": ".githooks/pre-commit",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_build_output.py"
+  ],
+  "commit": "ec40c65",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the hook's roster loses a name this guard knows",
+      "old": "dist|dist-test|build|__pycache__",
+      "new": "dist|dist-test|__pycache__",
+      "verdict": "caught",
+      "caught_by": [
+        "check_build_output: ok    the tree tracks some files"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the hook stops declaring a roster at all",
+      "old": "build_dirs=${SLATE_HOOK_BUILD_DIRS:-",
+      "new": "build_dirs=${SLATE_HOOK_OTHER_NAME:-",
+      "verdict": "caught",
+      "caught_by": [
+        "check_build_output: ok    the tree tracks some files"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

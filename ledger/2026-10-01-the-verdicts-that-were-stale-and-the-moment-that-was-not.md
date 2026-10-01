@@ -20,6 +20,12 @@ the next nested workspace's build output; that guard has existed since
 depth. This is not a new capability — it is the same rule at an earlier
 moment, which for this particular failure is the moment that matters.
 
+**`check_build_output.py` holds the two rosters together.** The hook names
+its build directories in a shell variable, because a hook with no
+dependencies cannot read a Python file; the guard reads that line and
+refuses a name it knows that the hook does not. One-sided on purpose — the
+hook's list may be wider.
+
 **`scripts/mutate_guard.py` runs a `.sh` runner**, so the hook suite can be
 mutation-tested at all. It could not be before.
 
@@ -135,19 +141,17 @@ scored at all — the same class as
 three checks run by hand. `mutate_guard.py` now runs a `.sh` under `sh` and
 re-emits the verdict at column zero, which is what the adapter is for.
 
+**The roster-agreement rule found a drift on its first run.** `build` was in
+`check_build_output.py`'s `BUILD_DIRS` and not in the hook's, so a staged
+`pkg/build/out.js` would have been refused by the static guard and let
+through at the commit — the exact asymmetry the rule exists for, present
+within the hour of the hook being written. Two mutations, both caught: the
+hook's roster losing a name, and the hook ceasing to declare one at all.
+
 **Not measured.** The hook adds one `grep -E` over the staged list, which is
 already walked twice.
 
 ## What this does not do
-
-**`BUILD_DIRS` is a roster, in two places now.** The hook's list and
-`check_build_output.py`'s list are the same names written twice and nothing
-holds them together, which is this repository's most-met failure. They are
-in different languages — `sh` and Python — and the hook deliberately has no
-dependencies, so sharing them means the hook reading a Python file or a third
-file both parse. Recorded rather than solved; the cost of drift is one of the
-two catching something the other does not, which is a weaker failure than
-either catching nothing.
 
 **The hook can be bypassed and the message says so.** That is the same trade
 the ledger rule makes, for the same reason: a check with no escape hatch gets

@@ -100,7 +100,7 @@ fi
 #
 # Overridable for the same reason the size limit is: so the hook's own test
 # can trip it without creating a 2,412-file `target/`.
-build_dirs=${SLATE_HOOK_BUILD_DIRS:-'(^|/)(target|node_modules|dist|dist-test|__pycache__|\.venv|\.pytest_cache|\.mypy_cache)/'}
+build_dirs=${SLATE_HOOK_BUILD_DIRS:-'(^|/)(target|node_modules|dist|dist-test|build|__pycache__|\.venv|\.pytest_cache|\.mypy_cache)/'}
 built=$(printf '%s\n' "$staged" | grep -E "$build_dirs" || true)
 if [ -n "$built" ]; then
     cat >&2 <<MSG
