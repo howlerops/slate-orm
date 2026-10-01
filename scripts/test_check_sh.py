@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -522,6 +523,159 @@ CLAUDE_MD_COUNTS: list[tuple[str, str]] = [
 ]
 
 
+#: Every tracked file that could describe CI's job count, in words.
+#:
+#: Not `ledger/`: an entry is dated and append-only, so "twenty-three of
+#: twenty-four jobs green" in one is a record of a run and is *supposed* to
+#: stay at the number it was. Not `clients/` or `crates/` either — nothing
+#: there describes the workflow — but the sweep is cheap and widening it is
+#: one tuple.
+SWEPT_FOR_A_JOB_COUNT = ("README.md", "CLAUDE.md", "docs/", "site/", "scripts/", ".github/")
+SWEPT_SUFFIXES = (".md", ".sh", ".py", ".yml", ".yaml", ".html", ".txt")
+
+#: `<a spelled number> jobs`, anywhere in a swept file.
+#:
+#: Built from `COUNTED`'s own keys rather than from `[a-z]+`, which is the
+#: whole difference between this and the loop
+#: `ledger/2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md`
+#: records as crying wolf: "the jobs that find the interesting failures" does
+#: not match, because `the` is not a number. Only a sentence stating a count
+#: is read as one.
+JOB_COUNT_CLAIM = re.compile(
+    r"\b(" + "|".join(sorted(COUNTED, key=len, reverse=True)) + r") jobs\b"
+)
+
+#: Phrases that say `<number> jobs` and are not a claim about today's CI.
+#:
+#: `{(file, phrase): why}`. Checked in **both** directions, like
+#: `check_toolchain_pins.py`'s `NOT_AN_INSTALLER` and for the reason that
+#: entry gives: an exemption for a phrase that is gone is a line a reader
+#: takes for a live decision, and if the phrase comes back meaning something
+#: else the exemption hides it.
+NOT_THE_JOB_COUNT: dict[tuple[str, str], str] = {
+    (
+        "scripts/check_workspace.py",
+        "twenty-two jobs",
+    ): "narration of CI run 532, which really did have twenty-two green and one "
+    "red. A past run's score does not move when the job list does.",
+    (
+        "scripts/test_check_sh.py",
+        "twenty-four jobs",
+    ): "this file quoting the two CLAUDE.md sentences it anchors, so that a "
+    "reader of CLAUDE_MD_COUNTS can see what the patterns are matching. It is "
+    "the pattern's documentation, the way check_toolchain_pins.py's own "
+    "example is, and it moves when they do because it is quoting them.",
+    (
+        "scripts/test_check_sh.py",
+        "seventeen jobs",
+    ): "narration of the drift this function was written for — check.sh said "
+    "seventeen against twenty-three. The wrong number is the point.",
+    (
+        "scripts/test_check_sh.py",
+        "twenty-two jobs",
+    ): "this table quoting the phrase it excuses in check_workspace.py. A "
+    "roster of exemptions has to name what it excuses, so the roster itself "
+    "matches the pattern — the same self-reference that makes "
+    "check_toolchain_pins.py skip its own file by name. Found by running the "
+    "sweep, which reported the exemption as an unanchored claim.",
+}
+
+
+def jobs_sharing_the_prebuilt_binary() -> int:
+    """How many `ci.yml` jobs run against the binary the `build` job uploads.
+
+    `scripts/prebuilt.py` says CI "shares it across N jobs", which is the
+    third file stating a job count — the one
+    `ledger/2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md`
+    predicted and nothing looked for:
+
+      > A third file describing it in words that match neither pattern is
+      > exactly as stale as these two were, and nothing looked.
+
+    It said *eight* against six. Derived here rather than counted by hand,
+    from the two variables `prebuilt.py` is about, so the sentence and the
+    workflow cannot disagree.
+    """
+    text = (ROOT / ".github/workflows/ci.yml").read_text()
+    holding: set[str] = set()
+    current: str | None = None
+    for line in text.splitlines():
+        head = A_JOB.match(line)
+        if head:
+            current = head.group(1)
+            continue
+        if current and re.search(r"\bSLATE_(?:SERVERD|TESTSERVER):", line):
+            holding.add(current)
+    return len(holding)
+
+
+def every_job_count_is_anchored() -> list[str]:
+    """Every `<number> jobs` in a swept file is checked, or exempt with a reason.
+
+    The two counts this file already anchors were found by grepping for
+    `test_check_sh` and for `seventeen`, which is a sweep that finds the
+    files somebody thought of. This is the sweep that finds the rest: a file
+    stating a job count in any words at all fails until the count is either
+    held to `ci.yml` or written off here.
+
+    It found one immediately, which is the evidence that the caveat was
+    right: `scripts/prebuilt.py` said CI shares the prebuilt binary across
+    *eight* jobs and the number is six.
+    """
+    anchored = {
+        "CLAUDE.md": [pattern for _, pattern in CLAUDE_MD_COUNTS],
+        "scripts/check.sh": [
+            r"`ci\.yml` is ([a-z]+(?:-[a-z]+)?) jobs",
+            r"spread across ([a-z]+(?:-[a-z]+)?) of them",
+        ],
+        "scripts/prebuilt.py": [r"shares it across\s+([a-z]+(?:-[a-z]+)?) jobs"],
+    }
+    said: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    listing = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+    )
+    for name in sorted(listing.stdout.split()):
+        if not name.startswith(SWEPT_FOR_A_JOB_COUNT):
+            continue
+        if not name.endswith(SWEPT_SUFFIXES):
+            continue
+        try:
+            text = (ROOT / name).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        # `check.sh`'s prose is a comment block, so a sentence spans lines
+        # with a `# ` between them — the same unwrapping `job_count_matches`
+        # does, for the same reason.
+        unwrapped = re.sub(r"\n#\s*", " ", text)
+        covered = [
+            span
+            for pattern in anchored.get(name, [])
+            for span in (found.span() for found in re.finditer(pattern, unwrapped))
+        ]
+        for claim in JOB_COUNT_CLAIM.finditer(unwrapped):
+            phrase = claim.group(0)
+            if any(start <= claim.start() and claim.end() <= end for start, end in covered):
+                continue
+            if (name, phrase) in NOT_THE_JOB_COUNT:
+                seen.add((name, phrase))
+                continue
+            said.append(
+                f"{name} says {phrase!r} and nothing holds it to ci.yml. "
+                f"A count stated in prose beside a list that grows is how "
+                f"CLAUDE.md said 'seventeen' for weeks. Anchor it in this "
+                f"file's `anchored` table, or add it to NOT_THE_JOB_COUNT "
+                f"with the reason it is not a claim about today's CI."
+            )
+    said.extend(
+        f"NOT_THE_JOB_COUNT excuses {phrase!r} in {name}, which no longer says it. "
+        f"An exemption for a phrase that is gone reads as a live decision, and "
+        f"hides the phrase if it comes back meaning something else."
+        for name, phrase in sorted(set(NOT_THE_JOB_COUNT) - seen)
+    )
+    return said
+
+
 def jobs_holding_a_static_check(steps: list[tuple[str, str]]) -> int:
     """How many `ci.yml` jobs run at least one step `check.sh` also runs.
 
@@ -646,6 +800,29 @@ def job_count_matches(steps: list[tuple[str, str]]) -> list[str]:
     elif COUNTED[claim.group(1)] != jobs:
         said.append(f"check.sh says {claim.group(1)!r} jobs and ci.yml has {jobs}")
 
+    # The third file, found by the sweep in `every_job_count_is_anchored`
+    # and anchored here rather than exempted: it is a live claim about
+    # `ci.yml`, so it belongs with the other two.
+    shared = jobs_sharing_the_prebuilt_binary()
+    prebuilt = re.sub(r"\n#\s*", " ", (ROOT / "scripts/prebuilt.py").read_text())
+    across = re.search(r"shares it across\s+([a-z]+(?:-[a-z]+)?) jobs", prebuilt)
+    if not across:
+        said.append(
+            "prebuilt.py no longer says how many jobs share the binary, so "
+            "this half has nothing to hold to. Either the sentence moved — "
+            "put this back on it — or it is gone and so is the reason for this."
+        )
+    elif across.group(1) not in COUNTED:
+        said.append(
+            f"prebuilt.py says the binary is shared across {across.group(1)!r} "
+            f"jobs, which is not a number COUNTED knows"
+        )
+    elif COUNTED[across.group(1)] != shared:
+        said.append(
+            f"prebuilt.py says {across.group(1)!r} jobs share the prebuilt "
+            f"binary and {shared} set SLATE_SERVERD or SLATE_TESTSERVER"
+        )
+
     holding = jobs_holding_a_static_check(steps)
     spread = re.search(r"spread across ([a-z]+(?:-[a-z]+)?) of them", script)
     if not spread:
@@ -743,6 +920,10 @@ def main() -> int:
         (
             "CLAUDE.md's job count is ci.yml's",
             job_count_matches(steps),
+        ),
+        (
+            "every job count stated in prose is anchored or excused",
+            every_job_count_is_anchored(),
         ),
         (
             "every check.sh step runs in a workflow or is in ONLY_LOCAL",

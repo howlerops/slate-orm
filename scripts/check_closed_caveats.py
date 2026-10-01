@@ -910,6 +910,21 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # attribute and builds nothing, and the parser is what a reader goes to first.
  "derive-declares-a-check": ("fn parse_check(", "crates/slate-derive/src/lib.rs"),
 
+ # The sweep, not the `NOT_THE_JOB_COUNT` roster beside it: a revert leaving
+ # the roster standing would be a list of exemptions nothing consults, which
+ # reads exactly like a working guard.
+ "every-job-count-swept": (
+     "def every_job_count_is_anchored(",
+     "scripts/test_check_sh.py",
+ ),
+ # The comment rather than the pattern, because a pattern is a line somebody
+ # edits and the thing that must survive is the *reason* it is shaped this
+ # way — which is also the only part a reader can check against Go's rules.
+ "pinned-is-a-module-path": (
+     "a domain: at least one dot",
+     "scripts/check_toolchain_pins.py",
+ ),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -2656,6 +2671,12 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-19-a-check-that-names-its-field.md',
      '`#[derive(Record)]` cannot declare either field. A check wri'):
         'derive-declares-a-check',
+
+    # --- 2026-10-01, two guards that reached less far than they read -------
+    ('2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md',
+     'Only two files were swept.'): 'every-job-count-swept',
+    ('2026-09-29-the-skip-list-that-excused-nothing.md',
+     '`PINNED` still matches any `@v<digit>` token'): 'pinned-is-a-module-path',
 }
 
 

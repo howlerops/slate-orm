@@ -1,0 +1,55 @@
+{
+  "at": "2026-10-01T00:56:44+00:00",
+  "file": "scripts/check_toolchain_pins.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_toolchain_pins.py"
+  ],
+  "commit": "0fa9d3b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the domain requirement is dropped, so any @v token is a pin",
+      "old": "    [\\w\\-]+ (?: \\.[\\w\\-]+ )+        # a domain: at least one dot",
+      "new": "    [\\w.\\-]+",
+      "verdict": "caught",
+      "caught_by": [
+        "an unrelated `@v` token beside a `go install ./...` is not a pin"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the path elements become required again",
+      "old": "    (?: /[\\w.\\-~]+ )*                # and any number of path elements",
+      "new": "    (?: /[\\w.\\-~]+ )+",
+      "verdict": "caught",
+      "caught_by": [
+        "a module path with no elements below the domain is still a pin"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the pattern no longer matches a real module path",
+      "old": "    @v? \\d [\\w.\\-+]*                 # at the pinned version",
+      "new": "    @zzz \\d [\\w.\\-+]*",
+      "verdict": "caught",
+      "caught_by": [
+        "a pinned workflow and an installer that decides is clean",
+        "a pinned workflow and an installer that inherits is reported",
+        "setting GOTOOLCHAIN to local counts as deciding",
+        "GOTOOLCHAIN named only in a comment is not a decision",
+        "a pin held in a constant far from the `go install` is still a pin",
+        "GOTOOLCHAIN named only in a docstring is not a decision",
+        "the guard and its own test are not counted as installers",
+        "an unrelated `@v` token beside a `go install ./...` is not a pin"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

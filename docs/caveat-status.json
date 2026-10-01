@@ -14495,9 +14495,9 @@
     {
       "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
       "key": "Only two files were swept.",
-      "verdict": "open",
-      "by": "the sweep was two greps, for `test_check_sh` and for `seventeen`. A third file describing the guard in words matching neither is exactly as stale as these two were, and nothing looked.",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "scripts/test_check_sh.py's `every_job_count_is_anchored`: every tracked file under README.md, CLAUDE.md, docs/, site/, scripts/ and .github/ is swept for `<spelled number> jobs`, and each occurrence must be anchored to ci.yml or excused in NOT_THE_JOB_COUNT. It found the third file the caveat predicted -- scripts/prebuilt.py said eight jobs against six. ledger/2026-10-01-the-third-file-that-stated-a-job-count.md",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md",
@@ -14675,9 +14675,9 @@
     {
       "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
       "key": "`PINNED` still matches any `@v<digit>` token",
-      "verdict": "open",
-      "by": "the sibling caveat in ledger/2026-09-29-a-guard-whose-roster-was-itself.md, untouched here. Nothing in the tree triggers it today, which is why it is a hazard rather than a defect.",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "scripts/check_toolchain_pins.py's PINNED is now shaped like a Go module path -- a dotted first element, any path elements, then `@v<digits>` -- so actions/checkout@v5, node@v22 and pg@v16 no longer read as pinned Go installers. ledger/2026-10-01-the-third-file-that-stated-a-job-count.md",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-29-the-skip-list-that-excused-nothing.md",
@@ -15576,6 +15576,38 @@
     {
       "entry": "2026-10-01-a-check-the-derive-could-not-declare.md",
       "key": "One struct, one shape of predicate.",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-third-file-that-stated-a-job-count.md",
+      "key": "It reads a spelled number, not a digit.",
+      "verdict": "deliberate",
+      "by": "this entry: a digit pattern would match version numbers, line counts and timings on every page, which is the cries-wolf failure the spelled-number rule exists to avoid. Every count in this repository's prose is spelled, which is why COUNTED exists at all.",
+      "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-third-file-that-stated-a-job-count.md",
+      "key": "It does not read `ledger/`, and one day a ledger entry will ",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-third-file-that-stated-a-job-count.md",
+      "key": "The anchored table is a list maintained by hand.",
+      "verdict": "deliberate",
+      "by": "this entry: the sweep is what makes a missing entry loud, which is the trade every roster here makes. A list a guard forces you to edit is a list that stays true.",
+      "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-third-file-that-stated-a-job-count.md",
+      "key": "Nothing checks that an exemption's reason is true.",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-third-file-that-stated-a-job-count.md",
+      "key": "`PINNED` still has one false-positive shape.",
       "verdict": "open",
       "checked": "2026-10-01"
     }

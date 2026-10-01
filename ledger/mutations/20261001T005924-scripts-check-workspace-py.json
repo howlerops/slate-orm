@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-01T00:59:24+00:00",
+  "file": "scripts/check_workspace.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "0fa9d3b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the excused phrase changes, so the exemption excuses nothing",
+      "old": "twenty-two jobs green and one red",
+      "new": "twenty jobs green and one red",
+      "verdict": "caught",
+      "caught_by": [
+        "every job count stated in prose is anchored or excused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -177,6 +177,61 @@ CASES: list[tuple[str, dict[str, str | None], str]] = [
         "",
     ),
     (
+        # The pin pattern was `[\\w.\\-/]+@v?[\\d][\\w.\\-+]*`, which reads any
+        # `@v<digit>` token as a Go pin. A file whose only pinned string is an
+        # action reference or an npm range then reads as a pinned Go installer,
+        # and is required to decide `GOTOOLCHAIN` over a line with nothing to
+        # do with Go. The refusal would name `actions/checkout@v5`, which is
+        # the kind of message that teaches a reader to distrust the guard.
+        # `scripts/real.py` is here so the never-fires half stays quiet: a tree
+        # whose only installer is the one under test would report "nothing
+        # runs a pinned go install" whichever way this case went, and the
+        # case would pass for the wrong reason.
+        "an unrelated `@v` token beside a `go install ./...` is not a pin",
+        {
+            ".github/workflows/ci.yml": PINNED,
+            "scripts/real.py": DECIDES,
+            "scripts/gen.py": (
+                '# see actions/checkout@v5 and node@v22\nRANGE = "pg@v16"\n' + UNPINNED
+            ),
+        },
+        "",
+    ),
+    (
+        # And the other direction, which is the one that would matter if the
+        # narrowing went too far: a real `go install` target is a domain, at
+        # least one more path element, and a version. Both of this
+        # repository's are `google.golang.org/...`, and a pattern that stopped
+        # matching those would silently stop watching the only file the guard
+        # is for.
+        "a real module path is still a pin",
+        {
+            ".github/workflows/ci.yml": PINNED,
+            "scripts/gen.py": (
+                'subprocess.run(["go", "install", '
+                '"google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2"])\n'
+            ),
+        },
+        "scripts/gen.py runs a pinned `go install` "
+        "(google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2) "
+        "and never sets `GOTOOLCHAIN`",
+    ),
+    (
+        # The path elements are optional: `go install example.com@v1.2.3`
+        # installs a module whose root is itself a main package. Written
+        # because a mutation relaxing `(?: /… )+` to `*` survived every other
+        # case here, which said the `+` was over-narrow rather than untested —
+        # a pattern that stops matching a real target silently stops watching
+        # the file it is for.
+        "a module path with no elements below the domain is still a pin",
+        {
+            ".github/workflows/ci.yml": PINNED,
+            "scripts/gen.py": 'subprocess.run(["go", "install", "example.com@v1.2.3"])\n',
+        },
+        "scripts/gen.py runs a pinned `go install` (example.com@v1.2.3) "
+        "and never sets `GOTOOLCHAIN`",
+    ),
+    (
         "a shell `go install` is read, not only a Python argument list",
         {".github/workflows/ci.yml": PINNED, "scripts/gen.sh": SHELL},
         "scripts/gen.sh runs a pinned `go install`",
