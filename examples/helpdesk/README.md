@@ -28,9 +28,18 @@ Each of these is a database feature reachable from the TOML schema or the
 wire and **not** from `#[derive(Record)]`, and each has a test that fails if
 the surface changes.
 
+**One of the five is closed, and it closed the way the table said it would.**
+Row 1's second test was written asserting that the store accepted a bad
+status, with a comment saying *"if the derive ever grows `check`, this test
+starts failing and that is the signal to delete it."* The derive grew it, the
+test failed, and it was inverted rather than deleted — a test that the rule is
+*below* the service is worth more than one that it is not. The row is struck
+rather than removed because the list is the point of this crate and a gap
+that closed is the most useful kind of entry in it.
+
 | | The gap | Demonstrated by |
 |---|---|---|
-| 1 | **No `CHECK`.** Field options are `pk`, `rename`, `added_in`, `scale`, `created_at`, `updated_at`, `soft_delete`, `index`. The four-status rule lives in `Helpdesk::open_ticket`, so anything reaching the store directly writes what it likes. | `a_status_the_application_does_not_know_is_refused` and `the_same_status_written_past_the_service_is_not_refused` |
+| 1 | ~~**No `CHECK`.**~~ **Closed 2026-10-01.** `#[record(check(...))]` exists, and `Ticket::status` uses it: the four-status rule is in the schema, carries the sentence a form shows, and refuses a write that goes around `Helpdesk::open_ticket`. The derive declares a **foreign key** too, and `Comment` has two — one cascading, one restricting. `ledger/2026-10-01-a-check-the-derive-could-not-declare.md` and `ledger/2026-10-01-a-foreign-key-the-derive-could-not-declare.md`. | `the_same_status_written_past_the_service_is_refused_by_the_schema` (which used to assert the opposite and says so), `the_statuses_and_the_check_agree`, `a_comment_on_a_ticket_that_does_not_exist_is_refused`, `deleting_a_ticket_takes_its_comments_and_deleting_an_author_does_not` |
 | 2 | **No text index.** Index options are `name`, `id`, `unique`, `desc`, `columns`, `only_where`. The search box needed one, so `TICKETS_TABLE` restates the whole table by hand. | `the_hand_written_tickets_table_matches_the_derived_one`, which is the cost made into a guard |
 | 3 | **Soft delete has no read.** `#[record(soft_delete)]` works and the close stamps rather than erases, but `Deleted` appears nowhere in `crates/slate-orm/src`, `visible_row_with` is private, and there is no `restore`. An application can close a ticket and cannot reopen it. | `a_closed_ticket_is_hidden_and_cannot_be_reopened_from_here` |
 | 4 | **A paged read cannot be a sorted one.** `Query::after` pins the access path to the table's key range, so the inbox pages in primary-key order and `most_urgent` is a separate, unpaged read. | `a_sorted_inbox_page_is_refused_rather_than_silently_misordered` |

@@ -14,7 +14,7 @@
     clippy::panic
 )]
 
-use slate_helpdesk::{Agent, Helpdesk, HelpdeskError, Indexed, Ticket, caller};
+use slate_helpdesk::{Agent, Comment, Helpdesk, HelpdeskError, Indexed, STATUSES, Ticket, caller};
 use slate_orm::{Aggregate, Record, Records, SecurityContext, Value, memory::MemoryStore};
 use uuid::Uuid;
 
@@ -99,29 +99,85 @@ async fn a_status_the_application_does_not_know_is_refused() {
 }
 
 #[tokio::test]
-async fn the_same_status_written_past_the_service_is_not_refused() {
-    // The other half of the finding, demonstrated rather than argued: the
-    // store takes `"opne"` without complaint, because nothing below this
-    // crate knows the four words. If the derive ever grows `check`, this test
-    // starts failing and that is the signal to delete it.
+async fn the_same_status_written_past_the_service_is_refused_by_the_schema() {
+    // This test used to assert the opposite, and said so: *"the store takes
+    // `"opne"` without complaint, because nothing below this crate knows the
+    // four words. If the derive ever grows `check`, this test starts failing
+    // and that is the signal to delete it."*
+    //
+    // The derive grew `check`
+    // (`ledger/2026-10-01-a-check-the-derive-could-not-declare.md`), the test
+    // started failing, and it is inverted rather than deleted — because the
+    // assertion it can now make is the one worth having: the rule is *below*
+    // the service, so a caller going around `open_ticket` is refused too.
     let desk = seeded().await;
     let dana = caller(DANA, ACME, "agent");
     let mut wrong = ticket(ACME, 12, "ACME-3", "Straight to the store", 3);
     wrong.status = "opne".to_owned();
 
     let txn = desk.store().begin().await.expect("begin");
-    txn.insert_record(&dana, &Indexed(wrong))
+    let error = txn
+        .insert_record(&dana, &Indexed(wrong))
         .await
-        .expect("the store does not know the four words");
-    txn.commit().await.expect("commit");
+        .expect_err("the schema knows the four words now");
+    txn.rollback();
 
-    let found = desk
-        .by_reference(&dana, "ACME-3")
-        .await
-        .expect("reading it back");
+    // On the typed failure, not on `is_err()`: a row refused for the wrong
+    // number of columns would satisfy that and nothing else.
+    let message = error.to_string();
+    let slate_orm::OrmError::Kernel(slate_orm::KernelError::Schema(
+        slate_orm::SchemaError::CheckViolation { violations, .. },
+    )) = &error
+    else {
+        panic!("expected a check violation, got: {message}");
+    };
+    assert_eq!(violations.len(), 1, "{message}");
+    assert_eq!(violations[0].check, "ticket_status");
+    assert_eq!(violations[0].column.as_deref(), Some("status"));
     assert_eq!(
-        found.status, "opne",
-        "stored verbatim, which is the finding"
+        violations[0].message.as_deref(),
+        Some("A ticket is open, pending, solved or closed."),
+        "the sentence a form shows comes from the schema",
+    );
+
+    // And nothing was written.
+    match desk.by_reference(&dana, "ACME-3").await {
+        Err(HelpdeskError::NoSuchTicket(said)) => assert_eq!(said, "ACME-3"),
+        other => panic!("the refused row should not be there: {other:?}"),
+    }
+}
+
+/// `STATUSES` and `STATUS_PATTERN` are two spellings of one list.
+///
+/// Nothing derives either from the other — see the comment on
+/// `STATUS_PATTERN` — so this is what makes the duplication a cost rather
+/// than a hazard: every word the application accepts must pass the check the
+/// schema enforces, and a word it rejects must fail it. A drift in either
+/// direction is a ticket the service takes and the store refuses, or the
+/// other way round.
+#[test]
+fn the_statuses_and_the_check_agree() {
+    let table = Indexed::table();
+    let check = table
+        .checks()
+        .iter()
+        .find(|c| c.name() == "ticket_status")
+        .expect("the status check is on the table the writes use");
+
+    for status in STATUSES {
+        let mut row = ticket(ACME, 1, "ACME-X", "s", 1);
+        row.status = status.to_owned();
+        assert!(
+            check.satisfied_by(&Indexed(row).to_row()),
+            "the application accepts `{status}` and the schema does not",
+        );
+    }
+
+    let mut wrong = ticket(ACME, 1, "ACME-X", "s", 1);
+    wrong.status = "opne".to_owned();
+    assert!(
+        !check.satisfied_by(&Indexed(wrong).to_row()),
+        "a word outside STATUSES must fail the check, or the check admits anything",
     );
 }
 
@@ -239,6 +295,107 @@ async fn a_comment_belongs_to_its_ticket_and_the_thread_reads_back() {
         .expect("reading the thread");
     assert_eq!(thread.len(), 2);
     assert!(thread.iter().all(|c| c.tenant_id == ACME));
+}
+
+/// A comment cannot name a ticket that does not exist.
+///
+/// The service never writes one — `comment` reads the ticket first — so this
+/// goes around it, the way `the_same_status_written_past_the_service_is_refused_by_the_schema`
+/// does, and for the same reason: the question is whether the rule is in the
+/// schema or only in this crate. It is in the schema now, as
+/// `#[record(foreign_key(name = "comments_ticket", parent = Ticket, ...))]`
+/// on [`Comment`].
+#[tokio::test]
+async fn a_comment_on_a_ticket_that_does_not_exist_is_refused() {
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    let orphan = Comment {
+        tenant_id: ACME,
+        id: Uuid::from_u128(900),
+        ticket_id: Uuid::from_u128(999),
+        author_id: DANA,
+        body: "about nothing".to_owned(),
+        written_at: 0,
+    };
+
+    let txn = desk.store().begin().await.expect("begin");
+    let error = txn
+        .insert_record(&dana, &orphan)
+        .await
+        .expect_err("ticket 999 does not exist");
+    txn.rollback();
+
+    let message = error.to_string();
+    let slate_orm::OrmError::Kernel(slate_orm::KernelError::Schema(
+        slate_orm::SchemaError::ForeignKeyViolation { foreign_key, .. },
+    )) = &error
+    else {
+        panic!("expected a foreign key violation, got: {message}");
+    };
+    assert_eq!(foreign_key, "comments_ticket");
+}
+
+/// The two keys differ in what a delete does, and the difference is the point.
+///
+/// `comments_ticket` cascades: a comment on a ticket nobody can see is a row
+/// nobody can reach. `comments_author` restricts: deleting an agent who has
+/// written comments should fail loudly rather than erase what they said.
+/// Both are one word in the attribute, and a test that read the word back
+/// would pass whether or not the kernel ever saw it — so this deletes.
+#[tokio::test]
+async fn deleting_a_ticket_takes_its_comments_and_deleting_an_author_does_not() {
+    let desk = seeded().await;
+    let dana = caller(DANA, ACME, "agent");
+    let opened = desk
+        .open_ticket(&dana, ticket(ACME, 51, "ACME-7", "Cascade", 2))
+        .await
+        .expect("opening");
+    desk.comment(&dana, "ACME-7", DANA, "said something")
+        .await
+        .expect("commenting");
+
+    // RESTRICT: the author has a comment, so the delete is refused — and it
+    // is refused by the *constraint*, which is why the caller here is the
+    // superuser. No role grants delete on `agents` (see `security()`), so an
+    // agent's own delete comes back `access denied` and would pass an
+    // `is_err()` assertion while proving nothing about the foreign key.
+    let txn = desk.store().begin().await.expect("begin");
+    let error = txn
+        .delete_record::<Agent>(
+            &SecurityContext::superuser(),
+            &[Value::Uuid(ACME), Value::Uuid(DANA)],
+        )
+        .await
+        .expect_err("an agent with comments cannot be deleted");
+    txn.rollback();
+    // `ForeignKeyRestricted`, not `ForeignKeyViolation`: the two are different
+    // refusals and naming the wrong one would have let a violation on the
+    // *insert* side pass as a restrict on the delete side.
+    let message = error.to_string();
+    let slate_orm::OrmError::Kernel(slate_orm::KernelError::Schema(
+        slate_orm::SchemaError::ForeignKeyRestricted { foreign_key, .. },
+    )) = &error
+    else {
+        panic!("expected a restricted delete, got: {message}");
+    };
+    assert_eq!(foreign_key, "comments_author");
+
+    // CASCADE: deleting the ticket takes the comment with it. A hard delete,
+    // not `close_ticket` — closing is the soft-delete column and leaves the
+    // row, which is a different thing and is tested elsewhere.
+    let txn = desk.store().begin().await.expect("begin");
+    txn.delete_record::<Indexed>(&dana, &[Value::Uuid(ACME), Value::Uuid(opened.id)])
+        .await
+        .expect("cascade, not restrict");
+    txn.commit().await.expect("commit");
+
+    let txn = desk.store().begin().await.expect("begin");
+    let left = txn
+        .count_records::<Comment>(&dana, &slate_orm::Query::all())
+        .await
+        .expect("counting");
+    txn.rollback();
+    assert_eq!(left, 0, "the cascade should have taken the comment");
 }
 
 #[tokio::test]

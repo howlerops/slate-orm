@@ -37,10 +37,10 @@
 #![warn(missing_docs)]
 
 use slate_orm::{
-    Action, Aggregate, Catalog, Direction, Explanation, Expr, Grant, Grouped, IndexDef, IndexId,
-    Managed, MigrationReport, Policy, Principal, Query, Record, RecordError, RecordStore, Records,
-    Row, ScanOrder, SecurityCatalog, SecurityContext, SortKey, TableDef, TableId, Value, ValueType,
-    migrate,
+    Action, Aggregate, Catalog, CheckDef, Direction, Explanation, Expr, Grant, Grouped, IndexDef,
+    IndexId, Managed, MigrationReport, Ordinal, Policy, Principal, Query, Record, RecordError,
+    RecordStore, Records, Row, ScanOrder, SecurityCatalog, SecurityContext, SortKey, TableDef,
+    TableId, Value, ValueType, migrate,
 };
 use std::sync::LazyLock;
 use uuid::Uuid;
@@ -166,16 +166,33 @@ pub struct Ticket {
     /// table with `slate_schema::TableBuilder` instead, which means writing
     /// the column list a second time and keeping the two in step. Written up
     /// in `ledger/2026-09-30-an-application-written-against-the-rust-surface.md`.
-    pub body: String,
-    /// `open`, `pending`, `solved` or `closed`.
     ///
-    /// **The four words are this crate's, not the schema's.** A `CHECK` is
-    /// what should narrow them, and `#[derive(Record)]` cannot declare one —
-    /// its field options are `pk`, `rename`, `added_in`, `scale`,
-    /// `created_at`, `updated_at`, `soft_delete` and `index`. So the
-    /// constraint lives in [`Helpdesk::open_ticket`] and a caller reaching
-    /// the store directly can write `"opne"`. Same finding as `body` above
-    /// and the same workaround.
+    /// **This is the last of the three gaps that entry found.** The other two
+    /// — a `CHECK` and a foreign key — are attributes now, and `status` below
+    /// and [`Comment`] use them. `text` is the one left, and it is the reason
+    /// [`TICKETS_TABLE`] still exists.
+    pub body: String,
+    /// `open`, `pending`, `solved` or `closed`, and the **database** says so.
+    ///
+    /// This doc comment used to say the four words were this crate's rather
+    /// than the schema's, because `#[derive(Record)]` could declare no
+    /// `CHECK` and the constraint lived in [`Helpdesk::open_ticket`] — so a
+    /// caller reaching the store directly could write `"opne"`. The
+    /// attribute exists now
+    /// (`ledger/2026-10-01-a-check-the-derive-could-not-declare.md`) and the
+    /// rule is where it belongs.
+    ///
+    /// The `message` is the sentence a form shows and the `column` defaults
+    /// to this field, which is what a form puts it beside. The application
+    /// check in `open_ticket` stays: it refuses before the write with a typed
+    /// error naming the four, which is a better experience than a round trip,
+    /// and `the_statuses_and_the_check_agree` holds the two to each other so
+    /// the list and the pattern cannot drift.
+    #[record(check(
+        name = "ticket_status",
+        predicate(Expr::matches(status, STATUS_PATTERN)),
+        message = "A ticket is open, pending, solved or closed."
+    ))]
     pub status: String,
     /// 1 is most urgent. Indexed with `opened_at` so the inbox is a range
     /// walk rather than a sort.
@@ -203,6 +220,30 @@ pub struct Ticket {
     id = 40,
     columns("ticket_id", "written_at")
 ))]
+///
+/// Both references are declared, and both are composite: `tickets` and
+/// `agents` are tenant-scoped, so their primary key begins with `tenant_id`
+/// and a key into either names that column **first**. That is what confines
+/// the reference to the caller's own tenant by the key encoding rather than
+/// by a check somebody has to remember to write.
+///
+/// `on_delete = cascade` on the ticket edge, because a comment on a ticket
+/// nobody can see is a row nobody can reach. The agent edge is the default,
+/// `restrict`: deleting an agent who has written comments should fail loudly
+/// rather than erase what they said.
+#[record(foreign_key(
+    name = "comments_ticket",
+    parent = Ticket,
+    column = "tenant_id",
+    column = "ticket_id",
+    on_delete = cascade,
+))]
+#[record(foreign_key(
+    name = "comments_author",
+    parent = Agent,
+    column = "tenant_id",
+    column = "author_id",
+))]
 pub struct Comment {
     /// The tenant.
     #[record(pk)]
@@ -210,9 +251,9 @@ pub struct Comment {
     /// The comment.
     #[record(pk)]
     pub id: Uuid,
-    /// Which ticket this is on.
+    /// Which ticket this is on. Half of `comments_ticket`.
     pub ticket_id: Uuid,
-    /// Who wrote it.
+    /// Who wrote it. Half of `comments_author`.
     pub author_id: Uuid,
     /// What they said.
     pub body: String,
@@ -223,6 +264,18 @@ pub struct Comment {
 
 /// The four statuses, so the application and the `CHECK` cannot drift apart.
 pub const STATUSES: [&str; 4] = ["open", "pending", "solved", "closed"];
+
+/// The same four, as the `CHECK` on [`Ticket::status`] spells them.
+///
+/// Two spellings of one list, which is the thing this repository usually
+/// refuses. It is kept because they are read by different things — a Rust
+/// `contains` and a regular expression the kernel compiles — and deriving
+/// either from the other means either building a pattern at runtime, so the
+/// attribute cannot take it, or parsing one, so the error is at the wrong
+/// layer. `the_statuses_and_the_check_agree` is what makes the duplication a
+/// cost rather than a hazard: it runs every word of `STATUSES` through the
+/// check and one that is not in it.
+pub const STATUS_PATTERN: &str = "^(open|pending|solved|closed)$";
 
 /// The tickets table as this application actually declares it: everything
 /// `#[derive(Record)]` produced, plus two **text** indexes.
@@ -283,6 +336,18 @@ static TICKETS_TABLE: LazyLock<TableDef> = LazyLock::new(|| {
         .soft_delete("closed_at")
         .managed_for("opened_at", Managed::CreatedAt)
         .managed_for("updated_at", Managed::UpdatedAt)
+        // The same check the derive declares on `Ticket::status`. Written out
+        // here for the same reason every other line in this builder is: the
+        // table the writes use is this one, so a constraint only the derived
+        // table carries is a constraint no write enforces — the silent-empty
+        // failure one field over, with a rule instead of an index.
+        // `the_hand_written_tickets_table_matches_the_derived_one` is what
+        // notices if the two drift.
+        .check(
+            CheckDef::new("ticket_status", Expr::matches(Ordinal(5), STATUS_PATTERN))
+                .with_column("status")
+                .with_message("A ticket is open, pending, solved or closed."),
+        )
         .schema_version(1)
         .index(
             IndexDef::builder("tickets_by_reference", IndexId(30))

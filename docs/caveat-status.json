@@ -15565,6 +15565,27 @@
       "by": "The distinction is the point and is why the entry states it: zero means every recorded caveat has reasoning behind it, not that nothing is left to build. docs/orm-comparison.md's gap table is the list of what this does not have and is long on purpose. Conflating the two would make the tracker a progress bar, which is the misreading the `deliberate` verdict exists to prevent."
     },
     {
+      "entry": "2026-10-01-the-example-says-the-rule-now.md",
+      "key": "Nothing exercises these constraints through a client.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "The same decision both derive entries record: the daemon declares its tables in TOML, so no deployed path reaches a Rust-declared constraint, and a test would need a second table-declaration path in slate-serverd existing only for the test. Both paths end in the same CheckDef and ForeignKeyDef, and the clients are covered against TOML-declared ones end to end."
+    },
+    {
+      "entry": "2026-10-01-the-example-says-the-rule-now.md",
+      "key": "The `agents` delete is reachable only by the superuser.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "Which is correct: `security()` grants no role delete on `agents`, because an agent deleting an agent is not an operation this application has. That makes the restrict test a statement about the constraint rather than about anything a caller can do, which is what it is for. Granting the delete so the interaction could be tested would widen the application's surface to suit a test, which is the wrong direction."
+    },
+    {
+      "entry": "2026-10-01-the-example-says-the-rule-now.md",
+      "key": "The third gap is still open and is the reason `TICKETS_TABLE",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-01",
+      "by": "`#[record(index(...))]` has no `text`, which is row 2 of the helpdesk's gap table and is left open on purpose: the crate exists to hold a list of what the Rust surface cannot say, and `TICKETS_TABLE` is the cost of this one written out at full length. Closing it is a feature on the derive, not a change to the example; when it closes, the hand-written table goes and `the_hand_written_tickets_table_matches_the_derived_one` goes with it."
+    },
+    {
       "entry": "2026-10-01-the-live-frame-driven-down.md",
       "key": "100 live caveats remain",
       "verdict": "moment",
