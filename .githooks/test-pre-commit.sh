@@ -146,6 +146,35 @@ check 'entry > ledger/2026-01-01-a.md
        git add .' \
     refuse 'a file over the limit'
 
+# --- build output at any depth ---------------------------------------------
+#
+# The cause the size guard only catches the symptom of. A nested workspace's
+# `target/` is not matched by the root `.gitignore`'s anchored `/target`, and
+# the files in it are each small; the 102 MB binary that made the push fail
+# was one of 2,412.
+
+check 'entry > ledger/2026-01-01-a.md
+       mkdir -p nested/target/debug
+       echo x > nested/target/debug/thing
+       git add -f .' \
+    refuse 'build output in a nested target/, each file under the limit'
+
+check 'entry > ledger/2026-01-01-a.md
+       mkdir -p pkg/node_modules/dep
+       echo x > pkg/node_modules/dep/index.js
+       git add -f .' \
+    refuse 'a nested node_modules, which the root rule also does not reach'
+
+# And the control: a path that merely *contains* the word is not a build
+# directory. `targeting.rs` and `src/targets/` are ordinary source, and a
+# guard that refused them would be switched off within a day.
+check 'entry > ledger/2026-01-01-a.md
+       mkdir -p src/targets
+       echo x > src/targets/mod.rs
+       echo x > src/targeting.rs
+       git add .' \
+    allow 'a path that contains the word target but is not a target directory'
+
 check 'entry > ledger/2026-01-01-a.md
        echo small > small.txt
        git add .' \

@@ -75,6 +75,55 @@ MSG
     exit 1
 fi
 
+# --- build output at any depth -------------------------------------------
+#
+# The size guard above catches the *symptom* of the accident it was written
+# for — `git add -A` sweeping a nested workspace's `target/` — and
+# `ledger/2026-09-13-ignore-the-testservers-target.md` recorded that it does
+# not catch the cause:
+#
+#   > Nothing stops the next nested workspace from doing the same thing. A
+#   > `git check-ignore` assertion in the pre-commit hook, or a size guard,
+#   > would — neither is here.
+#
+# The size guard arrived; this is the other half, and it is **not** a
+# `git check-ignore` assertion, because that cannot work: `check-ignore`
+# answers about paths git is not already tracking, and a staged path is
+# staged. What makes the cause visible is the shape of the path itself.
+#
+# The root `.gitignore` says `/target`, anchored to the repository root, so
+# `clients/python/testserver/target/` matched nothing. Every build-output
+# directory this repository produces has a name that is a build-output name
+# wherever it appears, so the rule is the name at any depth. That is a rule
+# about a convention rather than about one workspace, which is why it catches
+# the *next* nested workspace and the anchored `.gitignore` rules cannot.
+#
+# Overridable for the same reason the size limit is: so the hook's own test
+# can trip it without creating a 2,412-file `target/`.
+build_dirs=${SLATE_HOOK_BUILD_DIRS:-'(^|/)(target|node_modules|dist|dist-test|__pycache__|\.venv|\.pytest_cache|\.mypy_cache)/'}
+built=$(printf '%s\n' "$staged" | grep -E "$build_dirs" || true)
+if [ -n "$built" ]; then
+    cat >&2 <<MSG
+
+  This commit stages a path inside a build-output directory:
+
+$(printf '%s\n' "$built" | sed 's/^/      /')
+
+  A rule like \`/target\` in the root .gitignore is anchored to the repository
+  root and does not match a nested workspace's. That is how 2,412 files from
+  \`clients/python/testserver/target/\` were staged once, including a 102 MB
+  binary the push then refused.
+
+  Add the path to the nearest .gitignore, or \`git rm --cached\` it.
+
+  If the file genuinely belongs in the repository — a fixture whose directory
+  happens to be called \`dist\`, say — \`git commit --no-verify\`, and consider
+  renaming the directory so the next person does not meet this.
+
+MSG
+    exit 1
+fi
+
 outside=$(printf '%s\n' "$staged" | grep -v '^ledger/' || true)
 [ -n "$outside" ] || exit 0
 

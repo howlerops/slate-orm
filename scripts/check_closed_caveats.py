@@ -930,6 +930,10 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "crates/slate-serverd/src/lang/pred.rs",
  ),
 
+ # The roster rather than the `if` that reads it: a revert leaving the
+ # variable would be a hook that greps for a pattern naming nothing.
+ "hook-refuses-build-output": ("SLATE_HOOK_BUILD_DIRS", ".githooks/pre-commit"),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -994,6 +998,9 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`enablement: true` is kept rather than reverted, even though'):
+        'closed by observing the setting it is about: actions/configure-pages@v5 with `enablement: true` succeeds in every recent run and the \'If that failed, here is why\' step beside it is skipped, so the decision this caveat defends is the one in force. The evidence is a run on the remote, not a file -- the workflow line it argues for was already in the tree while the claim was unsettled, so it witnesses nothing',
     ('2026-09-30-two-imports-a-script-put-where-the-text-was.md',
      "It does not check the session's other scripted edits for the"):
         'closed by reading the diff — 1774 added lines over 34 files outside `ledger/` — for the class the caveat names: a replacement applied at several sites, one of whose contexts differs. There is none in that range, and a reading of a diff leaves nothing in the tree but the entry that records what it looked for',
@@ -2689,6 +2696,22 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-29-the-same-wrong-sentence-twice-in-one-file.md',
      'No other error message in the parser was reviewed for the sa'):
         'parser-refusals-reviewed',
+
+    # --- 2026-10-01, the stale-verdict sweep -------------------------------
+    #
+    # Both were answered by `check_build_output.py`, written for a different
+    # entry and never connected back; the hook rule is the earlier moment
+    # rather than a new capability, so the witness is the hook — it is the
+    # thing that did not exist when the caveat was written.
+    ('2026-09-13-ignore-the-testservers-target.md',
+     'Nothing stops the next nested workspace from doing the same '):
+        'hook-refuses-build-output',
+    ('2026-09-14-guards-against-the-recurring-mistakes.md',
+     'Nothing stops a *fourth* nested workspace from being created'):
+        'hook-refuses-build-output',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`enablement: true` is kept rather than reverted, even though'):
+        '=setting',
 }
 
 

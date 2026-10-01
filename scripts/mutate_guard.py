@@ -83,7 +83,21 @@ def run(guard: str) -> tuple[str, str]:
     path = ROOT / guard
     if not path.exists():
         return "died", f"{guard} does not exist"
-    done = subprocess.run([sys.executable, str(path)], cwd=ROOT, capture_output=True, text=True)
+    if path.suffix not in (".py", ".sh"):
+        # Named rather than guessed: a runner this does not know would be
+        # handed to the Python interpreter and die in a way that reads as a
+        # guard refusing.
+        return "died", f"{guard} is neither a .py nor a .sh, so this does not know how to run it"
+    # A `.sh` runs under `sh`, which is the one thing in `scripts/`-shaped
+    # roster that is not Python: `.githooks/test-pre-commit.sh`. Its own
+    # output cannot be read by `mutate.py` directly — it prints `  FAIL  …`
+    # with two leading spaces and the `python` dialect anchors at column
+    # zero — so a mutation of the hook scored UNREADABLE and could not be
+    # judged at all. Running it here re-emits the verdict at column zero,
+    # which is exactly what this adapter is for; the alternative was
+    # unindenting a suite whose format matches `check.sh`'s on purpose.
+    runner = ["sh", str(path)] if path.suffix == ".sh" else [sys.executable, str(path)]
+    done = subprocess.run(runner, cwd=ROOT, capture_output=True, text=True)
     output = done.stdout + done.stderr
     if DIED in output:
         return "died", f"{guard} raised rather than refused"
