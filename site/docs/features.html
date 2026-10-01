@@ -195,6 +195,28 @@
         already, which is why its quietest hour is 04:00 and not 09:00.
       </p>
 
+    <h3>Constraints on the type</h3>
+      <p>
+        A <code>CHECK</code> and a foreign key are attributes on the same
+        struct as the columns, so the schema the kernel enforces and the type
+        the application writes are one thing.
+        <code>#[record(check(name = "positive", predicate(&hellip;), message
+        = "&hellip;"))]</code> puts the column a form blames and the sentence
+        it shows next to the field;
+        <code>#[record(foreign_key(name = "&hellip;", parent = Account,
+        on_delete = cascade))]</code> names the parent as a <em>type</em>, so
+        a typo is a compile error rather than a <code>NOT_FOUND</code> from
+        the catalog at startup.
+      </p>
+      <p>
+        Both went through <code>TableDef::builder</code> only until
+        2026-10-01, which meant a table needing either had to be hand-written
+        away from the derive. The mistakes that used to arrive at startup or
+        at the first refused write are compile errors now: a column naming
+        nothing, two constraints sharing a name, an <code>on_delete</code>
+        word that is neither <code>restrict</code> nor <code>cascade</code>.
+      </p>
+
     <h3>Relationships, loaded not lazy</h3>
       <p>
         <code>#[record(has_many(Book, foreign = author_id))]</code> declares

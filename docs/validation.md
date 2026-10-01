@@ -69,7 +69,10 @@ refused for:
 
 - **Type and nullability**, from the column definition.
 - **The primary key**, and any unique index.
-- **A foreign key**, checked against the parent table.
+- **A foreign key**, checked against the parent table. Declarable from
+  `#[derive(Record)]` since 2026-10-01 as
+  `#[record(foreign_key(name = "...", parent = Account, on_delete = cascade))]`,
+  which names the parent as a *type*.
 - **A `CHECK`**, which is a predicate string in the catalog — `predicate =
   "size >= 0"` — parsed into the same `Expr` the planner uses.
 

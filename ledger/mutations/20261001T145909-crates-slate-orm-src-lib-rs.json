@@ -1,0 +1,63 @@
+{
+  "at": "2026-10-01T14:59:09+00:00",
+  "file": "crates/slate-orm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--doc",
+    "--no-fail-fast"
+  ],
+  "commit": "e31ed21",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the bad on_delete word becomes a good one",
+      "old": "on_delete = set_null))]",
+      "new": "on_delete = cascade))]",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 427) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the mistyped column is spelled right",
+      "old": "column = \"authr_id\"))]",
+      "new": "column = \"author_id\"))]",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 452) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the duplicated column becomes the second one",
+      "old": "///     column = \"tenant_id\",\n///     column = \"tenant_id\",",
+      "new": "///     column = \"tenant_id\",\n///     column = \"account_id\",",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 477) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the duplicated key name differs",
+      "old": "#[record(foreign_key(name = \"author\", parent = Author, column = \"editor_id\"))]",
+      "new": "#[record(foreign_key(name = \"editor\", parent = Author, column = \"editor_id\"))]",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 510) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

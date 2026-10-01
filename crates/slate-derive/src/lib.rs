@@ -269,6 +269,125 @@ fn parse_check(
     })
 }
 
+/// A `FOREIGN KEY` as written in an attribute.
+#[derive(Clone)]
+struct ForeignKeySpec {
+    name: String,
+    /// The parent type, emitted verbatim. A `Type` rather than a table name
+    /// for the reason `has_many` takes one: a name is resolved at runtime and
+    /// a typo in it is a `NOT_FOUND` from the catalog, where a type is resolved
+    /// by the compiler against the parent's own `#[record(id = N)]`.
+    parent: syn::Type,
+    /// The referencing columns, in the parent's primary key order. A
+    /// field-level `foreign_key(...)` leaves the `"\0self"` placeholder here
+    /// until the field's final column name is known, exactly as
+    /// [`CheckSpec::column`] does.
+    columns: Vec<String>,
+    /// `None` means the builder's default, which is `Restrict`. Kept optional
+    /// rather than defaulted here so the emission can stay silent when nothing
+    /// was written, and the default lives in one place.
+    on_delete: Option<Ident>,
+    span: Span,
+}
+
+/// Parse `foreign_key(name = "...", parent = Type, column = "...", on_delete = cascade)`.
+///
+/// `owner` is `Some` for a key written on a field, and then that field is the
+/// single referencing column. That default is why the field position is worth
+/// having: the overwhelmingly common foreign key is one column into a
+/// single-column primary key, and making it name itself is the repetition the
+/// `rename` failure mode feeds on.
+///
+/// `column` may be given more than once, and order is load-bearing — the
+/// columns are matched against the parent's primary key in the order written,
+/// so a key into a tenant-scoped parent names the tenant column first. That is
+/// `ForeignKeyBuilder::column`'s contract and this does not reinterpret it.
+fn parse_foreign_key(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+    owner: Option<&str>,
+) -> syn::Result<ForeignKeySpec> {
+    let span = meta.path.span();
+    let mut name: Option<String> = None;
+    let mut parent: Option<syn::Type> = None;
+    let mut columns: Vec<String> = Vec::new();
+    let mut on_delete: Option<Ident> = None;
+
+    meta.parse_nested_meta(|meta| {
+        if meta.path.is_ident("name") {
+            name = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("parent") {
+            if parent.is_some() {
+                return Err(meta.error(
+                    "`parent` given twice; a foreign key references one table, and two would \
+                     mean one reference enforced and one ignored",
+                ));
+            }
+            parent = Some(meta.value()?.parse()?);
+        } else if meta.path.is_ident("column") {
+            columns.push(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("on_delete") {
+            let word: Ident = meta.value()?.parse()?;
+            // Matched here rather than passed through, so a misspelling is an
+            // error on the attribute naming both actions rather than an
+            // `unresolved variant` pointing into the expansion.
+            let action = match word.to_string().as_str() {
+                "restrict" => Ident::new("Restrict", word.span()),
+                "cascade" => Ident::new("Cascade", word.span()),
+                other => {
+                    return Err(syn::Error::new(
+                        word.span(),
+                        format!(
+                            "unknown `on_delete` action `{other}`; the two are `restrict` \
+                             (the default) and `cascade`"
+                        ),
+                    ));
+                }
+            };
+            on_delete = Some(action);
+        } else {
+            return Err(meta.error(
+                "unknown foreign key option; expected `name`, `parent`, `column` or `on_delete`",
+            ));
+        }
+        Ok(())
+    })?;
+
+    let Some(name) = name else {
+        return Err(syn::Error::new(span, "foreign key needs `name = \"...\""));
+    };
+    let Some(parent) = parent else {
+        return Err(syn::Error::new(
+            span,
+            "foreign key needs `parent = <type>`; the type is what resolves the table id, and \
+             there is no default for which table a key references",
+        ));
+    };
+    // An explicit `column` on a field-level key wins over the field it sits on,
+    // for the reason an explicit `column` on a field-level check does: a
+    // composite key into a tenant-scoped parent has to name the tenant column
+    // first, and it should not have to move to a different position to say so.
+    if columns.is_empty() {
+        match owner {
+            Some(field) => columns.push(field.to_owned()),
+            None => {
+                return Err(syn::Error::new(
+                    span,
+                    "foreign key needs at least one `column = \"...\"`; written on a field it \
+                     defaults to that field, but on the struct there is nothing to default to",
+                ));
+            }
+        }
+    }
+
+    Ok(ForeignKeySpec {
+        name,
+        parent,
+        columns,
+        on_delete,
+        span,
+    })
+}
+
 /// A relationship as written in an attribute.
 #[derive(Clone)]
 struct RelationSpec {
@@ -492,6 +611,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let mut tenant: Option<(String, Span)> = None;
     let mut indexes: Vec<IndexSpec> = Vec::new();
     let mut checks: Vec<CheckSpec> = Vec::new();
+    let mut foreign_keys: Vec<ForeignKeySpec> = Vec::new();
     let mut relations: Vec<RelationSpec> = Vec::new();
 
     for attr in &input.attrs {
@@ -512,6 +632,8 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 indexes.push(parse_index(&meta, None)?);
             } else if meta.path.is_ident("check") {
                 checks.push(parse_check(&meta, None)?);
+            } else if meta.path.is_ident("foreign_key") {
+                foreign_keys.push(parse_foreign_key(&meta, None)?);
             } else if meta.path.is_ident("has_many") {
                 relations.push(parse_relation(&meta, true)?);
             } else if meta.path.is_ident("belongs_to") {
@@ -519,7 +641,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             } else {
                 return Err(meta.error(
                     "unknown option; expected `table`, `id`, `version`, `tenant`, `index`, \
-                     `check`, `has_many` or `belongs_to`",
+                     `check`, `foreign_key`, `has_many` or `belongs_to`",
                 ));
             }
             Ok(())
@@ -561,6 +683,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         // collected against the field's *final* column name.
         let mut field_indexes: Vec<IndexSpec> = Vec::new();
         let mut field_checks: Vec<CheckSpec> = Vec::new();
+        let mut field_foreign_keys: Vec<ForeignKeySpec> = Vec::new();
 
         for attr in &field.attrs {
             if !attr.path().is_ident("record") {
@@ -585,10 +708,13 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     field_indexes.push(parse_index(&meta, Some("\0self"))?);
                 } else if meta.path.is_ident("check") {
                     field_checks.push(parse_check(&meta, Some("\0self"))?);
+                } else if meta.path.is_ident("foreign_key") {
+                    field_foreign_keys.push(parse_foreign_key(&meta, Some("\0self"))?);
                 } else {
                     return Err(meta.error(
                         "unknown option; expected `pk`, `rename`, `added_in`, `scale`, \
-                         `created_at`, `updated_at`, `soft_delete`, `index` or `check`",
+                         `created_at`, `updated_at`, `soft_delete`, `index`, `check` or \
+                         `foreign_key`",
                     ));
                 }
                 Ok(())
@@ -614,6 +740,17 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 spec.column = Some(column.clone());
             }
             checks.push(spec);
+        }
+        // Against the *renamed* column for the reason the checks above are: a
+        // foreign key's columns are matched to the parent's primary key by
+        // name, and the field ident is a name nothing outside this file uses.
+        for mut spec in field_foreign_keys {
+            for name in &mut spec.columns {
+                if name == "\0self" {
+                    name.clone_from(&column);
+                }
+            }
+            foreign_keys.push(spec);
         }
         if is_pk {
             primary_key.push(column.clone());
@@ -658,6 +795,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .collect();
     validate_relations(&fields, &relations)?;
     validate_checks(&fields, &checks)?;
+    validate_foreign_keys(&fields, &foreign_keys)?;
 
     // --- code generation
     let column_stmts = fields.iter().map(|f| {
@@ -789,6 +927,34 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 #column
                 #message
                 check
+            });
+        }
+    });
+
+    let foreign_key_stmts = foreign_keys.iter().map(|spec| {
+        let name = &spec.name;
+        let parent = &spec.parent;
+        let columns = &spec.columns;
+        let on_delete = spec.on_delete.as_ref().map(|action| {
+            quote! {
+                key = key.on_delete(::slate_orm::ReferentialAction::#action);
+            }
+        });
+        // `table_id()` rather than `table().id()`: `table()` caches behind a
+        // `OnceLock` and this code runs *inside* that lock's initialiser, so a
+        // table referencing itself — `employee.manager_id -> employee`, the
+        // ordinary self-reference — would re-enter it and deadlock. The derive
+        // overrides `table_id()` with the literal from `#[record(id = N)]`, so
+        // nothing is built to read it.
+        quote! {
+            builder = builder.foreign_key({
+                let mut key = ::slate_orm::ForeignKeyDef::builder(
+                    #name,
+                    <#parent as ::slate_orm::Record>::table_id(),
+                );
+                #(key = key.column(#columns);)*
+                #on_delete
+                key
             });
         }
     });
@@ -960,6 +1126,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     #soft_delete_stmt
                     #(#index_stmts)*
                     #(#check_stmts)*
+                    #(#foreign_key_stmts)*
                     builder = builder.schema_version(#version);
                     match builder.build() {
                         ::core::result::Result::Ok(table) => table,
@@ -970,6 +1137,10 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                         ),
                     }
                 })
+            }
+
+            fn table_id() -> ::slate_orm::TableId {
+                ::slate_orm::TableId(#table_id)
             }
 
             fn to_row(&self) -> ::slate_orm::Row {
@@ -1053,6 +1224,61 @@ fn validate_checks(fields: &[FieldSpec], checks: &[CheckSpec]) -> syn::Result<()
                 format!(
                     "two checks named `{}`; the name is how a refusal identifies which rule \
                      fired, so a duplicate makes one of them unnameable",
+                    spec.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a foreign key naming a column this struct does not have, and two
+/// keys sharing a name.
+///
+/// The column rule is the one worth the code. `ForeignKeyBuilder` holds the
+/// strings and resolves them when the table is built, so a typo is a
+/// `SchemaError` from `Record::table()` — which is at least loud. But the
+/// *parent* side is checked later still, by `Catalog`, and a key whose own
+/// columns do not exist never gets that far, so the message a reader sees
+/// names the wrong layer. Refusing here puts a span on the attribute.
+fn validate_foreign_keys(fields: &[FieldSpec], keys: &[ForeignKeySpec]) -> syn::Result<()> {
+    for (i, spec) in keys.iter().enumerate() {
+        for column in &spec.columns {
+            if !fields.iter().any(|f| &f.column == column) {
+                return Err(syn::Error::new(
+                    spec.span,
+                    format!(
+                        "foreign key `{}` references column `{}`, which this struct does not \
+                         have. Columns are matched after `rename`, so name the column rather \
+                         than the field if the two differ",
+                        spec.name, column
+                    ),
+                ));
+            }
+        }
+        // A duplicated column within one key would encode a parent key with
+        // the same value twice, which no primary key has. Caught here because
+        // the builder takes the list verbatim and the mismatch would surface
+        // as an arity error naming the parent.
+        for (j, column) in spec.columns.iter().enumerate() {
+            if spec.columns.iter().take(j).any(|c| c == column) {
+                return Err(syn::Error::new(
+                    spec.span,
+                    format!(
+                        "foreign key `{}` names column `{}` twice; the columns are matched \
+                         against the parent's primary key in order, and a key has each of \
+                         its columns once",
+                        spec.name, column
+                    ),
+                ));
+            }
+        }
+        if keys.iter().take(i).any(|k| k.name == spec.name) {
+            return Err(syn::Error::new(
+                spec.span,
+                format!(
+                    "two foreign keys named `{}`; the name is how a refusal identifies which \
+                     reference failed, so a duplicate makes one of them unnameable",
                     spec.name
                 ),
             ));

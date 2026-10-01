@@ -347,6 +347,211 @@ pub use relation::{
 /// }
 /// ```
 ///
+/// # Foreign keys
+///
+/// `foreign_key(...)` declares a reference into another table's **primary
+/// key** — always the primary key, never a unique index, which is what makes
+/// the check a point read rather than an index probe followed by a row read.
+/// The parent is named as a *type*, so a typo is a compile error rather than
+/// a `NOT_FOUND` from the catalog at startup:
+///
+/// ```
+/// use slate_orm::{Record, ReferentialAction};
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1)]
+/// struct Author {
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     #[record(foreign_key(name = "books_author", parent = Author, on_delete = cascade))]
+///     author_id: u64,
+/// }
+///
+/// let key = &Book::table().foreign_keys()[0];
+/// assert_eq!(key.parent(), Author::table_id());
+/// assert_eq!(key.on_delete(), ReferentialAction::Cascade);
+/// ```
+///
+/// Written **on a field**, the referencing column defaults to that field,
+/// after any `rename`. Written on the struct, every column is named, and
+/// **order is load-bearing**: the columns are matched against the parent's
+/// primary key in the order written, so a reference to a tenant-scoped parent
+/// names the tenant column first. A reversed pair is not a compile error and
+/// not a schema error — it looks up a row that is not the one meant:
+///
+/// ```
+/// use slate_orm::{Ordinal, Record};
+///
+/// #[derive(Record)]
+/// #[record(table = "accounts", id = 1)]
+/// #[record(tenant = "tenant_id")]
+/// struct Account {
+///     #[record(pk)]
+///     tenant_id: u64,
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "invoices", id = 2)]
+/// #[record(tenant = "tenant_id")]
+/// #[record(foreign_key(
+///     name = "invoices_account",
+///     parent = Account,
+///     column = "tenant_id",
+///     column = "account_id",
+/// ))]
+/// struct Invoice {
+///     #[record(pk)]
+///     tenant_id: u64,
+///     #[record(pk)]
+///     id: u64,
+///     account_id: u64,
+/// }
+///
+/// assert_eq!(Invoice::table().foreign_keys()[0].columns(), &[Ordinal(0), Ordinal(2)]);
+/// ```
+///
+/// `on_delete` is `restrict` unless it says `cascade`, which is what makes
+/// writing nothing the safe thing to write. Any other word does not compile,
+/// and the error names the two that do rather than pointing into the
+/// expansion:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1)]
+/// struct Author {
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     #[record(foreign_key(name = "books_author", parent = Author, on_delete = set_null))]
+///     author_id: u64,
+/// }
+/// ```
+///
+/// A `column` naming nothing does not compile either. `ForeignKeyBuilder`
+/// holds the strings and resolves them when the table is built, and the
+/// *parent* side is checked later still by [`Catalog`] — so a key whose own
+/// columns do not exist produces a message about the wrong layer:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1)]
+/// struct Author {
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// #[record(foreign_key(name = "books_author", parent = Author, column = "authr_id"))]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     author_id: u64,
+/// }
+/// ```
+///
+/// Nor does one key naming a column twice. Nothing downstream would catch it:
+/// the builder resolves both names happily, and `(tenant_id, tenant_id)`
+/// against a two-column parent key of matching types passes
+/// [`Catalog::validate_foreign_keys`] and then references the wrong row:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "accounts", id = 1)]
+/// struct Account {
+///     #[record(pk)]
+///     tenant_id: u64,
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "invoices", id = 2)]
+/// #[record(foreign_key(
+///     name = "invoices_account",
+///     parent = Account,
+///     column = "tenant_id",
+///     column = "tenant_id",
+/// ))]
+/// struct Invoice {
+///     #[record(pk)]
+///     id: u64,
+///     tenant_id: u64,
+///     account_id: u64,
+/// }
+/// ```
+///
+/// Nor do two foreign keys sharing a name, for the reason two checks sharing
+/// one do not: the name is how a refusal says which reference failed.
+/// `TableBuilder::build` refuses it as well, but at `Record::table()`, which
+/// this macro turns into a panic on the first write:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "authors", id = 1)]
+/// struct Author {
+///     #[record(pk)]
+///     id: u64,
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "books", id = 2)]
+/// #[record(foreign_key(name = "author", parent = Author, column = "author_id"))]
+/// #[record(foreign_key(name = "author", parent = Author, column = "editor_id"))]
+/// struct Book {
+///     #[record(pk)]
+///     id: u64,
+///     author_id: u64,
+///     editor_id: u64,
+/// }
+/// ```
+///
+/// A table may reference **itself**, which is the ordinary org chart and not
+/// an exotic shape. It works because the parent's table id comes from
+/// [`Record::table_id`], a literal the derive writes out, rather than from
+/// `table()` — `table()` caches behind a `OnceLock`, and reading it here
+/// would re-enter that lock from inside its own initialiser and hang:
+///
+/// ```
+/// use slate_orm::Record;
+///
+/// #[derive(Record)]
+/// #[record(table = "employees", id = 1)]
+/// struct Employee {
+///     #[record(pk)]
+///     id: u64,
+///     // Nullable, because the first row has no manager and a null
+///     // referencing column satisfies the key without a lookup.
+///     #[record(foreign_key(name = "employees_manager", parent = Employee))]
+///     manager_id: Option<u64>,
+/// }
+///
+/// assert_eq!(Employee::table().foreign_keys()[0].parent(), Employee::table_id());
+/// ```
+///
 /// # Relationships
 ///
 /// `has_many` and `belongs_to` emit a [`Related`] impl, which

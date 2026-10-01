@@ -491,6 +491,46 @@ foreign one by emitting `Other::COLUMNS.field`. A string would make a typo a
 panic on first use, or a relationship over the wrong column that returns
 plausible rows for ever.
 
+### Constraints are declared on the type too
+
+A `CHECK` and a foreign key are attributes on the same struct, so the schema
+the kernel enforces and the type the application writes are one thing:
+
+```rust
+#[derive(Record)]
+#[record(table = "invoices", id = 7)]
+struct Invoice {
+    #[record(pk)] id: u64,
+    // A reference to `Account`'s primary key. The parent is a *type*: a
+    // typo is a compile error, not a NOT_FOUND from the catalog at startup.
+    #[record(foreign_key(name = "invoices_account", parent = Account, on_delete = cascade))]
+    account_id: u64,
+    // The column a form puts the error beside defaults to this field, after
+    // any `rename`, and the message is the sentence to show.
+    #[record(check(
+        name = "positive",
+        predicate(Expr::compare(cents, CmpOp::Gt, Value::I64(0))),
+        message = "An invoice must be for more than nothing."
+    ))]
+    cents: i64,
+}
+```
+
+Both were `TableDef::builder`-only until 2026-10-01, which in practice meant
+a table needing either had to be hand-written — and `Record::table()` is what
+every write hands the store, so hand-writing one means a newtype and a test
+holding the two shapes together. The mistakes that used to surface at
+startup, or at the first refused write, are compile errors now: a `column`
+naming nothing, two constraints sharing a name, one key naming a column
+twice, an `on_delete` word that is neither `restrict` nor `cascade`.
+
+A table may reference itself — `employee.manager_id`, `comment.reply_to` —
+which is why `Record` carries a `table_id()` the derive overrides with the
+literal id. Resolving the parent through `table()` instead would re-enter its
+own `OnceLock` and deadlock, silently, with no output;
+`ledger/2026-10-01-a-foreign-key-the-derive-could-not-declare.md` has the run
+that demonstrates it.
+
 ### Pages are keys, not offsets
 
 `OFFSET n` reads and discards `n` rows — the executor says so in a comment — so

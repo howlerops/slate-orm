@@ -910,6 +910,16 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # attribute and builds nothing, and the parser is what a reader goes to first.
  "derive-declares-a-check": ("fn parse_check(", "crates/slate-derive/src/lib.rs"),
 
+ # The `foreign_key(...)` attribute on the same macro, and the needle is
+ # chosen the same way. A revert that took the parser and left the emission
+ # would be a derive refusing the attribute outright; one that took the
+ # emission and left the parser would be a derive that accepts it and declares
+ # nothing. The parser is the half a reader reaches first.
+ "derive-declares-a-foreign-key": (
+     "fn parse_foreign_key(",
+     "crates/slate-derive/src/lib.rs",
+ ),
+
  # The sweep, not the `NOT_THE_JOB_COUNT` roster beside it: a revert leaving
  # the roster standing would be a list of exemptions nothing consults, which
  # reads exactly like a working guard.
@@ -2688,6 +2698,11 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-19-a-check-that-names-its-field.md',
      '`#[derive(Record)]` cannot declare either field. A check wri'):
         'derive-declares-a-check',
+
+    # --- 2026-10-01, the derive's foreign key ------------------------------
+    ('2026-10-01-a-check-the-derive-could-not-declare.md',
+     'It does not declare a foreign key.'):
+        'derive-declares-a-foreign-key',
 
     # --- 2026-10-01, two guards that reached less far than they read -------
     ('2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md',
