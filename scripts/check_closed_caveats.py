@@ -934,6 +934,11 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # variable would be a hook that greps for a pattern naming nothing.
  "hook-refuses-build-output": ("SLATE_HOOK_BUILD_DIRS", ".githooks/pre-commit"),
 
+ "demo-has-a-search-box": (
+     "data-test=\"search-text\"",
+     "examples/explorer/web/src/panels.tsx",
+ ),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -2689,6 +2694,10 @@ WITNESSED: dict[tuple[str, str], str] = {
      'Only two files were swept.'): 'every-job-count-swept',
     ('2026-09-29-the-skip-list-that-excused-nothing.md',
      '`PINNED` still matches any `@v<digit>` token'): 'pinned-is-a-module-path',
+    # The same caveat in the entry it came from, which the skip-list entry
+    # restated. One fix, two rows.
+    ('2026-09-29-a-guard-whose-roster-was-itself.md',
+     '`PINNED` matches any `@v<digit>` token.'): 'pinned-is-a-module-path',
     # The review of the parser's other refusals. The needle is the test that
     # holds the three fixed sentences, not any one of them: a reader wants to
     # see what was found, and the three literals could each be reverted
@@ -2712,6 +2721,15 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-14-main-and-the-documentation-sweep.md',
      '`enablement: true` is kept rather than reverted, even though'):
         '=setting',
+    # Two residuals that were stale: the demo grew a search box and neither
+    # row was re-read. The witness is the panel, not the tab name — a tab
+    # could stay while the panel went.
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     'No `CONTAINS` in the SQL front end and no search box in the '):
+        'demo-has-a-search-box',
+    ('2026-09-21-contains-on-the-wire.md',
+     'No `CONTAINS` in the SQL front end and no search box in the '):
+        'demo-has-a-search-box',
 }
 
 
