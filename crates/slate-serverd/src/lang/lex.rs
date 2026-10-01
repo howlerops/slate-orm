@@ -154,6 +154,15 @@ pub(crate) fn tokenize(source: &str) -> LangResult<Vec<Token>> {
         // mistake looks like the file rather than the expression.
         let hint = if byte == b'"' {
             ". String literals use single quotes here, because the value is already inside a TOML string"
+        } else if byte == b'.' {
+            // `docs.kind = 'a'` is what somebody writes who is used to a
+            // dialect with more than one table in scope. A predicate here is
+            // scoped to exactly one, so a qualified name is not a name this
+            // can resolve — and `` `.` cannot appear in an expression `` is
+            // the accurate-and-unhelpful shape the regex message had, found
+            // by the same review.
+            ". A predicate is scoped to one table, so column names here are \
+             unqualified: write `kind`, not `docs.kind`"
         } else {
             ""
         };

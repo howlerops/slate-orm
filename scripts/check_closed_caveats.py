@@ -925,6 +925,11 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "scripts/check_toolchain_pins.py",
  ),
 
+ "parser-refusals-reviewed": (
+     "fn the_three_refusals_that_named_what_they_found(",
+     "crates/slate-serverd/src/lang/pred.rs",
+ ),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -2677,6 +2682,13 @@ WITNESSED: dict[tuple[str, str], str] = {
      'Only two files were swept.'): 'every-job-count-swept',
     ('2026-09-29-the-skip-list-that-excused-nothing.md',
      '`PINNED` still matches any `@v<digit>` token'): 'pinned-is-a-module-path',
+    # The review of the parser's other refusals. The needle is the test that
+    # holds the three fixed sentences, not any one of them: a reader wants to
+    # see what was found, and the three literals could each be reverted
+    # separately while the test still names all three.
+    ('2026-09-29-the-same-wrong-sentence-twice-in-one-file.md',
+     'No other error message in the parser was reviewed for the sa'):
+        'parser-refusals-reviewed',
 }
 
 

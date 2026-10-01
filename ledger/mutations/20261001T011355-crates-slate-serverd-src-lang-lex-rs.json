@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-01T01:13:55+00:00",
+  "file": "crates/slate-serverd/src/lang/lex.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bins",
+    "lang::",
+    "--no-fail-fast"
+  ],
+  "commit": "f94db8a",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the dot hint is dropped",
+      "old": "        } else if byte == b'.' {",
+      "new": "        } else if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::the_three_refusals_that_named_what_they_found"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

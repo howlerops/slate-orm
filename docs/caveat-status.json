@@ -13316,9 +13316,9 @@
     {
       "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
       "key": "No other error message in the parser was reviewed for the sa",
-      "verdict": "open",
-      "by": "true. This one was fixed because an entry recorded what it cost; `expected a column name, found ...` and the operand-type refusals may have the same shape and were not read.",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "the review ran: sixteen inputs through pred::parse, read as sentences rather than as format strings. Three more had the weakness and all three are fixed -- BETWEEN gets a range hint, a word followed by `(` is refused as a function call, and `.` says a predicate is scoped to one table. ledger/2026-10-01-the-other-messages-that-name-what-they-found.md",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-29-the-same-wrong-sentence-twice-in-one-file.md",
@@ -15608,6 +15608,32 @@
     {
       "entry": "2026-10-01-the-third-file-that-stated-a-job-count.md",
       "key": "`PINNED` still has one false-positive shape.",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-other-messages-that-name-what-they-found.md",
+      "key": "Sixteen inputs is not the grammar.",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-other-messages-that-name-what-they-found.md",
+      "key": "`kind <=> 'a'` is still confusing and was left alone.",
+      "verdict": "deliberate",
+      "by": "this entry: fixing it means the lexer knowing about operators it does not have, which is a bigger change than the three here and for a rarer input. MySQL's null-safe equality lexes as `<=` then `>`, so the refusal is about the second half of what the reader thinks is one token.",
+      "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-other-messages-that-name-what-they-found.md",
+      "key": "`SIMILAR TO` gets the regular-expression hint",
+      "verdict": "deliberate",
+      "by": "this entry: REACHED_FOR was always a list of guesses and its own comment says so. `similar` pointing at `~` rather than at `LIKE` is defensible either way, and it is now recorded as a guess rather than read as a finding.",
+      "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-the-other-messages-that-name-what-they-found.md",
+      "key": "No guard stops the next message having the shape.",
       "verdict": "open",
       "checked": "2026-10-01"
     }

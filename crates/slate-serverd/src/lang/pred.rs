@@ -495,6 +495,29 @@ impl Parser<'_> {
             ));
         };
         let name = name.clone();
+        // A word immediately followed by `(` is a function call, and the
+        // refusal has to say so rather than report the function's name as a
+        // missing column.
+        //
+        // `count(id) > 1` answered ``there is no column `count` here; this
+        // table has `id`, `kind` and `size``` — true, and it sends a reader
+        // looking for a column to add. That is the shape
+        // `ledger/2026-09-29-the-same-wrong-sentence-twice-in-one-file.md`
+        // recorded for `matches`, met again: the message names what it found
+        // and not what is wrong. Checked here rather than in
+        // `resolve_column`, so that a function sharing a column's name —
+        // `size(x)` — is refused as a call rather than silently parsed as the
+        // column with a stray `(` after it.
+        if matches!(self.peek().map(|t| &t.kind), Some(Kind::Punct("("))) {
+            return Err(LangError::new(
+                at,
+                format!(
+                    "`{name}(…)` is a function call, and a predicate has no functions. \
+                     A predicate compares a column with a literal, a placeholder or \
+                     another column; computed values are declared on the query, not here."
+                ),
+            ));
+        }
         self.resolve_column(&name, at)
     }
 
@@ -857,6 +880,21 @@ pub(crate) fn list_columns(names: &[String]) -> String {
 /// A message that names the one spelling costs a reader nothing to learn.
 const REACHED_FOR: &[&str] = &["matches", "match", "regex", "regexp", "rlike", "similar"];
 
+/// Word spellings of a *range* test this grammar does not have.
+///
+/// The same shape as `REACHED_FOR`, found by the review
+/// `ledger/2026-10-01-the-other-messages-that-name-what-they-found.md` ran
+/// over this file's other refusals: `size BETWEEN 1 AND 5` answered
+/// ``found `BETWEEN`. The word-spelled tests are `LIKE`, `ILIKE`, `IN` and
+/// `IS NULL``` — a correct sentence from which a reader has to work out that
+/// a range is two comparisons. `BETWEEN` is in every dialect this grammar's
+/// users come from and is the second-commonest thing to reach for after a
+/// regular expression.
+///
+/// `NOT BETWEEN` is not listed: it reaches `NOT`'s own refusal first, which
+/// already names what follows a `NOT`.
+const RANGE_WORDS: &[&str] = &["between"];
+
 /// What to add after "found `x`", or nothing.
 ///
 /// Only a *word* earns a hint. A stray `(` or a number is a different mistake
@@ -870,6 +908,11 @@ fn hint(kind: &Kind) -> String {
     if REACHED_FOR.contains(&lower.as_str()) {
         return " A regular expression is spelt `~` here, as in Postgres \
                  — `~*` ignores case, and `!~` and `!~*` negate."
+            .to_owned();
+    }
+    if RANGE_WORDS.contains(&lower.as_str()) {
+        return " A range is two comparisons here, joined with `AND`: \
+                 `size >= 1 AND size <= 5`."
             .to_owned();
     }
     " The word-spelled tests are `LIKE`, `ILIKE`, `IN` and `IS NULL`; every \
@@ -1129,9 +1172,20 @@ mod tests {
         // a hint that said "did you mean `~`?" to every unknown word would be
         // wrong most of the time, and a test asserting only that some hint
         // appeared could not tell the two apart.
-        let error = parse_constant("kind between 1 and 2").unwrap_err();
+        //
+        // The example was `between` until 2026-10-01, when `between` got a
+        // roster of its own and this test went red — which is the right
+        // failure and worth leaving a note about: the generic arm's example
+        // has to be a word *no* roster claims, and any word that earns a
+        // hint later will take this test with it.
+        let error = parse_constant("kind resembles 1").unwrap_err();
         assert!(error.message.contains("`LIKE`"), "{}", error.message);
         assert!(!error.message.contains("`~`"), "{}", error.message);
+        assert!(
+            !error.message.contains("two comparisons"),
+            "{}",
+            error.message
+        );
     }
 
     #[test]
@@ -1245,6 +1299,70 @@ mod tests {
         );
     }
 
+    /// Every refusal in this file was read for the weakness
+    /// `ledger/2026-09-29-the-same-wrong-sentence-twice-in-one-file.md`
+    /// recorded in the regex one: a message that names *what it found* and
+    /// not what the reader wanted, so a correct sentence sends them the
+    /// wrong way. Three more had it, and each pairs here with the words its
+    /// refusal now has to contain.
+    ///
+    /// Asserted on the words rather than on `is_err()`, because every one of
+    /// these was already an error before the change — the whole finding is
+    /// that the error said the wrong thing.
+    #[test]
+    fn the_three_refusals_that_named_what_they_found() {
+        for (source, expected) in [
+            // `size BETWEEN 1 AND 5` said the word-spelled tests are `LIKE`,
+            // `ILIKE`, `IN` and `IS NULL`. True, and it leaves the reader to
+            // work out that a range is two comparisons.
+            ("size BETWEEN 1 AND 5", "A range is two comparisons here"),
+            // `count(id) > 1` said ``there is no column `count` here``,
+            // which sends a reader looking for a column to add. The sharpest
+            // of the three: the message is actively misleading, where the
+            // regex one was merely unhelpful.
+            ("count(id) > 1", "is a function call"),
+            // And a function sharing a column's name, which is why this is
+            // checked before resolution rather than after it fails.
+            ("size(id) > 1", "is a function call"),
+            // `docs.kind = 'a'` said ``` `.` cannot appear in an
+            // expression ```, with no hint that a predicate here is scoped
+            // to one table and names are therefore unqualified.
+            ("docs.kind = 'a'", "scoped to one table"),
+        ] {
+            let error = parse_constant(source).unwrap_err();
+            let text = error.render(source);
+            assert!(text.contains(expected), "{source}\n{text}");
+        }
+    }
+
+    /// And the hints stay apart: a regex spelling must not get the range
+    /// sentence, nor a range word the regex one.
+    ///
+    /// Written because both live in one `hint` and a `||` between the two
+    /// rosters would pass every case above.
+    #[test]
+    fn a_range_word_and_a_regex_word_get_different_hints() {
+        let regex = parse_constant("kind matches 'a'").unwrap_err();
+        let regex = regex.render("kind matches 'a'");
+        assert!(regex.contains("spelt `~`"), "{regex}");
+        assert!(!regex.contains("two comparisons"), "{regex}");
+
+        let range = parse_constant("size BETWEEN 1 AND 5").unwrap_err();
+        let range = range.render("size BETWEEN 1 AND 5");
+        assert!(range.contains("two comparisons"), "{range}");
+        assert!(!range.contains("spelt `~`"), "{range}");
+    }
+
+    /// A grouping paren after a *comparison* is still a grouping paren.
+    ///
+    /// The function-call refusal fires on a word followed by `(` in column
+    /// position, and the control that it has not swallowed the grammar's
+    /// only legitimate `(`.
+    #[test]
+    fn a_grouping_paren_is_not_a_function_call() {
+        parse_constant("kind = 'a' AND (size > 1 OR size < 0)").expect("parses");
+    }
+
     #[test]
     fn an_array_literal_opposite_a_scalar_column_names_both_sides() {
         let error = parse_constant("kind = ['a']").unwrap_err();
@@ -1332,3 +1450,4 @@ mod tests {
         assert!(text.contains("literal"), "{text}");
     }
 }
+

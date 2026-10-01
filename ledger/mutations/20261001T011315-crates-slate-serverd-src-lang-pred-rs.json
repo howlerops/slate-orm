@@ -1,0 +1,73 @@
+{
+  "at": "2026-10-01T01:13:15+00:00",
+  "file": "crates/slate-serverd/src/lang/pred.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bins",
+    "lang::",
+    "--no-fail-fast"
+  ],
+  "commit": "f94db8a",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the range roster is empty, so BETWEEN gets the generic hint",
+      "old": "const RANGE_WORDS: &[&str] = &[\"between\"];",
+      "new": "const RANGE_WORDS: &[&str] = &[];",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::a_range_word_and_a_regex_word_get_different_hints",
+        "lang::pred::tests::the_three_refusals_that_named_what_they_found"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the range hint is the regex hint",
+      "old": "        return \" A range is two comparisons here, joined with `AND`: \\\n                 `size >= 1 AND size <= 5`.\"\n            .to_owned();",
+      "new": "        return \" A regular expression is spelt `~` here.\".to_owned();",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::a_range_word_and_a_regex_word_get_different_hints",
+        "lang::pred::tests::the_three_refusals_that_named_what_they_found"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a function call is resolved as a column again",
+      "old": "        if matches!(self.peek().map(|t| &t.kind), Some(Kind::Punct(\"(\"))) {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::the_three_refusals_that_named_what_they_found"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the function-call check fires on any next token, eating grouping",
+      "old": "        if matches!(self.peek().map(|t| &t.kind), Some(Kind::Punct(\"(\"))) {",
+      "new": "        if self.peek().is_some() {",
+      "verdict": "caught",
+      "caught_by": [
+        "lang::pred::tests::a_constant_predicate_says_it_is_constant",
+        "lang::pred::tests::a_literal_no_i64_can_hold_survives_against_a_u64_column",
+        "lang::pred::tests::a_grouping_paren_is_not_a_function_call",
+        "lang::pred::tests::a_list_inside_a_list_is_refused_with_the_reason",
+        "lang::pred::tests::a_malformed_list_says_which_way_it_is_malformed",
+        "lang::pred::tests::a_literal_takes_the_type_of_the_column_opposite_it",
+        "lang::pred::tests::a_negative_number_is_refused_for_an_unsigned_column",
+        "lang::pred::tests::a_placeholder_is_refused_where_there_is_no_caller"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
