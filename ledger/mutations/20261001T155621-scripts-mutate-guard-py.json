@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-01T15:56:21+00:00",
+  "file": "scripts/mutate_guard.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate_guard.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "a refusal quotes the first line again, which is an `ok` line",
+      "old": "    refusal = next((line for line in lines if line.startswith(\"FAIL\")), None)\n    return \"fail\", refusal or (lines[0] if lines else \"\")",
+      "new": "    return \"fail\", lines[0] if lines else \"\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

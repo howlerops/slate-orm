@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:54:10+00:00",
+  "file": "scripts/test_mutate.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_none_last.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "None comes first in a union",
+      "old": "        expect_after: str | None,",
+      "new": "        expect_after: None | str,",
+      "verdict": "caught",
+      "caught_by": [
+        "check_none_last: ok    some Python was read at all  (159 files)"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

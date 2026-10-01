@@ -38,6 +38,17 @@ REPORT = mutate.DIALECTS["python"][1]
 GUARDS = {
     "passes": "import sys\nprint('ok    fine')\nsys.exit(0)\n",
     "refuses": "import sys\nprint('a problem', file=sys.stderr)\nsys.exit(1)\n",
+    # The shape every real guard in this repository has: its passing rules
+    # print first and the refusing one last. Quoting the *first* line of a
+    # refusal therefore shows a sentence beginning `ok`, which is what the
+    # roster's first full run did and what `a refusal quotes the line that
+    # refused` below pins.
+    "refuses_after_passing": (
+        "import sys\n"
+        "print('ok    the first rule held')\n"
+        "print('FAIL  the second rule did not', file=sys.stderr)\n"
+        "sys.exit(1)\n"
+    ),
     "raises": "raise ValueError('boom')\n",
     "exits_two": "import sys\nprint('confused')\nsys.exit(2)\n",
     "silent": "import sys\nsys.exit(0)\n",
@@ -81,6 +92,16 @@ CASES = [
         ["refuses"],
         1,
         ["FAIL  refuses: a problem", "0 passed, 1 failed"],
+    ),
+    (
+        # A refusal quotes the line that refused, not the first line printed.
+        # Found by the mutation roster's first full run, where
+        # `check_caveat_citations` was reported red with an `ok` sentence
+        # beside it and the reader went looking for a parser bug.
+        "a refusal quotes the line that refused",
+        ["refuses_after_passing"],
+        1,
+        ["FAIL  refuses_after_passing: FAIL  the second rule did not"],
     ),
     (
         "two guards, one of each, are counted separately",

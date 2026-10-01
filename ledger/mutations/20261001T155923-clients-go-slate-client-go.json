@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:23+00:00",
+  "file": "clients/go/slate/client.go",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_client_identity.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a Go Identity grows an unrostered credential slot",
+      "old": "\tPrincipal string",
+      "new": "\tSecretKey string",
+      "verdict": "caught",
+      "caught_by": [
+        "check_client_identity: go's `Identity` declares `SecretKey`, which is not one of ['Principal', 'Roles', 'Tenant']."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

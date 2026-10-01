@@ -372,6 +372,18 @@
           "new": "\"recovered\": \"ledger/2026-09-30-no-such-entry.md\""
         }
       ]
+    },
+    {
+      "guard": "check_live_frame",
+      "file": "docs/caveat-status.json",
+      "why": "The live caveat frame reached zero `open` on 2026-10-01 after three sweeps, and nothing stopped it climbing back \u2014 each entry writes three or four caveats, so the frame refills at the rate work gets done. The mutation is the state the ratchet exists to refuse: a verdict reverting to `open`.",
+      "cases": [
+        {
+          "name": "a settled verdict reverts to open",
+          "old": "\"key\": \"The quickstarts are not checked automatically.\",\n      \"verdict\": \"closed\"",
+          "new": "\"key\": \"The quickstarts are not checked automatically.\",\n      \"verdict\": \"open\""
+        }
+      ]
     }
   ],
   "unmutated": {

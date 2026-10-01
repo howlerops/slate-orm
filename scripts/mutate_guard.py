@@ -108,8 +108,19 @@ def run(guard: str) -> tuple[str, str]:
         # print the same thing here, which is the failure every guard in this
         # repository is written to avoid. None of the twenty-seven is silent.
         return "died", f"{guard} exited 0 and printed nothing"
-    first = next((line for line in output.splitlines() if line.strip()), "")
-    return ("ok", first.strip()) if done.returncode == 0 else ("fail", first.strip())
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if done.returncode == 0:
+        return "ok", lines[0] if lines else ""
+    # The *refusing* line, not the first line. Every guard here prints its
+    # `ok` rules before its failing one, so quoting the first line reported a
+    # refusal and showed a sentence beginning `ok` — which cost a reader a
+    # minute on the roster's first full run and is the same
+    # names-what-it-found-not-what-the-reader-wanted shape
+    # `ledger/2026-10-01-the-other-messages-that-name-what-they-found.md` is
+    # about, one level out. Falls back to the first line for a guard that
+    # refuses without the word, because a wrong quote beats no quote.
+    refusal = next((line for line in lines if line.startswith("FAIL")), None)
+    return "fail", refusal or (lines[0] if lines else "")
 
 
 def main(argv: list[str]) -> int:

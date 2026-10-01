@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:17+00:00",
+  "file": "clients/typescript/proto/google/rpc/status.proto",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_proto_copies.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the vendored google/rpc/status.proto reuses a field number",
+      "old": "  repeated google.protobuf.Any details = 3;",
+      "new": "  repeated google.protobuf.Any details = 4;",
+      "verdict": "caught",
+      "caught_by": [
+        "check_proto_copies: FAIL  clients/typescript/proto/google/rpc/status.proto differs from crates/slate-server/proto/google/rpc/status.proto."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

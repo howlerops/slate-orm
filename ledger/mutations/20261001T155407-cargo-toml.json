@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:54:07+00:00",
+  "file": "Cargo.toml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_workspace.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a crate leaves the workspace members list",
+      "old": "    \"crates/slate-sql\",\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "check_workspace: the workspace and the image's copy list disagree:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:13+00:00",
+  "file": "README.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_retired_claims.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a retired phrase is restated in the README",
+      "old": "[![CI](https://github.com/howlerops/slate-orm/actions/workflows/ci.yml/badge.svg)](https://github.com/howlerops/slate-orm/actions/workflows/ci.yml)",
+      "new": "a guard whose only witness is a suite you cannot run",
+      "verdict": "caught",
+      "caught_by": [
+        "check_retired_claims: README.md:3 states a retired claim \u2014 `a guard whose only witness is a suite you cannot run` \u2014 withdrawn by ledger/2026-09-23-the-example-suite-does-run-here-in-release.md. The suite runs here in --release; it is the debug build that does not fit. The guard has since been seen to fire as loader_cliff, exit 101."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

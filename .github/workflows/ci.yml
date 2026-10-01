@@ -332,6 +332,12 @@ jobs:
       - run: python3 scripts/check_caveat_citations.py
       - run: python3 scripts/test_check_caveat_citations.py
       - run: python3 scripts/check_closed_caveats.py
+      # Zero `open` caveats, and every `narrowed` one named with what is
+      # left. The frame reached zero on 2026-10-01 after three sweeps; this
+      # is the ratchet that keeps it there, because each new entry writes
+      # three or four caveats and the frame refills at the rate work happens.
+      - run: python3 scripts/check_live_frame.py
+      - run: python3 scripts/test_check_live_frame.py
       - run: python3 scripts/test_check_closed_caveats.py
       - run: python3 scripts/test_read_deliberate.py
       - run: python3 scripts/check_draws.py

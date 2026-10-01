@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:32+00:00",
+  "file": "scripts/test_check_transport_door.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a witness needle is renamed out of the test that carries it",
+      "old": "\"a fourth client with no door fails and names it\"",
+      "new": "\"a fourth client without a door fails and names it\"",
+      "verdict": "caught",
+      "caught_by": [
+        "check_closed_caveats: FAIL  every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

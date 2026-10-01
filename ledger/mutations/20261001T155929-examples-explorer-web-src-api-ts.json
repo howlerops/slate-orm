@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:29+00:00",
+  "file": "examples/explorer/web/src/api.ts",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_demo_surface.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the UI stops calling an adapter endpoint",
+      "old": "\"/api/join\"",
+      "new": "\"/api/joins\"",
+      "verdict": "caught",
+      "caught_by": [
+        "check_demo_surface: `/api/join` is served by the adapters and called nowhere in the UI."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
