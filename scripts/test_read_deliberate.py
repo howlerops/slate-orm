@@ -88,7 +88,17 @@ ROOT = Path(__file__).resolve().parent.parent
 #: set of two rows chosen after the fact. That is fitting the parameter to
 #: the test set and the resulting number would mean nothing. The number to
 #: move is the size of `docs/labelled-verdicts.json`.
-RANKS: list[tuple[int | None, int]] = [(16, 19), (None, 8)]
+#:
+#: **2026-10-01: row 2's denominator moved 8 → 9, and the rank did not move.**
+#: The ninth candidate is
+#: `ledger/2026-10-01-a-check-the-derive-could-not-declare.md`, which shares
+#: "default", "column" and "assertion" with a claim about a workbench
+#: playground's default-column assertion and has nothing whatever to do with
+#: it. One entry about a *different* default column joined the shortlist on
+#: vocabulary alone, which is the signal's failure mode stated as cheaply as
+#: it can be: the answer is still not a candidate and the noise grew by one.
+#: Recorded rather than tuned, for the reason above.
+RANKS: list[tuple[int | None, int]] = [(16, 19), (None, 9)]
 
 
 def bodies() -> dict[str, str]:

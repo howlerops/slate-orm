@@ -10737,9 +10737,9 @@
     {
       "entry": "2026-09-19-a-check-that-names-its-field.md",
       "key": "`#[derive(Record)]` cannot declare either field. A check wri",
-      "verdict": "open",
-      "by": "still true. A check written in Rust goes through CheckDef and can call the builders; one written through the derive macro's attribute cannot say `column = \"...\"`.",
-      "checked": "2026-09-30"
+      "verdict": "closed",
+      "by": "crates/slate-derive/src/lib.rs's `check(...)` attribute: name, predicate, column and message, on the struct or on a field where column defaults to that field after any rename. The caveat understated the gap -- there was no check attribute at all. ledger/2026-10-01-a-check-the-derive-could-not-declare.md",
+      "reviewed": "2026-10-01"
     },
     {
       "entry": "2026-09-19-a-default-cannot-hold-now.md",
@@ -11012,9 +11012,10 @@
     {
       "entry": "2026-09-19-the-rules-a-client-can-see.md",
       "key": "`message` is still a plain string with no translation story,",
-      "verdict": "open",
-      "by": "three separate gaps in one sentence, all still open: no translation story, no `column` or `message` in the derive attribute, and a generated CHECKS map keyed by a name with no compile-time guarantee it matches one the server sends.",
-      "checked": "2026-09-30"
+      "verdict": "narrowed",
+      "by": "the middle of the three gaps is closed: crates/slate-derive/src/lib.rs's `check(...)` attribute declares both `column` and `message`, and a `column` naming nothing is a compile error. ledger/2026-10-01-a-check-the-derive-could-not-declare.md",
+      "checked": "2026-10-01",
+      "residual": "two of the three still hold. `message` is a plain string with no translation story -- decided, not missing, and the entry says so -- and a generated `CHECKS` map is still keyed by check name with no compile-time guarantee the name matches one the server sends."
     },
     {
       "entry": "2026-09-19-what-a-write-actually-touched.md",
@@ -15546,6 +15547,37 @@
       "key": "One pass by one reader.",
       "verdict": "deliberate",
       "by": "this entry: the ceiling every reading-based closure here carries, and the reason the mechanical half of the pass exists at all"
+    },
+    {
+      "entry": "2026-10-01-a-check-the-derive-could-not-declare.md",
+      "key": "`mutate.py` cannot test a guard whose job is to fail the bui",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-a-check-the-derive-could-not-declare.md",
+      "key": "No client surface.",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-a-check-the-derive-could-not-declare.md",
+      "key": "It does not declare a foreign key.",
+      "verdict": "open",
+      "checked": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-a-check-the-derive-could-not-declare.md",
+      "key": "An empty `message` is still refused at `Record::table()`, no",
+      "verdict": "deliberate",
+      "by": "this entry: the panic names the check and arrives on the first `table()` call, which every test makes, so the failure is already loud and immediate. The `column` rule is a compile error only because nothing else in the system catches it at all.",
+      "reviewed": "2026-10-01"
+    },
+    {
+      "entry": "2026-10-01-a-check-the-derive-could-not-declare.md",
+      "key": "One struct, one shape of predicate.",
+      "verdict": "open",
+      "checked": "2026-10-01"
     }
   ]
 }

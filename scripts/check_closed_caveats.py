@@ -904,6 +904,12 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # because the loop it replaced would leave the rest of the check standing.
  "claude-md-counts-anchored": ("CLAUDE_MD_COUNTS", "scripts/test_check_sh.py"),
 
+ # The `check(...)` attribute on `#[derive(Record)]`. `parse_check` rather than
+ # the `check_stmts` emission or the `column`/`message` branches inside it: a
+ # revert that left the parser standing would be a derive that reads the
+ # attribute and builds nothing, and the parser is what a reader goes to first.
+ "derive-declares-a-check": ("fn parse_check(", "crates/slate-derive/src/lib.rs"),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -2640,6 +2646,16 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md',
      'CLAUDE.md\'s half is still a loop over every word before "job'):
         'claude-md-counts-anchored',
+
+    # --- 2026-10-01, the derive's check attribute ---------------------------
+    #
+    # The needle is `parse_check`, not the emission: the emission could be
+    # deleted and the attribute would still parse, which is a derive that
+    # accepts a check and declares none. The parser going is the whole feature
+    # going, and it is the one name that cannot survive a revert.
+    ('2026-09-19-a-check-that-names-its-field.md',
+     '`#[derive(Record)]` cannot declare either field. A check wri'):
+        'derive-declares-a-check',
 }
 
 

@@ -1,0 +1,29 @@
+{
+  "at": "2026-10-01T00:40:25+00:00",
+  "file": "crates/slate-orm/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--doc"
+  ],
+  "commit": "8b2d50a",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the non-Expr predicate is an Expr, so the block compiles",
+      "old": "/// #[record(check(name = \"anything\", predicate(Everything)))]",
+      "new": "/// #[record(check(name = \"anything\", predicate(slate_orm::Expr::matches(email, \"@\"))))]",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 329) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

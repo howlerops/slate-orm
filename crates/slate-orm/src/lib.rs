@@ -233,6 +233,120 @@ pub use relation::{
 /// // Maintained, and never planned for: the planner cannot read it.
 /// assert!(table.index(IndexId(11)).unwrap().predicate().unwrap().as_any().is_none());
 /// ```
+/// # Checks
+///
+/// `check(...)` declares a `CHECK` constraint. Its `predicate(...)` is the
+/// same kind of expression `only_where` takes, for the same two reasons, and
+/// it carries the `column` and `message` a [`CheckDef`] does: the column a
+/// form puts the error beside, and the sentence to show.
+///
+/// ```
+/// use slate_orm::{CmpOp, Expr, Record, Value};
+///
+/// #[derive(Record)]
+/// #[record(table = "items", id = 1)]
+/// #[record(check(
+///     name = "priced",
+///     predicate(Expr::compare(price, CmpOp::Ge, Value::I64(0))),
+///     column = "price",
+///     message = "Price cannot be negative."
+/// ))]
+/// struct Item {
+///     #[record(pk)]
+///     id: u64,
+///     price: i64,
+/// }
+///
+/// let check = &Item::table().checks()[0];
+/// assert_eq!(check.column(), Some("price"));
+/// ```
+///
+/// Written **on a field**, `column` defaults to that field — after any
+/// `rename`, so it is the name the wire carries rather than the field ident.
+/// That default is the reason the field position is worth having: the way
+/// this goes wrong is renaming a field and not the string, and the symptom is
+/// a form rendering a message beside nothing.
+///
+/// ```
+/// use slate_orm::{Expr, Record};
+///
+/// #[derive(Record)]
+/// #[record(table = "users", id = 1)]
+/// struct User {
+///     #[record(pk)]
+///     id: u64,
+///     #[record(rename = "email_address")]
+///     #[record(check(name = "has_an_at", predicate(Expr::matches(email, "@"))))]
+///     email: String,
+/// }
+///
+/// assert_eq!(User::table().checks()[0].column(), Some("email_address"));
+/// ```
+///
+/// A `column` naming nothing does not compile. The TOML loader refuses the
+/// same mistake at startup; here it can be refused before the binary exists,
+/// and nothing else in the system checks it — `TableBuilder` holds the string
+/// and has no reason to resolve it:
+///
+/// ```compile_fail
+/// use slate_orm::{Expr, Record};
+///
+/// #[derive(Record)]
+/// #[record(table = "users", id = 1)]
+/// #[record(check(name = "has_an_at", predicate(Expr::matches(email, "@")),
+///                column = "emial"))]
+/// struct User {
+///     #[record(pk)]
+///     id: u64,
+///     email: String,
+/// }
+/// ```
+///
+/// Nor do two checks with one name. The name is how a refusal says which rule
+/// fired, so a duplicate makes one of them unnameable — `TableBuilder::build`
+/// refuses it too, but at `Record::table()`, which this macro turns into a
+/// panic:
+///
+/// ```compile_fail
+/// use slate_orm::{Expr, Record};
+///
+/// #[derive(Record)]
+/// #[record(table = "users", id = 1)]
+/// #[record(check(name = "shaped", predicate(Expr::matches(email, "@"))))]
+/// #[record(check(name = "shaped", predicate(Expr::matches(email, "\\."))))]
+/// struct User {
+///     #[record(pk)]
+///     id: u64,
+///     email: String,
+/// }
+/// ```
+///
+/// And, as with `only_where`, a predicate that is not an [`Expr`] does not
+/// compile. The write path would run any [`Predicate`](slate_schema::Predicate),
+/// but a check `--print-schema` cannot read back is one no client can be told
+/// about:
+///
+/// ```compile_fail
+/// use slate_orm::Record;
+/// use slate_schema::{Predicate, Row};
+///
+/// struct Everything;
+/// impl Predicate for Everything {
+///     fn truth(&self, _row: &Row) -> Option<bool> {
+///         Some(true)
+///     }
+/// }
+///
+/// #[derive(Record)]
+/// #[record(table = "users", id = 1)]
+/// #[record(check(name = "anything", predicate(Everything)))]
+/// struct User {
+///     #[record(pk)]
+///     id: u64,
+///     email: String,
+/// }
+/// ```
+///
 /// # Relationships
 ///
 /// `has_many` and `belongs_to` emit a [`Related`] impl, which

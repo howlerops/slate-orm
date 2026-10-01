@@ -209,6 +209,17 @@ to work around; it is the reason the catalog is the answer.
    generic `SCHEMA`: the caller's *data* being wrong is retryable after editing
    a field and the caller's *schema* being wrong is not.
 
+   **And `#[derive(Record)]` declares one**, which it could not when this was
+   written — the Rust surface had a check only through `TableDef::builder`, so
+   the one place a reader looks for "how a table is declared in Rust" could not
+   express the feature at all. `check(name = "...", predicate(...), column =
+   "...", message = "...")` on the struct, or on a field, where `column`
+   defaults to that field after any `rename`. A `column` naming nothing is a
+   **compile** error there rather than a startup one, because `TableBuilder`
+   holds the string and never resolves it, so nothing else in the system would
+   have caught it; see
+   `ledger/2026-10-01-a-check-the-derive-could-not-declare.md`.
+
 2. ~~**Collect every failure.**~~ **Built**, and the hedge in this paragraph
    turned out to be unnecessary. It proposed making the collecting behaviour
    opt-in so the common case could still stop early; there is no common case to

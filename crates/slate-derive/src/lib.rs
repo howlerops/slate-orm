@@ -22,6 +22,9 @@
 //! #[record(index(name = "by_a_b", id = 5, unique, columns("a", desc("b"))))]
 //! #[record(index(name = "live", id = 6, columns("a"),
 //!                only_where(Expr::is_null(deleted_at))))]
+//! #[record(check(name = "priced",
+//!                predicate(Expr::compare(price, CmpOp::Ge, Value::I64(0))),
+//!                column = "price", message = "Price cannot be negative."))]
 //! #[record(has_many(Book, foreign = author_id))]       // one-to-many
 //! #[record(belongs_to(Author, local = author_id))]     // the other direction
 //! ```
@@ -33,7 +36,24 @@
 //! #[record(rename = "email_address")]     // column name, if not the field name
 //! #[record(added_in = 2)]                 // introduced at this schema version
 //! #[record(index(name = "by_email", id = 10, unique, desc))]
+//! #[record(check(name = "has_an_at", predicate(Expr::matches(email, "@")),
+//!                message = "That is not an email address."))]
 //! ```
+//!
+//! # Checks
+//!
+//! `check(...)` takes the same `predicate(...)` expression `only_where` does,
+//! for the same two reasons, and adds the `column` and `message` a
+//! `CheckDef` carries. A check written **on a field** defaults `column` to
+//! that field — resolved after any `rename`, so it is the name the wire
+//! carries rather than the field ident — which is the point of writing it
+//! there. An explicit `column` still wins, so a check about two columns can
+//! sit beside one of them and name it.
+//!
+//! A `column` naming nothing is a **compile error**. The TOML loader refuses
+//! the same mistake at startup; here it can be refused before the binary
+//! exists, which matters because the symptom otherwise is a form rendering an
+//! error beside no field at all, at the first refused write.
 //!
 //! # Partial indexes
 //!
@@ -156,6 +176,97 @@ struct IndexSpec {
     /// taught again every time the kernel gains a form.
     predicate: Option<syn::Expr>,
     span: Span,
+}
+
+/// A `CHECK` as written in an attribute.
+#[derive(Clone)]
+struct CheckSpec {
+    name: String,
+    /// The `predicate(...)` expression, emitted verbatim, for the same reason
+    /// [`IndexSpec::predicate`] is: the macro has no business knowing which
+    /// predicates `Expr` can express.
+    predicate: syn::Expr,
+    /// `None` when the check names no column, which is the honest answer for
+    /// `discount <= price`. A field-level `check(...)` fills this in with the
+    /// field it sits on; `"\0self"` is the placeholder until the field's
+    /// final column name is known, exactly as `IndexColumnSpec` does it.
+    column: Option<String>,
+    message: Option<String>,
+    span: Span,
+}
+
+/// Parse `check(name = "...", predicate(expr), column = "...", message = "...")`.
+///
+/// `owner` is `Some` for a check written on a field, and then `column`
+/// defaults to that field. That default is the whole reason the field position
+/// is worth having: a check written beside the column it is about should not
+/// have to repeat the column's name, and the failure mode of repeating it —
+/// renaming the field and not the string — is the one
+/// `ledger/2026-09-19-a-check-that-names-its-field.md` argued the `column`
+/// field exists to prevent.
+fn parse_check(
+    meta: &syn::meta::ParseNestedMeta<'_>,
+    owner: Option<&str>,
+) -> syn::Result<CheckSpec> {
+    let span = meta.path.span();
+    let mut name: Option<String> = None;
+    let mut predicate: Option<syn::Expr> = None;
+    let mut column: Option<String> = None;
+    let mut message: Option<String> = None;
+
+    meta.parse_nested_meta(|meta| {
+        if meta.path.is_ident("name") {
+            name = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("predicate") {
+            // Two of them would mean one rule enforced and one ignored, and
+            // the ignored one would read like it were in force — the same
+            // refusal `only_where` makes, for the same reason.
+            if predicate.is_some() {
+                return Err(meta.error("`predicate` given twice; a check has one"));
+            }
+            let content;
+            parenthesized!(content in meta.input);
+            predicate = Some(content.parse()?);
+            if !content.is_empty() {
+                return Err(content.error(
+                    "`predicate` takes a single expression; combine terms with `Expr::and` \
+                     rather than a comma",
+                ));
+            }
+        } else if meta.path.is_ident("column") {
+            column = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else if meta.path.is_ident("message") {
+            message = Some(meta.value()?.parse::<LitStr>()?.value());
+        } else {
+            return Err(meta.error(
+                "unknown check option; expected `name`, `predicate`, `column` or `message`",
+            ));
+        }
+        Ok(())
+    })?;
+
+    let Some(name) = name else {
+        return Err(syn::Error::new(span, "check needs `name = \"...\"`"));
+    };
+    let Some(predicate) = predicate else {
+        return Err(syn::Error::new(
+            span,
+            "check needs `predicate(...)`; a check with no predicate is a name that refuses \
+             nothing",
+        ));
+    };
+
+    Ok(CheckSpec {
+        name,
+        predicate,
+        // An explicit `column` on a field-level check wins over the field it
+        // sits on. Writing one is how `discount <= price` says it is about
+        // `discount` while living beside `price`, and refusing it would make
+        // the field position strictly less expressive than the struct one.
+        column: column.or_else(|| owner.map(str::to_owned)),
+        message,
+        span,
+    })
 }
 
 /// A relationship as written in an attribute.
@@ -380,6 +491,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let mut version: u32 = 0;
     let mut tenant: Option<(String, Span)> = None;
     let mut indexes: Vec<IndexSpec> = Vec::new();
+    let mut checks: Vec<CheckSpec> = Vec::new();
     let mut relations: Vec<RelationSpec> = Vec::new();
 
     for attr in &input.attrs {
@@ -398,6 +510,8 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 tenant = Some((literal.value(), literal.span()));
             } else if meta.path.is_ident("index") {
                 indexes.push(parse_index(&meta, None)?);
+            } else if meta.path.is_ident("check") {
+                checks.push(parse_check(&meta, None)?);
             } else if meta.path.is_ident("has_many") {
                 relations.push(parse_relation(&meta, true)?);
             } else if meta.path.is_ident("belongs_to") {
@@ -405,7 +519,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             } else {
                 return Err(meta.error(
                     "unknown option; expected `table`, `id`, `version`, `tenant`, `index`, \
-                     `has_many` or `belongs_to`",
+                     `check`, `has_many` or `belongs_to`",
                 ));
             }
             Ok(())
@@ -446,6 +560,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         // Names are resolved after the loop, so index specs on this field are
         // collected against the field's *final* column name.
         let mut field_indexes: Vec<IndexSpec> = Vec::new();
+        let mut field_checks: Vec<CheckSpec> = Vec::new();
 
         for attr in &field.attrs {
             if !attr.path().is_ident("record") {
@@ -468,10 +583,12 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     is_soft_delete = true;
                 } else if meta.path.is_ident("index") {
                     field_indexes.push(parse_index(&meta, Some("\0self"))?);
+                } else if meta.path.is_ident("check") {
+                    field_checks.push(parse_check(&meta, Some("\0self"))?);
                 } else {
                     return Err(meta.error(
                         "unknown option; expected `pk`, `rename`, `added_in`, `scale`, \
-                         `created_at`, `updated_at`, `soft_delete` or `index`",
+                         `created_at`, `updated_at`, `soft_delete`, `index` or `check`",
                     ));
                 }
                 Ok(())
@@ -488,6 +605,15 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 }
             }
             indexes.push(spec);
+        }
+        // Resolved against the *renamed* column, not the field ident, so a
+        // `#[record(rename = "...")]` beside a check still points a form at
+        // the name the wire carries.
+        for mut spec in field_checks {
+            if spec.column.as_deref() == Some("\0self") {
+                spec.column = Some(column.clone());
+            }
+            checks.push(spec);
         }
         if is_pk {
             primary_key.push(column.clone());
@@ -531,6 +657,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         })
         .collect();
     validate_relations(&fields, &relations)?;
+    validate_checks(&fields, &checks)?;
 
     // --- code generation
     let column_stmts = fields.iter().map(|f| {
@@ -632,6 +759,36 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 #unique
                 #predicate
                 index
+            });
+        }
+    });
+
+    let check_stmts = checks.iter().map(|spec| {
+        let name = &spec.name;
+        let expr = &spec.predicate;
+        let column = spec
+            .column
+            .as_ref()
+            .map(|c| quote! { check = check.with_column(#c); });
+        let message = spec
+            .message
+            .as_ref()
+            .map(|m| quote! { check = check.with_message(#m); });
+        // `CheckDef::new` takes any `Predicate` and the write path evaluates
+        // whatever it is handed, but a check `--print-schema` cannot read back
+        // is one no client can be told about. Pinned to `Expr` here so that is
+        // a type error on the attribute, which is the argument `only_where`
+        // makes above and the same fix.
+        quote! {
+            builder = builder.check({
+                let mut check = ::slate_orm::CheckDef::new(#name, {
+                    #ordinal_bindings
+                    let predicate: ::slate_orm::Expr = #expr;
+                    predicate
+                });
+                #column
+                #message
+                check
             });
         }
     });
@@ -802,6 +959,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     #tenant_stmt
                     #soft_delete_stmt
                     #(#index_stmts)*
+                    #(#check_stmts)*
                     builder = builder.schema_version(#version);
                     match builder.build() {
                         ::core::result::Result::Ok(table) => table,
@@ -857,6 +1015,52 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 /// resolution error at the call site, which needs nothing from here.
 ///
 /// What is here is the local side, and the two defaults that can fail to exist.
+/// Refuse a check whose `column` names nothing, and two checks with one name.
+///
+/// Both are refusals the schema layer cannot make for this path. `column` is
+/// checked against the table only by the TOML loader
+/// (`slate-serverd/src/schema.rs`), because `TableBuilder` holds the string
+/// and has no reason to resolve it; so a derived check with a mistyped
+/// `column` would reach a form as a field name nothing renders beside —
+/// silently, at the first refused write, which is the failure
+/// `ledger/2026-09-19-a-check-that-names-its-field.md` records this field as
+/// existing to prevent. Here it is a compile error with a span on the
+/// attribute, which is strictly better than the startup refusal the TOML path
+/// gets, and it is the same trade `validate_relations` makes for `local`.
+///
+/// The duplicate name `TableBuilder::build` does catch, as `DuplicateCheck` —
+/// but at `Record::table()`, which this macro's own emission turns into a
+/// panic. Catching it here makes it a compile error instead, and costs one
+/// comparison over a list that is never long.
+fn validate_checks(fields: &[FieldSpec], checks: &[CheckSpec]) -> syn::Result<()> {
+    for (i, spec) in checks.iter().enumerate() {
+        if let Some(column) = &spec.column
+            && !fields.iter().any(|f| f.column == *column)
+        {
+            return Err(syn::Error::new(
+                spec.span,
+                format!(
+                    "`column = \"{column}\"` names no column of this table. A check's \
+                     column is what a form puts the message beside, so one pointing at \
+                     nothing is worse than none: write the column's name after any \
+                     `rename`, or leave `column` off if the check is about more than one"
+                ),
+            ));
+        }
+        if checks.iter().take(i).any(|c| c.name == spec.name) {
+            return Err(syn::Error::new(
+                spec.span,
+                format!(
+                    "two checks named `{}`; the name is how a refusal identifies which rule \
+                     fired, so a duplicate makes one of them unnameable",
+                    spec.name
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_relations(fields: &[FieldSpec], relations: &[RelationSpec]) -> syn::Result<()> {
     for spec in relations {
         // A `through` relationship names no columns on either side: it is the
