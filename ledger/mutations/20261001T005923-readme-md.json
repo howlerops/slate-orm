@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-01T00:59:23+00:00",
+  "file": "README.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "0fa9d3b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a fourth file states a job count in prose",
+      "old": "## Status",
+      "new": "CI runs twenty jobs on every push.\n\n## Status",
+      "verdict": "caught",
+      "caught_by": [
+        "every job count stated in prose is anchored or excused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

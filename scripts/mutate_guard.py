@@ -83,7 +83,21 @@ def run(guard: str) -> tuple[str, str]:
     path = ROOT / guard
     if not path.exists():
         return "died", f"{guard} does not exist"
-    done = subprocess.run([sys.executable, str(path)], cwd=ROOT, capture_output=True, text=True)
+    if path.suffix not in (".py", ".sh"):
+        # Named rather than guessed: a runner this does not know would be
+        # handed to the Python interpreter and die in a way that reads as a
+        # guard refusing.
+        return "died", f"{guard} is neither a .py nor a .sh, so this does not know how to run it"
+    # A `.sh` runs under `sh`, which is the one thing in `scripts/`-shaped
+    # roster that is not Python: `.githooks/test-pre-commit.sh`. Its own
+    # output cannot be read by `mutate.py` directly — it prints `  FAIL  …`
+    # with two leading spaces and the `python` dialect anchors at column
+    # zero — so a mutation of the hook scored UNREADABLE and could not be
+    # judged at all. Running it here re-emits the verdict at column zero,
+    # which is exactly what this adapter is for; the alternative was
+    # unindenting a suite whose format matches `check.sh`'s on purpose.
+    runner = ["sh", str(path)] if path.suffix == ".sh" else [sys.executable, str(path)]
+    done = subprocess.run(runner, cwd=ROOT, capture_output=True, text=True)
     output = done.stdout + done.stderr
     if DIED in output:
         return "died", f"{guard} raised rather than refused"
@@ -94,8 +108,19 @@ def run(guard: str) -> tuple[str, str]:
         # print the same thing here, which is the failure every guard in this
         # repository is written to avoid. None of the twenty-seven is silent.
         return "died", f"{guard} exited 0 and printed nothing"
-    first = next((line for line in output.splitlines() if line.strip()), "")
-    return ("ok", first.strip()) if done.returncode == 0 else ("fail", first.strip())
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if done.returncode == 0:
+        return "ok", lines[0] if lines else ""
+    # The *refusing* line, not the first line. Every guard here prints its
+    # `ok` rules before its failing one, so quoting the first line reported a
+    # refusal and showed a sentence beginning `ok` — which cost a reader a
+    # minute on the roster's first full run and is the same
+    # names-what-it-found-not-what-the-reader-wanted shape
+    # `ledger/2026-10-01-the-other-messages-that-name-what-they-found.md` is
+    # about, one level out. Falls back to the first line for a guard that
+    # refuses without the word, because a wrong quote beats no quote.
+    refusal = next((line for line in lines if line.startswith("FAIL")), None)
+    return "fail", refusal or (lines[0] if lines else "")
 
 
 def main(argv: list[str]) -> int:

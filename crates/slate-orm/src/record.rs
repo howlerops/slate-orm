@@ -1,7 +1,7 @@
 //! The typed record trait.
 
 use crate::field::FieldError;
-use slate_schema::{Row, TableDef};
+use slate_schema::{Row, TableDef, TableId};
 use slate_tuple::Value;
 
 /// A stored row could not be turned back into its Rust type.
@@ -52,6 +52,26 @@ pub trait Record: Sized {
     /// # Errors
     /// If a column does not fit its field, or the row has the wrong shape.
     fn from_row(row: &Row) -> Result<Self, RecordError>;
+
+    /// This record's table id, without building the table.
+    ///
+    /// Defaults to `Self::table().id()`, and `#[derive(Record)]` overrides it
+    /// with the literal from `#[record(id = N)]`. The override is not an
+    /// optimisation: `table()` caches behind a `OnceLock`, so a foreign key
+    /// declared in the attribute and resolved through `table()` would re-enter
+    /// that lock from inside its own initialiser the moment a table referenced
+    /// itself — `employee.manager_id -> employee` is the ordinary case, not an
+    /// exotic one. The id is a literal in the attribute, so nothing has to be
+    /// built to read it.
+    ///
+    /// Provided rather than required so that the hand-written impls this trait
+    /// already supports keep compiling. One of those referencing itself through
+    /// a derived foreign key is the single shape that still recurses, and it
+    /// cannot arise: the attribute is the macro's.
+    #[must_use]
+    fn table_id() -> TableId {
+        Self::table().id()
+    }
 
     /// This record's primary key values, in key order.
     #[must_use]

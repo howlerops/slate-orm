@@ -110,6 +110,8 @@ build-output-guard|.|python3 scripts/test_check_build_output.py
 caveat-citations|.|python3 scripts/check_caveat_citations.py
 caveat-citations-guard|.|python3 scripts/test_check_caveat_citations.py
 closed-caveats|.|python3 scripts/check_closed_caveats.py
+live-frame|.|python3 scripts/check_live_frame.py
+live-frame-guard|.|python3 scripts/test_check_live_frame.py
 closed-caveats-guard|.|python3 scripts/test_check_closed_caveats.py
 later-entry-signal|.|python3 scripts/test_read_deliberate.py
 draws|.|python3 scripts/check_draws.py

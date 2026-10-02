@@ -1,0 +1,38 @@
+{
+  "at": "2026-10-01T15:39:56+00:00",
+  "file": "scripts/mutations.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_mutations_roster.py"
+  ],
+  "commit": "34ee68b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "two suites name one guard and one file, which is two names for one thing",
+      "old": "      \"guard\": \"check_workspace\",\n      \"file\": \"crates/slate-derive/Cargo.toml\",",
+      "new": "      \"guard\": \"check_workspace\",\n      \"file\": \"Cargo.toml\",",
+      "verdict": "caught",
+      "caught_by": [
+        "check_mutations_roster: two suites name the same guard *and* the same file. One of them is invisible to this check, and which is an accident of file order. Two suites for one guard are fine when they mutate different files; two for one file are two names for one thing."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the second suite's `why` is emptied",
+      "old": "\"why\": \"`publish` defaults to **true**",
+      "new": "\"why\": \"  \", \"unused\": \"`publish` defaults to **true**",
+      "verdict": "caught",
+      "caught_by": [
+        "check_mutations_roster: check_workspace's suite has no `why`. What a mutation breaks is the judgement this file cannot make for itself; write it down."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

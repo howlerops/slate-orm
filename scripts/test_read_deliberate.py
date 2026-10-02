@@ -88,7 +88,28 @@ ROOT = Path(__file__).resolve().parent.parent
 #: set of two rows chosen after the fact. That is fitting the parameter to
 #: the test set and the resulting number would mean nothing. The number to
 #: move is the size of `docs/labelled-verdicts.json`.
-RANKS: list[tuple[int | None, int]] = [(16, 19), (None, 8)]
+#:
+#: **2026-10-01: row 2's denominator moved 8 → 9, and the rank did not move.**
+#: The ninth candidate is
+#: `ledger/2026-10-01-a-check-the-derive-could-not-declare.md`, which shares
+#: "default", "column" and "assertion" with a claim about a workbench
+#: playground's default-column assertion and has nothing whatever to do with
+#: it. One entry about a *different* default column joined the shortlist on
+#: vocabulary alone, which is the signal's failure mode stated as cheaply as
+#: it can be: the answer is still not a candidate and the noise grew by one.
+#: Recorded rather than tuned, for the reason above.
+#:
+#: **2026-10-01, again: 9 → 10, and the rank still did not move.** The tenth
+#: is `ledger/2026-10-01-twenty-moments-read-and-two-that-were-not.md`, which
+#: shares "default", "assertion" and "column" with the same claim for the same
+#: reason — it quotes a verdict about a default column. Two entries in one day
+#: joined this shortlist by vocabulary, which makes the point the first note
+#: made as a one-off into a rate: **this denominator grows with the ledger and
+#: the numerator does not.** A signal whose candidate list grows and whose
+#: answer does not appear is one whose precision decays as the repository
+#: does, and that is worth more than either number on its own. Still not
+#: tuned, and the reason has not changed: the labelled set has two rows.
+RANKS: list[tuple[int | None, int]] = [(16, 19), (None, 10)]
 
 
 def bodies() -> dict[str, str]:

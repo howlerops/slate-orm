@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:54:03+00:00",
+  "file": "crates/slate-server/src/service.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_handlers.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a handler converts a join request with no authorisation above it",
+      "old": "        self.authorize_join_inputs(&context, &wire, Action::Read)?;\n        let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;",
+      "new": "        let (tables, read, warnings) = join_from_proto(&wire, self.pool.catalog())?;",
+      "verdict": "caught",
+      "caught_by": [
+        "check_handlers: service.rs:2671: `join` calls `join_from_proto` with no authorisation in the 4 lines above it."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

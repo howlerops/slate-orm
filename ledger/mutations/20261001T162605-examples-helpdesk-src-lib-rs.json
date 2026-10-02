@@ -1,0 +1,36 @@
+{
+  "at": "2026-10-01T16:26:05+00:00",
+  "file": "examples/helpdesk/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-helpdesk",
+    "--no-fail-fast"
+  ],
+  "commit": "d35c22a",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the hand-written check loses its message, so a form shows nothing",
+      "old": "                .with_message(\"A ticket is open, pending, solved or closed.\"),",
+      "new": "        ,",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "the hand-written check loses its column, which equality would not see",
+      "old": "                .with_column(\"status\")\n                .with_message",
+      "new": "                .with_message",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": null
+}

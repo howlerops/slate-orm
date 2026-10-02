@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:37+00:00",
+  "file": "scripts/run_examples.sh",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_examples_roster.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a crate's floor drops below the examples it has",
+      "old": "    slate-slatedb) least=9 ;;",
+      "new": "    slate-slatedb) least=2 ;;",
+      "verdict": "caught",
+      "caught_by": [
+        "check_examples_roster: `slate-slatedb` has 9 example(s) and a floor of 2."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

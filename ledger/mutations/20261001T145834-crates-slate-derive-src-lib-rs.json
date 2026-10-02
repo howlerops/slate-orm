@@ -1,0 +1,50 @@
+{
+  "at": "2026-10-01T14:58:34+00:00",
+  "file": "crates/slate-derive/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--doc",
+    "--no-fail-fast"
+  ],
+  "commit": "e31ed21",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the on_delete word roster accepts anything",
+      "old": "                other => {\n                    return Err(syn::Error::new(\n                        word.span(),\n                        format!(\n                            \"unknown `on_delete` action `{other}`; the two are `restrict` \\\n                             (the default) and `cascade`\"\n                        ),\n                    ));\n                }",
+      "new": "                _ => Ident::new(\"Restrict\", word.span()),",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 427) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "two foreign keys may share a name",
+      "old": "        if keys.iter().take(i).any(|k| k.name == spec.name) {",
+      "new": "        if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 477) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "one key may name a column twice",
+      "old": "            if spec.columns.iter().take(j).any(|c| c == column) {",
+      "new": "            if false {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

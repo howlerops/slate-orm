@@ -1,0 +1,30 @@
+{
+  "at": "2026-10-01T14:58:57+00:00",
+  "file": "crates/slate-derive/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--doc",
+    "--no-fail-fast"
+  ],
+  "commit": "e31ed21",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "one key may name a column twice",
+      "old": "            if spec.columns.iter().take(j).any(|c| c == column) {",
+      "new": "            if false {",
+      "verdict": "caught",
+      "caught_by": [
+        "crates/slate-orm/src/lib.rs - Record (line 477) - compile fail"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

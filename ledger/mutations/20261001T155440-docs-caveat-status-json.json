@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:54:40+00:00",
+  "file": "docs/caveat-status.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_outside_premises.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the npm caveat loses its recheck, the state every one of them was in",
+      "old": "      \"recheck\": {\n        \"url\": \"https://registry.npmjs.org/@slate-orm/client\",\n        \"expect_status\": 404\n      },\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "check_outside_premises: 2026-09-13-typescript-client.md: `The package is not published anywhere and its version is `0.` is about a package registry and is still deliberate, with no `recheck`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

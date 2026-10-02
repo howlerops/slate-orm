@@ -1,0 +1,49 @@
+{
+  "at": "2026-10-01T02:36:57+00:00",
+  "file": ".githooks/pre-commit",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    ".githooks/test-pre-commit.sh"
+  ],
+  "commit": "1018d2c",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the build-directory guard never fires",
+      "old": "built=$(printf '%s\\n' \"$staged\" | grep -E \"$build_dirs\" || true)",
+      "new": "built=$(printf '%s\\n' \"$staged\" | grep -E 'zzzz-never' || true)",
+      "verdict": "caught",
+      "caught_by": [
+        "test-pre-commit: pre-commit:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the rule is anchored to the root, like the .gitignore it replaces",
+      "old": "build_dirs=${SLATE_HOOK_BUILD_DIRS:-'(^|/)(target|",
+      "new": "build_dirs=${SLATE_HOOK_BUILD_DIRS:-'^(target|",
+      "verdict": "caught",
+      "caught_by": [
+        "test-pre-commit: pre-commit:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the trailing slash goes, so targeting.rs is build output",
+      "old": "\\.pytest_cache|\\.mypy_cache)/'}",
+      "new": "\\.pytest_cache|\\.mypy_cache)'}",
+      "verdict": "caught",
+      "caught_by": [
+        "test-pre-commit: pre-commit:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,38 @@
+{
+  "at": "2026-10-01T00:59:05+00:00",
+  "file": "scripts/prebuilt.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_sh.py"
+  ],
+  "commit": "0fa9d3b",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the prebuilt count drifts to seven",
+      "old": "shares it across\nsix jobs,",
+      "new": "shares it across\nseven jobs,",
+      "verdict": "caught",
+      "caught_by": [
+        "CLAUDE.md's job count is ci.yml's"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the sentence is reworded so the anchor misses it",
+      "old": "CI builds one per run and shares it across\nsix jobs,",
+      "new": "CI builds one per run and hands it to\nsix jobs,",
+      "verdict": "caught",
+      "caught_by": [
+        "CLAUDE.md's job count is ci.yml's",
+        "every job count stated in prose is anchored or excused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

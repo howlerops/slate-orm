@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-01T15:39:44+00:00",
+  "file": "scripts/check_mutations_roster.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_mutations_roster.py"
+  ],
+  "commit": "34ee68b",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the collision rule keys on the guard alone again, hiding the second suite",
+      "old": "    suites = {(suite[\"guard\"], suite[\"file\"]): suite for suite in roster[\"suites\"]}",
+      "new": "    suites = {suite[\"guard\"]: suite for suite in roster[\"suites\"]}",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

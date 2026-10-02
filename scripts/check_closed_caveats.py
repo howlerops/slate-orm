@@ -904,6 +904,78 @@ WITNESS: dict[str, tuple[str | None, str]] = {
  # because the loop it replaced would leave the rest of the check standing.
  "claude-md-counts-anchored": ("CLAUDE_MD_COUNTS", "scripts/test_check_sh.py"),
 
+ # The `check(...)` attribute on `#[derive(Record)]`. `parse_check` rather than
+ # the `check_stmts` emission or the `column`/`message` branches inside it: a
+ # revert that left the parser standing would be a derive that reads the
+ # attribute and builds nothing, and the parser is what a reader goes to first.
+ "derive-declares-a-check": ("fn parse_check(", "crates/slate-derive/src/lib.rs"),
+
+ # The `foreign_key(...)` attribute on the same macro, and the needle is
+ # chosen the same way. A revert that took the parser and left the emission
+ # would be a derive refusing the attribute outright; one that took the
+ # emission and left the parser would be a derive that accepts it and declares
+ # nothing. The parser is the half a reader reaches first.
+ "derive-declares-a-foreign-key": (
+     "fn parse_foreign_key(",
+     "crates/slate-derive/src/lib.rs",
+ ),
+
+ # The three HAVING lowering paths in `slate-wasm`, mutation-tested at last.
+ # The needle is the single-table test, because that is the path whose
+ # coverage was in doubt: the joined and chained ones were predicted caught
+ # by the caveat itself and were, and this one was the open question.
+ "having-is-mutation-tested": (
+     "a_bracketed_having_reaches_the_kernel_and_is_not_silently_dropped",
+     "crates/slate-wasm/tests/having.rs",
+ ),
+
+ # The `moment` frame. The needle is `frame()`'s verdict parameter rather
+ # than the draw file beside it: a draw is one audit and goes out of date,
+ # and what the caveat asked for is that the frame *exists* to be drawn from
+ # again. A revert taking the parameter takes every future draw with it.
+ "moment-has-a-frame": (
+     'def frame(root: Path = ROOT, verdict: str = "deliberate")',
+     "scripts/caveats.py",
+ ),
+
+ # Every member says whether it publishes. The needle is the refusal's own
+ # sentence rather than the regex: a pattern is a line somebody tunes, and
+ # what must survive is a rule that *refuses* silence — `publish` defaults to
+ # true, so a member that says nothing is one `cargo publish` would push.
+ "member-declares-publish": (
+     "does not say whether it is ",
+     "scripts/check_workspace.py",
+ ),
+
+ # The sweep, not the `NOT_THE_JOB_COUNT` roster beside it: a revert leaving
+ # the roster standing would be a list of exemptions nothing consults, which
+ # reads exactly like a working guard.
+ "every-job-count-swept": (
+     "def every_job_count_is_anchored(",
+     "scripts/test_check_sh.py",
+ ),
+ # The comment rather than the pattern, because a pattern is a line somebody
+ # edits and the thing that must survive is the *reason* it is shaped this
+ # way — which is also the only part a reader can check against Go's rules.
+ "pinned-is-a-module-path": (
+     "a domain: at least one dot",
+     "scripts/check_toolchain_pins.py",
+ ),
+
+ "parser-refusals-reviewed": (
+     "fn the_three_refusals_that_named_what_they_found(",
+     "crates/slate-serverd/src/lang/pred.rs",
+ ),
+
+ # The roster rather than the `if` that reads it: a revert leaving the
+ # variable would be a hook that greps for a pattern naming nothing.
+ "hook-refuses-build-output": ("SLATE_HOOK_BUILD_DIRS", ".githooks/pre-commit"),
+
+ "demo-has-a-search-box": (
+     "data-test=\"search-text\"",
+     "examples/explorer/web/src/panels.tsx",
+ ),
+
  "never-fires-halves-derived": (
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
@@ -968,6 +1040,15 @@ EXEMPT: dict[str, str] = {
 #: category; a reason is an argument, and only the second can be wrong in a way
 #: a reader can see.
 EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
+    ('2026-09-30-the-open-frame-read-against-the-tree.md',
+     'The 124 narrowed rows were not swept as a group.'):
+        'closed by the sweep in ledger/2026-10-01-the-live-frame-driven-down.md, which read all 268 live rows -- narrowed included -- and found four stale verdicts among them, two in each half. What a sweep leaves in the tree is changed verdicts in docs/caveat-status.json, so a witness would be one of the rows it changed, which is the tracker witnessing itself',
+    ('2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md',
+     'It says nothing about the 110 `narrowed` rows or the 1018 `d'):
+        'both halves are now swept, by two readings: the narrowed frame in ledger/2026-10-01-the-live-frame-driven-down.md and the deliberate one in ledger/2026-09-30-the-whole-deliberate-frame-read-in-one-pass.md. Same shape as the row above -- the artifact of a sweep is the verdicts it changed',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`enablement: true` is kept rather than reverted, even though'):
+        'closed by observing the setting it is about: actions/configure-pages@v5 with `enablement: true` succeeds in every recent run and the \'If that failed, here is why\' step beside it is skipped, so the decision this caveat defends is the one in force. The evidence is a run on the remote, not a file -- the workflow line it argues for was already in the tree while the claim was unsettled, so it witnesses nothing',
     ('2026-09-30-two-imports-a-script-put-where-the-text-was.md',
      "It does not check the session's other scripted edits for the"):
         'closed by reading the diff — 1774 added lines over 34 files outside `ledger/` — for the class the caveat names: a replacement applied at several sites, one of whose contexts differs. There is none in that range, and a reading of a diff leaves nothing in the tree but the entry that records what it looked for',
@@ -2640,6 +2721,91 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md',
      'CLAUDE.md\'s half is still a loop over every word before "job'):
         'claude-md-counts-anchored',
+
+    # --- 2026-10-01, the derive's check attribute ---------------------------
+    #
+    # The needle is `parse_check`, not the emission: the emission could be
+    # deleted and the attribute would still parse, which is a derive that
+    # accepts a check and declares none. The parser going is the whole feature
+    # going, and it is the one name that cannot survive a revert.
+    ('2026-09-19-a-check-that-names-its-field.md',
+     '`#[derive(Record)]` cannot declare either field. A check wri'):
+        'derive-declares-a-check',
+
+    # --- 2026-10-01, a default nobody chose --------------------------------
+    ('2026-09-29-everything-this-repository-ships-can-now-be-published.md',
+     'Nothing stops the *next* crate defaulting to publishable.'):
+        'member-declares-publish',
+
+    # --- 2026-10-01, the moment audit -------------------------------------
+    ('2026-09-29-twelve-limits-read-the-day-they-were-written.md',
+     '`moment` and `deliberate` are not audited by anything.'):
+        'moment-has-a-frame',
+    ('2026-09-30-the-open-frame-read-against-the-tree.md',
+     '`moment` is still audited by nothing.'):
+        'moment-has-a-frame',
+
+    # The narrowed frame, swept as a group. A sweep is a reading: what it
+    # left in the tree is 168 changed verdicts and an entry, and a witness
+    # would have to be one of those verdicts, which is circular.
+    ('2026-09-30-the-open-frame-read-against-the-tree.md',
+     'The 124 narrowed rows were not swept as a group.'): '=read',
+    ('2026-09-29-the-duplicate-sweep-and-what-an-entry-costs.md',
+     'It says nothing about the 110 `narrowed` rows or the 1018 `d'): '=read',
+
+    #
+    # Marked `moment` on 2026-09-15 and it never was one: it named work and
+    # named the mutation to run. The mutation was run; all three paths are
+    # caught.
+    ('2026-09-15-having-on-a-join.md', 'No mutation testing yet.'):
+        'having-is-mutation-tested',
+
+    # --- 2026-10-01, the derive's foreign key ------------------------------
+    ('2026-10-01-a-check-the-derive-could-not-declare.md',
+     'It does not declare a foreign key.'):
+        'derive-declares-a-foreign-key',
+
+    # --- 2026-10-01, two guards that reached less far than they read -------
+    ('2026-09-29-the-file-named-after-the-guard-carried-the-stale-count.md',
+     'Only two files were swept.'): 'every-job-count-swept',
+    ('2026-09-29-the-skip-list-that-excused-nothing.md',
+     '`PINNED` still matches any `@v<digit>` token'): 'pinned-is-a-module-path',
+    # The same caveat in the entry it came from, which the skip-list entry
+    # restated. One fix, two rows.
+    ('2026-09-29-a-guard-whose-roster-was-itself.md',
+     '`PINNED` matches any `@v<digit>` token.'): 'pinned-is-a-module-path',
+    # The review of the parser's other refusals. The needle is the test that
+    # holds the three fixed sentences, not any one of them: a reader wants to
+    # see what was found, and the three literals could each be reverted
+    # separately while the test still names all three.
+    ('2026-09-29-the-same-wrong-sentence-twice-in-one-file.md',
+     'No other error message in the parser was reviewed for the sa'):
+        'parser-refusals-reviewed',
+
+    # --- 2026-10-01, the stale-verdict sweep -------------------------------
+    #
+    # Both were answered by `check_build_output.py`, written for a different
+    # entry and never connected back; the hook rule is the earlier moment
+    # rather than a new capability, so the witness is the hook — it is the
+    # thing that did not exist when the caveat was written.
+    ('2026-09-13-ignore-the-testservers-target.md',
+     'Nothing stops the next nested workspace from doing the same '):
+        'hook-refuses-build-output',
+    ('2026-09-14-guards-against-the-recurring-mistakes.md',
+     'Nothing stops a *fourth* nested workspace from being created'):
+        'hook-refuses-build-output',
+    ('2026-09-14-main-and-the-documentation-sweep.md',
+     '`enablement: true` is kept rather than reverted, even though'):
+        '=setting',
+    # Two residuals that were stale: the demo grew a search box and neither
+    # row was re-read. The witness is the panel, not the tab name — a tab
+    # could stay while the panel went.
+    ('2026-09-21-a-search-endpoint-the-demo-can-serve-two-ways.md',
+     'No `CONTAINS` in the SQL front end and no search box in the '):
+        'demo-has-a-search-box',
+    ('2026-09-21-contains-on-the-wire.md',
+     'No `CONTAINS` in the SQL front end and no search box in the '):
+        'demo-has-a-search-box',
 }
 
 

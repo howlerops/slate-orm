@@ -45,6 +45,7 @@ by shape.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -141,6 +142,40 @@ def check(root: Path) -> list[tuple[str, bool, str]]:
         not exposed,
         ", ".join(exposed),
     )
+
+    # The third rule, and it is about a roster rather than about the tree.
+    # `.githooks/pre-commit` refuses a staged path inside a build directory —
+    # the same rule at an earlier moment — and it names the directories in a
+    # shell variable, because a hook with no dependencies cannot read this
+    # file. Two hand-maintained lists of the same names is the failure this
+    # repository meets most often, so the second one is checked from here
+    # rather than left to drift: a name this guard knows and the hook does not
+    # is a name the hook lets through at the one moment the fix is cheap.
+    #
+    # One-sided on purpose. The hook's list is allowed to be *wider* — it also
+    # carries `.venv`, `.pytest_cache` and `.mypy_cache`, which are not build
+    # output a package root declares and which `BUILD_DIRS` has no reason to
+    # know. What must not happen is this list growing and the hook's not.
+    hook = (REPO / ".githooks/pre-commit").read_text(encoding="utf-8")
+    declared = re.search(r"build_dirs=\$\{SLATE_HOOK_BUILD_DIRS:-'([^']*)'\}", hook)
+    if not declared:
+        record(
+            "the pre-commit hook declares a build-directory roster",
+            False,
+            "no `build_dirs=${SLATE_HOOK_BUILD_DIRS:-…}` line in .githooks/pre-commit, "
+            "so this rule has nothing to compare against. Either the hook's guard moved "
+            "or it is gone and so is the earlier half of this check.",
+        )
+    else:
+        # Matched against the alternation's words rather than by substring:
+        # `dist` is a substring of `dist-test` and would read as present.
+        words = set(re.findall(r"[\w.\-]+", declared.group(1)))
+        missing = [name for name in BUILD_DIRS if name not in words]
+        record(
+            "the pre-commit hook's roster covers every build directory this knows",
+            not missing,
+            ", ".join(missing),
+        )
     return out
 
 

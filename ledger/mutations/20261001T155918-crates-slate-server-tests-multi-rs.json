@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:18+00:00",
+  "file": "crates/slate-server/tests/multi.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_cited_docs.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a source file cites a docs page that is not there",
+      "old": "`docs/correctness.md` records four thresholds",
+      "new": "`docs/correctness-notes.md` records four thresholds",
+      "verdict": "caught",
+      "caught_by": [
+        "check_cited_docs: crates/slate-server/tests/multi.rs:381 points at `docs/correctness-notes.md`, which is not a file"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

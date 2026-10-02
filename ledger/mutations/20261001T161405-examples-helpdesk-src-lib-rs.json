@@ -1,0 +1,75 @@
+{
+  "at": "2026-10-01T16:14:05+00:00",
+  "file": "examples/helpdesk/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-helpdesk",
+    "--no-fail-fast"
+  ],
+  "commit": "5952e39",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the hand-written table loses the status check, so the writes are unguarded",
+      "old": "        .check(\n            CheckDef::new(\"ticket_status\", Expr::matches(Ordinal(5), STATUS_PATTERN))\n                .with_column(\"status\")\n                .with_message(\"A ticket is open, pending, solved or closed.\"),\n        )\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "the_same_status_written_past_the_service_is_refused_by_the_schema",
+        "the_statuses_and_the_check_agree"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the status pattern admits a fifth word",
+      "old": "pub const STATUS_PATTERN: &str = \"^(open|pending|solved|closed)$\";",
+      "new": "pub const STATUS_PATTERN: &str = \"^(open|pending|solved|closed|opne)$\";",
+      "verdict": "caught",
+      "caught_by": [
+        "the_same_status_written_past_the_service_is_refused_by_the_schema",
+        "the_statuses_and_the_check_agree"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the check names the wrong column, so a form blames `priority`",
+      "old": "                .with_column(\"status\")",
+      "new": "                .with_column(\"priority\")",
+      "verdict": "caught",
+      "caught_by": [
+        "the_same_status_written_past_the_service_is_refused_by_the_schema"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the ticket edge restricts instead of cascading",
+      "old": "    column = \"ticket_id\",\n    on_delete = cascade,",
+      "new": "    column = \"ticket_id\",",
+      "verdict": "caught",
+      "caught_by": [
+        "deleting_a_ticket_takes_its_comments_and_deleting_an_author_does_not"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    },
+    {
+      "name": "the author edge cascades instead of restricting",
+      "old": "    name = \"comments_author\",\n    parent = Agent,\n    column = \"tenant_id\",\n    column = \"author_id\",",
+      "new": "    name = \"comments_author\",\n    parent = Agent,\n    column = \"tenant_id\",\n    column = \"author_id\",\n    on_delete = cascade,",
+      "verdict": "caught",
+      "caught_by": [
+        "deleting_a_ticket_takes_its_comments_and_deleting_an_author_does_not"
+      ],
+      "suites_reported": 3,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

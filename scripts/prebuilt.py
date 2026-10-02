@@ -3,7 +3,7 @@
 
 `SLATE_SERVERD` and `SLATE_TESTSERVER` let a harness skip `cargo` and run a
 binary somebody already built. CI builds one per run and shares it across
-eight jobs, which is most of what makes the client suites affordable. The
+six jobs, which is most of what makes the client suites affordable. The
 hazard is the obvious one: the binary is a *snapshot*, and a suite pointed at
 a stale one tests a server this tree did not produce.
 

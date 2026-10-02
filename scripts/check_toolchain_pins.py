@@ -74,7 +74,40 @@ GO_INSTALL = re.compile(
 #:
 #: `go install ./...` builds this module and carries no `@version`, so it does
 #: not match and should not: it cannot want a Go the module does not declare.
-PINNED = re.compile(r"[\w.\-/]+@v?[\d][\w.\-+]*")
+#:
+#: **Shaped like a Go module path, not like any `@v1` token.** It was
+#: `[\w.\-/]+@v?[\d][\w.\-+]*`, which matches `@v2` in an npm range, a docker
+#: tag, an action reference — anything. A file with a `go install` and an
+#: unrelated pinned string read as a pinned Go installer and was then required
+#: to decide `GOTOOLCHAIN`, which is a refusal about the wrong thing, pointing
+#: at a line that has nothing to do with Go. Nothing in the tree does that
+#: today, which is why this was a caveat in
+#: `ledger/2026-09-29-the-skip-list-that-excused-nothing.md` rather than a bug.
+#:
+#: What a `go install` target actually is, per Go's own module rules: a path
+#: whose **first element is a domain** — it must contain a dot, because that
+#: is how `go` tells a module path from one of the standard library's —
+#: optionally followed by more elements, then `@v<digits>`.
+#: `google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12` matches;
+#: `node@v22`, `actions/checkout@v5` and `pg@v16` do not. The first has no dot
+#: and no slash, and the other two have no dot in their first element.
+#:
+#: **The path elements are optional, and a mutation is why.** The first
+#: version of this required at least one — `(?: /… )+` — on the reasoning
+#: that a `go install` target names a command inside a module. Mutating the
+#: `+` to a `*` survived every case, which sent me to Go's own rules:
+#: `go install example.com@v1.2.3` is legal when the module root is itself a
+#: main package, so the `+` was over-narrow and the mutation found real
+#: over-narrowing rather than a missing test. Relaxed, with the case below
+#: added so the next narrowing is caught.
+PINNED = re.compile(
+    r"""(?x)
+    \b
+    [\w\-]+ (?: \.[\w\-]+ )+        # a domain: at least one dot
+    (?: /[\w.\-~]+ )*                # and any number of path elements
+    @v? \d [\w.\-+]*                 # at the pinned version
+    """
+)
 
 #: This guard and its own test both carry example install lines — the pattern's
 #: documentation and its fixture. Skipping them by name is what gives the

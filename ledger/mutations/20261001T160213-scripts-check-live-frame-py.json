@@ -1,0 +1,59 @@
+{
+  "at": "2026-10-01T16:02:13+00:00",
+  "file": "scripts/check_live_frame.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_live_frame.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the no-open rule never fires",
+      "old": "    still_open = [v for v in verdicts if v.get(\"verdict\") == \"open\"]",
+      "new": "    still_open = []",
+      "verdict": "caught",
+      "caught_by": [
+        "one open verdict fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a narrowed caveat need not be rostered",
+      "old": "        if not hits:\n            problems.append(\n                f\"{v['entry']}: `{v['key']}` is `narrowed` and is not in STILL_NARROWED.",
+      "new": "        if False:\n            problems.append(\n                f\"{v['entry']}: `{v['key']}` is `narrowed` and is not in STILL_NARROWED.",
+      "verdict": "caught",
+      "caught_by": [
+        "a narrowed verdict nobody rostered fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a roster row covering two caveats is accepted",
+      "old": "        elif len(hit) > 1:",
+      "new": "        elif False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a roster prefix matching two narrowed caveats fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the empty-tracker refusal is dropped",
+      "old": "    if not verdicts:\n        # Named by the path as given",
+      "new": "    if False:\n        # Named by the path as given",
+      "verdict": "caught",
+      "caught_by": [
+        "an empty tracker fails rather than passing on nothing: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T16:02:29+00:00",
+  "file": "docs/caveat-status.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_live_frame.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a settled verdict reverts to open",
+      "old": "\"key\": \"The quickstarts are not checked automatically.\",\n      \"verdict\": \"closed\"",
+      "new": "\"key\": \"The quickstarts are not checked automatically.\",\n      \"verdict\": \"open\"",
+      "verdict": "caught",
+      "caught_by": [
+        "check_live_frame: the live caveat frame has grown:"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

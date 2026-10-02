@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-01T15:59:03+00:00",
+  "file": "crates/slate-kernel/src/record.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_write_paths.py"
+  ],
+  "commit": "5529936",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a rostered write path is renamed",
+      "old": "    pub async fn delete_where(",
+      "new": "    pub async fn delete_matching(",
+      "verdict": "caught",
+      "caught_by": [
+        "check_write_paths: `delete_matching` can modify storage and is not in WRITE_PATHS."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,59 @@
+{
+  "at": "2026-10-01T14:57:06+00:00",
+  "file": "crates/slate-derive/src/lib.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-orm",
+    "--test",
+    "derive_foreign_keys",
+    "--no-fail-fast"
+  ],
+  "commit": "e31ed21",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "no foreign key reaches the builder",
+      "old": "                    #(#foreign_key_stmts)*\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_field_level_key_names_the_renamed_column",
+        "an_employee_can_reference_its_own_table",
+        "a_self_reference_is_enforced_against_its_own_table",
+        "an_invoice_for_an_account_that_does_not_exist_is_refused",
+        "the_composite_key_keeps_the_order_it_was_written",
+        "deleting_an_account_cascades_to_its_invoices",
+        "the_derived_foreign_key_matches_the_hand_written_one"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "on_delete is never emitted",
+      "old": "                key = key.on_delete(::slate_orm::ReferentialAction::#action);",
+      "new": "let _ = ::slate_orm::ReferentialAction::#action;",
+      "verdict": "caught",
+      "caught_by": [
+        "the_composite_key_keeps_the_order_it_was_written",
+        "deleting_an_account_cascades_to_its_invoices",
+        "the_derived_foreign_key_matches_the_hand_written_one"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the referencing columns are emitted in reverse",
+      "old": "                #(key = key.column(#columns);)*",
+      "new": "#(key = key.column(#columns);)* let mut key = key;",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

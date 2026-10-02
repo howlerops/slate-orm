@@ -53,7 +53,17 @@ def guards() -> list[str]:
 def main() -> int:
     problems: list[str] = []
     roster = json.loads(ROSTER.read_text())
-    suites = {suite["guard"]: suite for suite in roster["suites"]}
+    # Keyed by (guard, file), not by guard. A guard that watches two trees
+    # needs a suite per tree — `mutate.py` takes one `file` per spec — and
+    # `check_workspace.py` is the first: its member-list rule mutates the root
+    # manifest and its publish rule mutates a member's. Keyed by guard alone,
+    # the second suite was invisible *here* while `run_mutations.py` ran it
+    # perfectly well, so the collision message below was right about this file
+    # and wrong about the runner.
+    suites = {(suite["guard"], suite["file"]): suite for suite in roster["suites"]}
+    #: The guards a suite exists for, which is what the coverage rules below
+    #: ask about. A guard with two suites is covered once.
+    covered = {guard for guard, _ in suites}
     excused = roster["unmutated"]
     found = guards()
 
@@ -68,19 +78,21 @@ def main() -> int:
 
     if len(suites) != len(roster["suites"]):
         problems.append(
-            "two suites name the same guard. One of them is being run and the "
-            "other is being ignored, and which is an accident of file order."
+            "two suites name the same guard *and* the same file. One of them "
+            "is invisible to this check, and which is an accident of file "
+            "order. Two suites for one guard are fine when they mutate "
+            "different files; two for one file are two names for one thing."
         )
 
     for guard in found:
         if guard in REFLEXIVE:
             continue
-        if guard in suites and guard in excused:
+        if guard in covered and guard in excused:
             problems.append(
                 f"{guard} has a suite and an `unmutated` reason.\n"
                 "  Both cannot be true. Drop the reason."
             )
-        elif guard not in suites and guard not in excused:
+        elif guard not in covered and guard not in excused:
             problems.append(
                 f"scripts/{guard}.py has no real-tree mutation and no reason "
                 "for having none.\n"
@@ -92,14 +104,14 @@ def main() -> int:
                 "why there is none."
             )
 
-    for guard in sorted(set(suites) | set(excused)):
+    for guard in sorted(covered | set(excused)):
         if guard not in found and guard not in REFLEXIVE:
             problems.append(
                 f"scripts/mutations.json names {guard}, which is not a guard "
                 "under scripts/ any more. Drop it."
             )
 
-    for guard, suite in sorted(suites.items()):
+    for (guard, _file), suite in sorted(suites.items()):
         path = ROOT / suite["file"]
         if not path.exists():
             problems.append(
@@ -137,7 +149,8 @@ def main() -> int:
         return 1
 
     print(
-        f"ok    {len(found)} guards, {len(suites)} with a real-tree mutation, "
+        f"ok    {len(found)} guards, {len(covered)} with a real-tree mutation "
+        f"({len(suites)} suites), "
         f"{len(excused)} with a written reason for having none"
     )
     return 0
