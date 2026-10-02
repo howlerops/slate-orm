@@ -15765,6 +15765,39 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-02",
       "by": "Not a gap in the guard but a property of Go: a module in a subdirectory carries no version of its own, and the proxy reads one out of a git tag naming the module path (the subdirectory, then the version) that `release.yml` creates from the release tag it was triggered by. There is nothing in the tree to compare against, so the check that matters is the one already in the `go` job \u2014 it asks `proxy.golang.org` for the version it just tagged and fails the release if it will not resolve."
+    },
+    {
+      "entry": "2026-10-02-the-release-that-shipped-five-things.md",
+      "key": "The image is still only built two-architecture on a tag.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-02",
+      "by": "The alternative is priced in the entry and the price is the argument: adding `linux/arm64` to `ci.yml` costs ~75 minutes on every push to every branch, to cover a path that only moves when the `Dockerfile` does. That is the wrong trade at this ratio, and the entry names the condition that changes it \u2014 if the builder stage cross-compiles instead of emulating, the coverage becomes cheap and should be taken. A boundary with a stated reopening condition, not an omission."
+    },
+    {
+      "entry": "2026-10-02-the-release-that-shipped-five-things.md",
+      "key": "Nothing pulls the published image and runs it.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-02",
+      "by": "Half covered and the covered half is the one that can be. `ci.yml` builds this exact `Dockerfile` on every push, starts it against the quickstart's TOML with `--check` and asserts the base has no shell \u2014 for amd64, which is the runner's architecture. Pulling the published amd64 image back would re-verify a build determined by the same inputs. The arm64 half genuinely has never been started, and running it needs either an arm64 runner or QEMU at startup; that exposure is the same one the two-architecture row above decides, so it is argued there once rather than twice."
+    },
+    {
+      "entry": "2026-10-02-the-release-that-shipped-five-things.md",
+      "key": "npm and PyPI remain unexercised.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-02",
+      "by": "They are off by an explicit repository variable, which is a decision recorded in `docs/releasing.md` and not an accident \u2014 the names are unclaimed and the API changes weekly. A first publish being a first run is inherent to a registry that refuses a reused version; what the design does about it is refuse to *skip* silently, so a configured-but-credential-less state fails the release instead of quietly shipping four artefacts and reporting five. Exercising them for real means claiming the names, which is the decision this verdict is waiting on and not a task.",
+      "recheck": {
+        "url": "https://pypi.org/pypi/slate-client/json",
+        "expect_status": 404,
+        "why": "PyPI answering anything but 404 means the name was claimed and the job turned on, so the claim is read again. npm's half is the same shape and is already watched by 2026-09-13-typescript-client.md's row against registry.npmjs.org; both were 404 when this was written."
+      }
+    },
+    {
+      "entry": "2026-10-02-the-release-that-shipped-five-things.md",
+      "key": "The 77 minutes is recorded, not fixed.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-02",
+      "by": "Deliberate scope. The fix is identified in the entry \u2014 cross-compile in the builder stage with `--platform=$BUILDPLATFORM` rather than emulate \u2014 and it edits the one file that produces the shipped artefact, so it wants its own change, its own CI run and its own `--check` against the started container. Folding it into a release write-up would mean changing the build of the thing just published, in the commit that documents publishing it. The number is here so the next release budgets for it."
     }
   ]
 }

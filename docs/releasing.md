@@ -3,11 +3,29 @@
 Five things ship from this repository. This is what publishes each of them,
 what it costs, and what has to be decided before it can happen.
 
-**One release has been cut.** `v0.0.1`, on 2026-09-14, attached two
-`slate-serverd` binaries to a GitHub prerelease and did nothing else — the
-image, the Go module tag and the two registry jobs did not exist yet; they
-were added on 2026-09-29 along with this page. So of the five artefacts below,
-one has shipped once and four have never run.
+**Two releases have been cut, and the second one exercised all of this.**
+
+`v0.0.1`, on 2026-09-14, attached two `slate-serverd` binaries to a GitHub
+prerelease and did nothing else — the image, the Go module tag and the two
+registry jobs did not exist yet; they were added on 2026-09-29 along with this
+page.
+
+`v0.1.0`, on 2026-10-02, ran every job below for the first time. What it
+shipped, verified by asking the registries rather than by reading the run:
+
+<!-- not a measurement -->
+
+| artefact | result |
+| --- | --- |
+| binaries | attached — x86_64 24.1 MB, aarch64 22.3 MB |
+| `ghcr.io/howlerops/slate-serverd` | `0.1.0` and `latest`, one OCI index, both resolving to `sha256:52e2cd8e…` |
+| the Go module | `clients/go/v0.1.0` tagged, and `proxy.golang.org` answered for it |
+| npm | not published — `vars.PUBLISH_NPM` unset, reported and succeeded |
+| PyPI | not published — `vars.PUBLISH_PYPI` unset, reported and succeeded |
+
+The index carries `linux/amd64` and `linux/arm64` plus two attestation
+manifests, which are the `provenance: true` and `sbom: true` below. An
+anonymous `GET` against `ghcr.io` resolves it, so the package is public.
 
 This page said "nothing here has been published yet" for three days after that
 was false, which is worth more than an apology: it was written *about* the
@@ -142,8 +160,22 @@ docker run --rm -v "$PWD/head.toml:/etc/slate/head.toml:ro" \
 
 The release pushes `linux/amd64` and `linux/arm64`, matching the binaries.
 
+**Budget 80 minutes for it, and know why.** `v0.1.0`'s image job took **77
+minutes** against 2m27s for the whole rest of the release. The arm64 half is
+built under QEMU, so the entire Rust workspace is compiled at `--release
+--locked` through an emulator; the aarch64 *binary* beside it took 2m02s
+because `release-build.yml` cross-compiles it on an amd64 host. Nothing is
+wrong — but a release looks hung for over an hour, and the two numbers are
+the argument for cross-compiling in the Dockerfile rather than emulating.
+
 **`ci.yml` builds the image on every push**, starts it against the
 configuration on the quickstart page with `--check`, and asserts the base still
 has no shell. A Dockerfile first exercised on release day is exactly the shape
 this repository has been burned by before — `ci.yml` itself was active,
 plausible, and had run zero times.
+
+**It builds one architecture, though, and the release builds two.** CI's build
+is the host's amd64; `platforms: linux/amd64,linux/arm64` appears only here. So
+the multi-arch push remains a release-day-only path, which is the very shape
+the paragraph above is about, one level in. It worked first time on `v0.1.0`
+and that is luck rather than coverage.

@@ -1138,12 +1138,20 @@ Built and tested:
       docs page's own TOML — runs on every push as well, so the one thing a
       release workflow is usually first asked to do on release day is already
       answered
-- [x] A tagged release. `v0.0.1` carries `slate-serverd` for x86_64 and
-      aarch64 Linux, built and attached by `release.yml`. Marked a prerelease,
-      deliberately: the status banner above says what this is. The upload step
-      was the last thing in this repository still in the state the CI work
-      spent a morning getting out of — written, plausible, never executed — and
-      it has now executed
+- [x] A tagged release, and then a second one that shipped four more things.
+      `v0.0.1` attached `slate-serverd` for x86_64 and aarch64 Linux and did
+      nothing else; the image, the Go module tag and the npm and PyPI jobs were
+      written two weeks later and had never run. **`v0.1.0` ran all of them**:
+      the binaries, `ghcr.io/howlerops/slate-serverd:0.1.0` and `:latest` as a
+      two-architecture index with provenance and an SBOM, and
+      `github.com/howlerops/slate-orm/clients/go@v0.1.0` resolving through
+      `proxy.golang.org`. npm and PyPI are off by an explicit repository
+      variable rather than by omission, so both reported *not published* and
+      succeeded — see [`docs/releasing.md`](docs/releasing.md). Both releases
+      are marked prerelease, deliberately: the status banner above says what
+      this is. The image took **77 minutes**, because the arm64 half is
+      emulated; that number and what to do about it are in
+      [`ledger/2026-10-02-the-release-that-shipped-five-things.md`](ledger/2026-10-02-the-release-that-shipped-five-things.md)
 - [x] `EXPLAIN` for a grouped read — `ExplainAggregate`, and
       `explain_grouped`/`explain_grouped_join`/`explain_grouped_chain` in the
       kernel. Not the same plan as explaining the read underneath: grouping
