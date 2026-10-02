@@ -15737,6 +15737,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-01",
       "by": "A sampling rate, not a shortfall. Twenty of 146 is a seventh of the frame and was chosen to be big enough to show a terrible rate on a first pass; it did not show one. Reading all 146 would cost a session and answer a question the sample already bounds. The entry says the next pass should draw a fresh seed, which is the whole of what remains to be remembered."
+    },
+    {
+      "entry": "2026-10-02-the-version-nobody-moved.md",
+      "key": "Nothing has been released at the time of writing.",
+      "verdict": "moment",
+      "reviewed": "2026-10-02",
+      "by": "True of the commit that carries this entry and of nothing after it: the sentence says \"at the time of writing\" and names the tag push as the next step. What `release.yml` actually shipped belongs in the entry written from the run, which is the entry this one points at rather than a worklist item."
+    },
+    {
+      "entry": "2026-10-02-the-version-nobody-moved.md",
+      "key": "The rule does not check `[workspace.package]` inheritance of",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-02",
+      "by": "`edition`, `license`, `rust-version` and `repository` are inheritable and unchecked, and the asymmetry is the argument: a release *moves* the version and moves nothing else, so a restated version is wrong on a schedule while a restated `license` is wrong only if somebody changes the licence. Checking all five means a rule whose failures are almost always a member that legitimately differs, which is the shape of guard people start exempting. One more alternative in the pattern is the fix if a second field ever moves."
+    },
+    {
+      "entry": "2026-10-02-the-version-nobody-moved.md",
+      "key": "It cannot see a member outside `members`.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-02",
+      "by": "The right division rather than a gap. `scripts/check_workspace.py` is the guard whose subject is what exists \u2014 it refuses a crate under `crates/` that `members` does not list, and a `members` entry with no `Cargo.toml` \u2014 and this one's subject is what the listed members declare. Duplicating the existence check here would report one mistake as two failures, and the directory sweep is already written and tested there."
+    },
+    {
+      "entry": "2026-10-02-the-version-nobody-moved.md",
+      "key": "`clients/go` still has no version to check.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-02",
+      "by": "Not a gap in the guard but a property of Go: a module in a subdirectory carries no version of its own, and the proxy reads one out of a git tag naming the module path (the subdirectory, then the version) that `release.yml` creates from the release tag it was triggered by. There is nothing in the tree to compare against, so the check that matters is the one already in the `go` job \u2014 it asks `proxy.golang.org` for the version it just tagged and fails the release if it will not resolve."
     }
   ]
 }

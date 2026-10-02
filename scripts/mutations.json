@@ -344,8 +344,20 @@
       "cases": [
         {
           "name": "the npm package's version drifts from the workspace",
-          "old": "\"version\": \"0.0.1\",",
-          "new": "\"version\": \"0.0.2\","
+          "old": "\"version\": \"0.1.0\",",
+          "new": "\"version\": \"0.1.1\","
+        }
+      ]
+    },
+    {
+      "guard": "check_versions",
+      "file": "crates/slate-wasm/Cargo.toml",
+      "why": "A member that writes its own version instead of inheriting one does not move when the workspace is bumped, so the release ships two numbers. Two of fourteen had done it and both were found by this rule rather than by reading. A second suite for this guard rather than a second case in the npm one, because the rule watches a different file \u2014 a `mutate.py` spec takes one.",
+      "cases": [
+        {
+          "name": "a member restates its version instead of inheriting it",
+          "old": "version.workspace = true",
+          "new": "version = \"0.0.1\""
         }
       ]
     },

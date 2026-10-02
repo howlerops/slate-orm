@@ -6,6 +6,11 @@ today, and a guard that had stopped comparing would look identical. So the
 rules are exercised over a miniature: a root manifest, two client manifests,
 and a tag.
 
+Two rules, two shapes of fixture. The version comparison runs over the three
+manifests; the inheritance rule needs a *member* on disk, so the fixture
+writes one on request — `version.workspace = true` or a literal, which is the
+whole difference the rule is about.
+
 The case worth reading is `a tag ahead of the tree`. That is the failure this
 guard exists for and the one that cannot be undone: npm and PyPI refuse a
 version number that has been used, so a release that publishes `0.0.1` under a
@@ -36,6 +41,26 @@ members = ["crates/thing"]
 version = "{version}"
 """
 
+#: A root manifest whose `members` list is empty, for the inheritance rule's
+#: never-fires case: every member inheriting is trivially true of no members.
+NO_MEMBERS = """\
+[workspace]
+members = [
+]
+
+[workspace.package]
+version = "0.1.0"
+"""
+
+#: A member crate, either inheriting the workspace version or restating it.
+#: The literal is the mistake: it does not move when the workspace is bumped.
+MEMBER = """\
+[package]
+name = "thing"
+{version}
+publish = false
+"""
+
 PYPROJECT = """\
 [project]
 name = "slate-client"
@@ -49,9 +74,26 @@ def tree(
     workspace: str = "0.1.0",
     npm: str | None = "0.1.0",
     python: str | None = "0.1.0",
+    member: str | None = None,
 ) -> None:
-    """A miniature with the three manifests. `None` leaves the version out."""
+    """A miniature with the three manifests. `None` leaves the version out.
+
+    `member` writes `crates/thing/Cargo.toml`, which `members` already names:
+    `"inherit"` for `version.workspace = true` and `"literal"` for a restated
+    number. Left out, the member has no manifest at all, which the guard skips
+    on purpose — a `members` entry with no `Cargo.toml` is
+    `check_workspace.py`'s refusal, and reporting it twice means two failures
+    to read for one mistake.
+    """
     (root / "Cargo.toml").write_text(ROOT_MANIFEST.format(version=workspace))
+
+    if member is not None:
+        where = root / "crates" / "thing"
+        where.mkdir(parents=True)
+        declaration = (
+            "version.workspace = true" if member == "inherit" else 'version = "0.0.1"'
+        )
+        (where / "Cargo.toml").write_text(MEMBER.format(version=declaration))
 
     package: dict[str, object] = {"name": "@slate-orm/client"}
     if npm is not None:
@@ -78,43 +120,57 @@ def run(root: pathlib.Path, argv: list[str]) -> tuple[int, str]:
     return code, out.getvalue() + err.getvalue()
 
 
-#: name, (workspace, npm, python), argv, wanted exit, needle.
-CASES: list[tuple[str, tuple[str, str | None, str | None], list[str], int, str]] = [
-    ("three manifests agreeing passes", ("0.1.0", "0.1.0", "0.1.0"), [], 0, "ok    0.1.0"),
+#: name, (workspace, npm, python, member), argv, wanted exit, needle.
+CASES: list[
+    tuple[str, tuple[str, str | None, str | None, str | None], list[str], int, str]
+] = [
+    (
+        "three manifests agreeing passes",
+        ("0.1.0", "0.1.0", "0.1.0", None),
+        [],
+        0,
+        "ok    0.1.0",
+    ),
     (
         "an npm version behind the workspace fails",
-        ("0.1.0", "0.0.1", "0.1.0"),
+        ("0.1.0", "0.0.1", "0.1.0", None),
         [],
         1,
         "package.json says 0.0.1",
     ),
     (
         "a pyproject version ahead of the workspace fails",
-        ("0.1.0", "0.1.0", "0.2.0"),
+        ("0.1.0", "0.1.0", "0.2.0", None),
         [],
         1,
         "pyproject.toml says 0.2.0",
     ),
     (
         "a published package with no version at all fails",
-        ("0.1.0", None, "0.1.0"),
+        ("0.1.0", None, "0.1.0", None),
         [],
         1,
         "declares no version",
     ),
-    ("a tag matching the tree passes", ("0.1.0", "0.1.0", "0.1.0"), ["v0.1.0"], 0, "and 1 tag(s)"),
+    (
+        "a tag matching the tree passes",
+        ("0.1.0", "0.1.0", "0.1.0", None),
+        ["v0.1.0"],
+        0,
+        "and 1 tag(s)",
+    ),
     (
         # The one that costs money. A release named v0.2.0 that publishes 0.1.0
         # cannot be taken back: the registries refuse a reused number.
         "a tag ahead of the tree fails",
-        ("0.1.0", "0.1.0", "0.1.0"),
+        ("0.1.0", "0.1.0", "0.1.0", None),
         ["v0.2.0"],
         1,
         "tag v0.2.0 carries 0.2.0",
     ),
     (
         "a tag that is not a v-tag fails",
-        ("0.1.0", "0.1.0", "0.1.0"),
+        ("0.1.0", "0.1.0", "0.1.0", None),
         ["0.1.0"],
         1,
         "is not a v-tag",
@@ -124,10 +180,28 @@ CASES: list[tuple[str, tuple[str, str | None, str | None], list[str], int, str]]
         # PyPI spell those differently, so a release wearing one has to say so
         # in every manifest rather than in the tag alone.
         "a prerelease tag must match the tree exactly",
-        ("0.1.0", "0.1.0", "0.1.0"),
+        ("0.1.0", "0.1.0", "0.1.0", None),
         ["v0.1.0-rc.1"],
         1,
         "carries 0.1.0-rc.1",
+    ),
+    (
+        "a member inheriting the workspace version passes",
+        ("0.1.0", "0.1.0", "0.1.0", "inherit"),
+        [],
+        0,
+        "inherited by 1 workspace member(s)",
+    ),
+    (
+        # The quiet one. Nothing breaks on the day: the crate builds, the
+        # release publishes, and the workspace simply ships two numbers —
+        # which is what `Cargo.lock` then records and what the next person
+        # copies.
+        "a member restating its own version fails",
+        ("0.1.0", "0.1.0", "0.1.0", "literal"),
+        [],
+        1,
+        "writes its own version instead of",
     ),
 ]
 
@@ -140,9 +214,9 @@ def main() -> int:
             guard.ROOT = was
             with tempfile.TemporaryDirectory() as directory:
                 root = pathlib.Path(directory)
-                workspace, npm, python = built
+                workspace, npm, python, member = built
                 try:
-                    tree(root, workspace=workspace, npm=npm, python=python)
+                    tree(root, workspace=workspace, npm=npm, python=python, member=member)
                 except Exception as raised:  # noqa: BLE001 - so is a bad fixture
                     code, output = 70, f"the fixture raised {raised!r}"
                 else:
@@ -166,12 +240,27 @@ def main() -> int:
             failures.append(f"FAIL  {name}: exit {code}\n{output}")
         else:
             print(f"ok    {name}")
+
+        # The inheritance rule's never-fires case, which needs its own tree:
+        # "every member inherits" is true of a workspace with no members, and
+        # a guard that compared nothing must not print the passing line.
+        guard.ROOT = was
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            tree(root)
+            (root / "Cargo.toml").write_text(NO_MEMBERS)
+            code, output = run(root, [])
+        name = "a workspace with no members fails rather than passing on nothing"
+        if code != 1 or "lists no members" not in output:
+            failures.append(f"FAIL  {name}: exit {code}\n{output}")
+        else:
+            print(f"ok    {name}")
     finally:
         guard.ROOT = was
 
     for failure in failures:
         print(failure, file=sys.stderr)
-    print(f"{len(CASES) + 1 - len(failures)} passed, {len(failures)} failed")
+    print(f"{len(CASES) + 2 - len(failures)} passed, {len(failures)} failed")
     return 1 if failures else 0
 
 

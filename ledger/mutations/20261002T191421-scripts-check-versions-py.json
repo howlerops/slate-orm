@@ -1,0 +1,48 @@
+{
+  "at": "2026-10-02T19:14:21+00:00",
+  "file": "scripts/check_versions.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_versions.py"
+  ],
+  "commit": "b405bbc",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the inheritance rule never fires",
+      "old": "    for member in restated(ROOT):",
+      "new": "    for member in []:",
+      "verdict": "caught",
+      "caught_by": [
+        "a member restating its own version fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the anchor is dropped, so any line starting `version` counts as inheriting",
+      "old": "INHERITS = re.compile(r\"^version\\.workspace\\s*=\\s*true\\s*$\", re.MULTILINE)",
+      "new": "INHERITS = re.compile(r\"^version\", re.MULTILINE)",
+      "verdict": "caught",
+      "caught_by": [
+        "a member restating its own version fails: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the empty-members refusal is dropped",
+      "old": "    if not inherit:",
+      "new": "    if False:",
+      "verdict": "caught",
+      "caught_by": [
+        "a workspace with no members fails rather than passing on nothing: exit 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

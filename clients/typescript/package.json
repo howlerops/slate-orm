@@ -1,6 +1,6 @@
 {
   "name": "@slate-orm/client",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A TypeScript client for a slate head node",
   "type": "module",
   "main": "./dist/index.js",

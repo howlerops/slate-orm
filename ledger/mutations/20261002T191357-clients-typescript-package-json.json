@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-02T19:13:57+00:00",
+  "file": "clients/typescript/package.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_versions.py"
+  ],
+  "commit": "b405bbc",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the npm package's version drifts from the workspace",
+      "old": "\"version\": \"0.1.0\",",
+      "new": "\"version\": \"0.1.1\",",
+      "verdict": "caught",
+      "caught_by": [
+        "check_versions: FAIL  clients/typescript/package.json says 0.1.1; Cargo.toml's workspace version is 0.1.0."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

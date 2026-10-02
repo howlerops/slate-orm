@@ -3751,7 +3751,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slate-clickbench"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "arrow",
  "parquet",
@@ -3763,7 +3763,7 @@ dependencies = [
 
 [[package]]
 name = "slate-derive"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3772,7 +3772,7 @@ dependencies = [
 
 [[package]]
 name = "slate-headbench"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3797,7 +3797,7 @@ dependencies = [
 
 [[package]]
 name = "slate-helpdesk"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "slate-kernel",
  "slate-orm",
@@ -3811,7 +3811,7 @@ dependencies = [
 
 [[package]]
 name = "slate-kernel"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3828,7 +3828,7 @@ dependencies = [
 
 [[package]]
 name = "slate-orm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3845,7 +3845,7 @@ dependencies = [
 
 [[package]]
 name = "slate-schema"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "slate-tuple",
@@ -3855,7 +3855,7 @@ dependencies = [
 
 [[package]]
 name = "slate-server"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3882,7 +3882,7 @@ dependencies = [
 
 [[package]]
 name = "slate-serverd"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "clap",
@@ -3914,7 +3914,7 @@ dependencies = [
 
 [[package]]
 name = "slate-slatedb"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3937,7 +3937,7 @@ dependencies = [
 
 [[package]]
 name = "slate-sql"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3948,7 +3948,7 @@ dependencies = [
 
 [[package]]
 name = "slate-testserver"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde_json",
@@ -3963,7 +3963,7 @@ dependencies = [
 
 [[package]]
 name = "slate-tuple"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "criterion",
@@ -3975,7 +3975,7 @@ dependencies = [
 
 [[package]]
 name = "slate-wasm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "flate2",
  "futures",

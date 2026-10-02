@@ -17,6 +17,17 @@ they were given by hand:
 - and `clients/go`, which has no version of its own at all — the Go proxy reads
   one out of a `clients/go/vX.Y.Z` git tag, so its "declaration" is the tag.
 
+Behind the Rust workspace there is a fourth thing, and it is the one that is
+easy to miss: a member crate inherits the number with `version.workspace =
+true`, and a member that writes a literal instead *does not move when the
+release does*. Two of fourteen had done exactly that — `slate-wasm` and
+`clients/python/testserver` — and both would have gone into a 0.1.0 release
+still calling themselves 0.0.1. Neither is published, so nothing would have
+broken; what would have happened is quieter and is why the rule is here
+anyway: `Cargo.lock` would carry two numbers, `cargo metadata` would report
+two, and the next person to add a crate would copy whichever manifest they
+happened to open.
+
 A release is a moment when all of those have to say the same thing, and it is
 the one moment nobody is watching: `git tag v0.2.0` on a tree whose
 `package.json` still says `0.0.1` publishes **`@slate-orm/client@0.0.1`** —
@@ -66,6 +77,49 @@ WORKSPACE = "Cargo.toml"
 #: spell those differently and a release wearing one has to say so in every
 #: package rather than in the tag alone.
 TAG = re.compile(r"^v(.+)$")
+
+
+#: A member's `[package]` must inherit the workspace version rather than
+#: restate it. Anchored at the start of a line for the reason
+#: `check_workspace.py`'s `publish` rule is: a manifest's prose mentions
+#: versions, and an unanchored pattern passes on a comment about one.
+INHERITS = re.compile(r"^version\.workspace\s*=\s*true\s*$", re.MULTILINE)
+
+#: The root manifest's `members`. `check_workspace.py` reads the same list
+#: with its own regex, which this repository has counted as a hazard before —
+#: it stays duplicated because importing across `scripts/` would make either
+#: guard unrunnable alone, and a member missing from one of them fails the
+#: other.
+#:
+#: It is *not* quite the same pattern. `check_workspace.py` anchors the
+#: closing bracket at the start of a line, which fits today's manifest and
+#: raises on `members = ["a", "b"]` — a single line cargo accepts perfectly
+#: well. Non-greedy to the first `]` reads both, and a member name cannot
+#: contain one.
+MEMBERS = re.compile(r"^members\s*=\s*\[(.*?)\]", re.DOTALL | re.MULTILINE)
+
+
+def members(root: Path) -> list[Path]:
+    text = (root / WORKSPACE).read_text()
+    block = MEMBERS.search(text)
+    if not block:
+        raise SystemExit(f"{WORKSPACE} has no `members` list to read")
+    return [root / line for line in re.findall(r'"([^"]+)"', block.group(1))]
+
+
+def restated(root: Path) -> list[str]:
+    """Members whose manifest writes a version instead of inheriting one.
+
+    A missing manifest is not this guard's business — `check_workspace.py`
+    refuses a `members` entry with no `Cargo.toml`, and reporting it twice
+    means two failures to read for one mistake.
+    """
+    return [
+        str(member.relative_to(root))
+        for member in members(root)
+        if (member / "Cargo.toml").is_file()
+        and not INHERITS.search((member / "Cargo.toml").read_text())
+    ]
 
 
 def workspace_version(root: Path) -> str:
@@ -127,6 +181,25 @@ def main(argv: list[str] | None = None) -> int:
                 f"{want}, to a registry that will not let the number be reused."
             )
 
+    inherit = members(ROOT)
+    if not inherit:
+        # The never-fires case for the rule below: an empty members list
+        # satisfies "every member inherits" and checks nothing.
+        print(
+            "FAIL  the root workspace lists no members, so the inheritance "
+            "rule compared nothing.",
+            file=sys.stderr,
+        )
+        return 1
+    for member in restated(ROOT):
+        problems.append(
+            f"{member}/Cargo.toml writes its own version instead of "
+            f"`version.workspace = true`.\n"
+            f"      It will not move when {WORKSPACE} is bumped for a release, "
+            f"so the workspace ships two numbers and `cargo metadata` reports "
+            f"both."
+        )
+
     for tag in argv:
         named = TAG.match(tag)
         if not named:
@@ -147,7 +220,8 @@ def main(argv: list[str] | None = None) -> int:
 
     named = " and ".join(sorted(found)) or "nothing"
     print(
-        f"ok    {want} in {WORKSPACE}, {named}"
+        f"ok    {want} in {WORKSPACE}, {named}, "
+        f"inherited by {len(inherit)} workspace member(s)"
         + (f", and {len(argv)} tag(s)" if argv else "")
     )
     return 0

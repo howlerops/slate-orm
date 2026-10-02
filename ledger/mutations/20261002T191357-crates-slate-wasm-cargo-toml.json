@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-02T19:13:57+00:00",
+  "file": "crates/slate-wasm/Cargo.toml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_versions.py"
+  ],
+  "commit": "b405bbc",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a member restates its version instead of inheriting it",
+      "old": "version.workspace = true",
+      "new": "version = \"0.0.1\"",
+      "verdict": "caught",
+      "caught_by": [
+        "check_versions: FAIL  crates/slate-wasm/Cargo.toml writes its own version instead of `version.workspace = true`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

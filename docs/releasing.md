@@ -3,9 +3,18 @@
 Five things ship from this repository. This is what publishes each of them,
 what it costs, and what has to be decided before it can happen.
 
-Nothing here has been published yet. The machinery exists and is exercised on
-every push as far as it can be without a tag; the parts that need a registry
-are described below as what they will do, not as what they have done.
+**One release has been cut.** `v0.0.1`, on 2026-09-14, attached two
+`slate-serverd` binaries to a GitHub prerelease and did nothing else — the
+image, the Go module tag and the two registry jobs did not exist yet; they
+were added on 2026-09-29 along with this page. So of the five artefacts below,
+one has shipped once and four have never run.
+
+This page said "nothing here has been published yet" for three days after that
+was false, which is worth more than an apology: it was written *about* the
+registry jobs, which genuinely had not run, and the binaries that had shipped
+two weeks earlier were simply not in the author's head. A sentence about
+"nothing" is the easiest kind to get wrong, because checking it means looking
+everywhere rather than at the thing you are writing about.
 
 ## What ships
 
@@ -19,11 +28,13 @@ are described below as what they will do, not as what they have done.
 
 The Rust crates are **not** published to crates.io. `slate-orm`, `slate-kernel`
 and the rest are libraries this repository consumes through path dependencies,
-and publishing them would commit to an API that changes every week. Four of the
-thirteen already carry `publish = false`; the others are unpublished by having
-no `CARGO_REGISTRY_TOKEN` rather than by declaration, which is a weaker
-statement than it should be and is written up as a gap in the entry that added
-this page.
+and publishing them would commit to an API that changes every week. All
+fourteen members now carry `publish = false` and `scripts/check_workspace.py`
+refuses one that does not say so — when this page was written four of them
+said it and the rest were unpublished only by having no
+`CARGO_REGISTRY_TOKEN`, which is a weaker statement than it looks:
+`publish` defaults to **true**, so silence is the publishable answer.
+`ledger/2026-10-01-a-default-nobody-chose.md` is the entry that closed it.
 
 ## One version, everywhere
 
@@ -38,6 +49,14 @@ whose `package.json` still says `0.0.1` publishes **`0.0.1`** — successfully,
 and to registries that refuse a reused number. There is no fix after the fact,
 only an explanation.
 
+It also holds the Rust side together from the other direction: every
+workspace member must say `version.workspace = true` rather than write a
+number of its own. Two of fourteen did — `slate-wasm` and
+`clients/python/testserver` — and would have sat at `0.0.1` inside a `0.1.0`
+release. Neither is published, so nothing would have broken; the workspace
+would simply have reported two numbers and the next crate would have copied
+whichever manifest its author opened.
+
 So: bump the three files, commit, *then* tag.
 
 ```sh
@@ -47,10 +66,14 @@ python3 scripts/check_versions.py v0.2.0   # refuses until the tree agrees
 ## Cutting one
 
 ```sh
-# 1. Bump. Three files, one number.
-#    Cargo.toml                          workspace.package.version
-#    clients/typescript/package.json     version
+# 1. Bump. Three files, one number — and the things that track it:
+#    Cargo.toml                          workspace.package.version, and the
+#                                        `path = ..., version = ...` requirements
+#                                        beside it (cargo refuses a path whose
+#                                        version does not satisfy them)
+#    clients/typescript/package.json     version, and package-lock.json's two
 #    clients/python/pyproject.toml       version
+#    Cargo.lock                          `cargo metadata` rewrites it
 python3 scripts/check_versions.py        # the tree agrees with itself
 
 # 2. Commit it, with a ledger entry like any other change.
