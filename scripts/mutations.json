@@ -396,6 +396,18 @@
           "new": "\"key\": \"The quickstarts are not checked automatically.\",\n      \"verdict\": \"open\""
         }
       ]
+    },
+    {
+      "guard": "check_npm_package",
+      "file": "clients/typescript/package.json",
+      "why": "Without `dist` in `files`, npm packs the README, the protos and the manifest and nothing else \u2014 which is what `npm publish` would have shipped, under a version number npm never lets anybody reuse. The mutation is on `files` rather than on `prepack`, deliberately: removing `prepack` is the real historical bug but it survives in any tree that already has a stale `dist/` on disk, because the guard asks npm what it would pack *now*. `files` is the same rule and is scored the same way everywhere.",
+      "cases": [
+        {
+          "name": "the package stops shipping its own output",
+          "old": "  \"files\": [\"dist\", \"proto\"],",
+          "new": "  \"files\": [\"proto\"],"
+        }
+      ]
     }
   ],
   "unmutated": {

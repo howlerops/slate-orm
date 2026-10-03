@@ -122,13 +122,54 @@ states from each:
   `cargo` was absent.
 - **`true`, with a credential** — it publishes.
 
-To turn npm on: claim `@slate-orm` on npm, add `NPM_TOKEN` as a repository
-secret, set `PUBLISH_NPM` to `true`. The publish uses `--provenance`, so a
-consumer can check the tarball against the workflow run that built it.
+**Neither can be switched on from inside this repository.** Both need an
+account action and a credential, so the exact steps are written out rather
+than described.
 
-To turn PyPI on: claim `slate-client`, configure a Trusted Publisher on PyPI
-for this repository and the `pypi` job, set `PUBLISH_PYPI` to `true`. No token
-is stored — the `id-token: write` permission is the whole credential.
+To turn npm on:
+
+1. Claim the `@slate-orm` scope on npm. `curl -s -o /dev/null -w '%{http_code}'
+   https://registry.npmjs.org/@slate-orm/client` answers `404` while it is
+   free.
+2. Create an **automation** token (classic, or a granular token with publish
+   on that scope) and add it as the repository secret `NPM_TOKEN`.
+3. Set the repository variable `PUBLISH_NPM` to `true`.
+
+The publish uses `--provenance`, which requires the manifest's `repository`
+field to name this repository — it does, and that is not decoration: without
+it the publish fails rather than publishing unattested.
+
+To turn PyPI on:
+
+1. Claim `slate-client` on PyPI.
+2. Add a Trusted Publisher under the project's *Publishing* settings, with
+   exactly these four fields — they are matched against the OIDC token and a
+   mismatch reads as `invalid-publisher`:
+
+   | field | value |
+   | --- | --- |
+   | Owner | `howlerops` |
+   | Repository name | `slate-orm` |
+   | Workflow name | `release.yml` |
+   | Environment name | *(leave empty — the `pypi` job declares none)* |
+
+3. Set the repository variable `PUBLISH_PYPI` to `true`.
+
+No token is stored for PyPI: the `id-token: write` permission on the job is
+the whole credential.
+
+**Then cut a tag.** Both publish jobs are gated on `startsWith(github.ref,
+'refs/tags/v')`, so a `workflow_dispatch` run builds and checks and publishes
+nothing. `0.1.0` has already been released without them, and a version number
+cannot be reused on either registry — so the first run that ships to npm and
+PyPI is whatever tag comes next.
+
+**What the package actually contains is checked before it is sent.**
+`scripts/check_npm_package.py` asks npm what the tarball holds and refuses if
+a declared entry point is missing from it. It runs on every push and again as
+the last step before `npm publish`, because the npm package would have
+shipped with no JavaScript in it at all until 2026-10-03 — see
+`ledger/2026-10-03-the-package-that-would-have-shipped-empty.md`.
 
 ## The Go module, which is only a tag
 
@@ -160,13 +201,17 @@ docker run --rm -v "$PWD/head.toml:/etc/slate/head.toml:ro" \
 
 The release pushes `linux/amd64` and `linux/arm64`, matching the binaries.
 
-**Budget 80 minutes for it, and know why.** `v0.1.0`'s image job took **77
-minutes** against 2m27s for the whole rest of the release. The arm64 half is
-built under QEMU, so the entire Rust workspace is compiled at `--release
---locked` through an emulator; the aarch64 *binary* beside it took 2m02s
-because `release-build.yml` cross-compiles it on an amd64 host. Nothing is
-wrong — but a release looks hung for over an hour, and the two numbers are
-the argument for cross-compiling in the Dockerfile rather than emulating.
+**It used to take 77 minutes. It does not any more, and the history is worth
+keeping.** `v0.1.0`'s image job took **76m36s** against 2m27s for the whole
+rest of the release, because the builder stage ran `rustc` under QEMU once per
+target. The `Dockerfile` cross-compiles now — `--platform=$BUILDPLATFORM` on
+the builder, the C toolchain for the target, `strip` from the cross binutils
+— and CI run 556 measured the arm64 build at **4m31s**, cold-cached. Seventeen
+times faster, and the two legs run in parallel, so a release's image step is
+about five minutes rather than an hour and a quarter.
+
+`ledger/2026-10-03-the-image-stops-emulating-and-starts-being-run.md` has the
+measurement and the four environment variables it turns on.
 
 **`ci.yml` builds the image on every push**, starts it against the
 configuration on the quickstart page with `--check`, and asserts the base still
@@ -174,8 +219,12 @@ has no shell. A Dockerfile first exercised on release day is exactly the shape
 this repository has been burned by before — `ci.yml` itself was active,
 plausible, and had run zero times.
 
-**It builds one architecture, though, and the release builds two.** CI's build
-is the host's amd64; `platforms: linux/amd64,linux/arm64` appears only here. So
-the multi-arch push remains a release-day-only path, which is the very shape
-the paragraph above is about, one level in. It worked first time on `v0.1.0`
-and that is luck rather than coverage.
+**And it builds both architectures now, and starts both.** That was not true
+until 2026-10-03: CI built the host's amd64 while the release pushed two, so
+the multi-arch push was a release-day-only path — the very shape the paragraph
+above is about, one level in. It worked first time on `v0.1.0` and that was
+luck rather than coverage. The image job is a matrix now; each leg starts its
+image against the quickstart's TOML and asserts the binary inside is built for
+the architecture on the tin, because a `Dockerfile` that lost its `--platform`
+handling would still build, still tag the result `arm64`, and still contain an
+x86-64 binary.

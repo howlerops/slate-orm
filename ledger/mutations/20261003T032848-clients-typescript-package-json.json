@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-03T03:28:48+00:00",
+  "file": "clients/typescript/package.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_npm_package.py"
+  ],
+  "commit": "04ddca4",
+  "python": "3.11.15",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the package stops building its own output before packing",
+      "old": "    \"prepack\": \"npm run build\",\n",
+      "new": "",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-03T03:29:29+00:00",
+  "file": "clients/typescript/package.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_npm_package.py"
+  ],
+  "commit": "04ddca4",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the package stops shipping its own output",
+      "old": "  \"files\": [\"dist\", \"proto\"],",
+      "new": "  \"files\": [\"proto\"],",
+      "verdict": "caught",
+      "caught_by": [
+        "check_npm_package: FAIL  `types`, `exports...types` promises ./dist/index.d.ts, which is not in the tarball."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

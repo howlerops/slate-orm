@@ -15826,6 +15826,40 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-03",
       "by": "The same decision `ledger/2026-10-02-the-release-that-shipped-five-things.md` records, now narrower: CI starts both architectures of an image built from this exact `Dockerfile`, so what is unverified is the registry round-trip rather than the image. Re-pulling what was just pushed verifies the registry, not the artefact."
+    },
+    {
+      "entry": "2026-10-03-the-package-that-would-have-shipped-empty.md",
+      "key": "It does not check that the package *works*.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The boundary is where the cost steps up. Asking npm what is in the tarball is three seconds and no network; installing the tarball into a scratch project and importing it needs either a registry or a file install and a second workspace, and it would catch a different class \u2014 a wrong export, an undeclared dependency \u2014 rather than a stronger version of this one. Worth doing when the package has a consumer; not worth it to guard a package that is still unpublished."
+    },
+    {
+      "entry": "2026-10-03-the-package-that-would-have-shipped-empty.md",
+      "key": "It does not look at the Go module.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The class does not exist there rather than being unguarded: `clients/go` has no build step and no `files` list, so the proxy serves the tagged source and there is no gap between what is declared and what is shipped. The equivalent check \u2014 does the thing resolve for a consumer \u2014 is the `proxy.golang.org` probe the release already runs and fails on."
+    },
+    {
+      "entry": "2026-10-03-the-package-that-would-have-shipped-empty.md",
+      "key": "`dist-test` is still what `npm test` builds.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Two compilations of one source tree, and unifying them is the wrong fix: the test build deliberately includes `test/` and the ship build deliberately does not, which is what `rootDir: src` is for. What that leaves uncovered is a `tsconfig.build.json`-only error, and the guard catches the shape of it that reaches a consumer \u2014 a declared entry point missing from the tarball. A subtler one, such as a file excluded from the build but not from the exports, would need the install-and-import check above.",
+      "recheck": {
+        "tree": "clients/typescript/package.json",
+        "expect_text": "dist-test",
+        "count": 1,
+        "why": "The claim reads as being about npm and is about this repository: two compilations of one source tree, the test one landing in `dist-test`. The `test` script naming it is the whole observable. If it stops appearing the two builds have been unified and this verdict is answered; if it appears twice something else now builds there and the claim wants re-reading."
+      }
+    },
+    {
+      "entry": "2026-10-03-the-package-that-would-have-shipped-empty.md",
+      "key": "The two registries remain off.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Correct and deliberate: this change makes turning them on safe, which was the point, and turning them on needs the names claimed and credentials added \u2014 decisions and account actions that are not this repository's to take. `docs/releasing.md` lists exactly what a person has to do, and the tri-state means a half-configured state fails the release rather than shipping quietly."
     }
   ]
 }

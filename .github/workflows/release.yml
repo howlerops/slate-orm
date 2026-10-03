@@ -235,6 +235,15 @@ jobs:
       # is the only thing a consumer can check without trusting the token.
       # `--access public` because a scoped package defaults to restricted and
       # the first publish of one silently fails otherwise.
+      # The last thing before the one step that cannot be undone. npm refuses
+      # a republish of a version that has been used, so a tarball missing its
+      # own `main` is not a bug to fix — it is a version number to burn and
+      # explain. This asks npm what it is about to send and checks the
+      # declared entry points are in it; `scripts/check_npm_package.py` has
+      # the five-file tarball that prompted it.
+      - if: steps.decided.outputs.publish == 'true'
+        run: python3 ../../scripts/check_npm_package.py
+        working-directory: clients/typescript
       - if: steps.decided.outputs.publish == 'true'
         run: npm publish --provenance --access public
         working-directory: clients/typescript

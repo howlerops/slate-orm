@@ -130,9 +130,30 @@ assertion added above, which is a permanent version of the mutation I would
 have run — "build the arm64 tag from an amd64 binary and see if anything
 notices". Something does now.
 
-**No new number yet.** The predicted image time is "near the 2m02s the binary
-takes", and predicting is not measuring. The measurement is this branch's CI
-run and belongs in this entry's place once it exists, not before.
+**The measurement, from CI run 556 on `04ddca4`** — 25 jobs, all green, and
+both image legs cold-cached because the `scope` keys are new:
+
+| | |
+|---|---|
+| `v0.1.0`, one step, both platforms, emulated | **76m36s** |
+| now, the arm64 build step | **4m31s** |
+| now, the amd64 build step | 4m36s |
+| the arm64 job end to end, including starting the image | 4m57s |
+
+**17×** on the arm64 leg, against a prediction of "near the 2m02s the binary
+takes" — so the prediction was optimistic by about 2x and the direction was
+right. The gap between 4m31s and the binary's 2m02s is the rest of the image:
+`apt-get` for the cross toolchain and `cmake`, `rustup target add`, and the
+export layers.
+
+The number that actually changed for a release is wall clock rather than any
+of these: the two legs run in parallel, so "the image" went from **76m36s to
+about 5 minutes**.
+
+**And the arm64 image started.** `It starts inside the image, and validates a
+configuration` passed on the arm64 leg — the first time anything has run an
+aarch64 build of `slate-serverd` anywhere. That is the caveat this change was
+half written to close, and it closed by running rather than by argument.
 
 ## What this does not do
 

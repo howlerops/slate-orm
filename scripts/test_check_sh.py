@@ -238,6 +238,11 @@ ELSEWHERE_BLOCKS = {
         "runs the image the step above built, in a docker daemon"
     ),
     "The base is still distroless": "runs the image, in a docker daemon",
+    "The tarball contains what the package promises": (
+        "runs `npm pack`, which needs npm and an installed node_modules. Its "
+        "rules are covered in check.sh by scripts/test_check_npm_package.py, "
+        "which stubs that call out."
+    ),
     "The binary inside is built for the architecture on the tin": (
         "inspects and runs the built image, in a docker daemon. It is the "
         "cross-compile's own check: a Dockerfile that lost its "

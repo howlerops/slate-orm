@@ -215,6 +215,14 @@ jobs:
         working-directory: clients/typescript
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+      # What `npm publish` would actually put in the tarball, on every push
+      # rather than on the day somebody publishes. `dist/` is gitignored and
+      # nothing in the publish path built it, so the package was five files
+      # and no JavaScript — `scripts/check_npm_package.py` has the list.
+      # Here and not in `check.sh` because it needs npm and node_modules.
+      - name: The tarball contains what the package promises
+        run: python3 ../../scripts/check_npm_package.py
+        working-directory: clients/typescript
 
   frontend:
     name: demo frontend units
@@ -467,6 +475,7 @@ jobs:
       # to a registry that will not let it be reused.
       - run: python3 scripts/check_versions.py
       - run: python3 scripts/test_check_versions.py
+      - run: python3 scripts/test_check_npm_package.py
       # Nine steps that `check.sh` had been running and no workflow did, found
       # by reading the roster in the other direction:
       # `scripts/test_check_sh.py` held every CI step to the script and nothing
