@@ -3,10 +3,10 @@
 
 Run against the real guards, every case would be "it passed" — and the cases
 that matter are the ones where a guard *cannot* answer, which the real tree
-never produces on demand. The one real-tree case here is the baseline: the
-twenty-seven guards in `scripts/` all print something and exit 0, which is what
-the "a silent pass is not a pass" rule assumes and is worth pinning rather than
-believing.
+never produces on demand. The one real-tree case here is the baseline: every
+guard in `scripts/` that needs nothing but Python prints something and exits 0,
+which is what the "a silent pass is not a pass" rule assumes and is worth
+pinning rather than believing. The ones that need more are in `TOOLCHAIN`.
 
 Run directly: `python3 scripts/test_mutate_guard.py`.
 """
@@ -14,6 +14,7 @@ Run directly: `python3 scripts/test_mutate_guard.py`.
 from __future__ import annotations
 
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -34,6 +35,25 @@ RUNNER = HERE / "mutate_guard.py"
 #: "passed, so no result line is printed", failing six cases on the message
 #: rather than the behaviour.
 REPORT = mutate.DIALECTS["python"][1]
+
+#: Real guards the baseline sweep leaves out, because they need a toolchain the
+#: sweep's two homes promise not to: `scripts/check.sh` runs with no npm and no
+#: `node_modules`, and CI's `scripts` job installs Python and nothing else.
+#:
+#: `check_npm_package` asks `npm pack` what the tarball would hold, and `npm
+#: pack` runs `prepack`, which runs `tsc`. Swept here it exited 2 on every push
+#: from the commit that added it — `main` went red on the guard and on nothing
+#: in the tree. Installing Node in the `scripts` job would have fixed CI and
+#: left `check.sh` broken on every machine without it, which is the promise
+#: that script is built on.
+#:
+#: An entry is a hole in the sweep, so it is held to two things below: the
+#: guard still exists (a stale name exempts nothing and hides that it does), and
+#: `ci.yml` still runs it somewhere that has the toolchain. Leaving the
+#: exemption and losing the step would otherwise mean the guard ran nowhere.
+TOOLCHAIN = {
+    "check_npm_package": "needs npm and an installed node_modules; CI's `typescript` job runs it",
+}
 
 GUARDS = {
     "passes": "import sys\nprint('ok    fine')\nsys.exit(0)\n",
@@ -180,7 +200,27 @@ def main() -> int:
         # The real tree, once: every guard prints something and exits 0, which
         # is what "a silent pass is not a pass" assumes about them.
         real = sorted(p.name for p in HERE.glob("check_*.py") if not p.name.startswith("test_"))
-        real = [f"scripts/{n}" for n in real if n[len("check_") : -3] not in GUARDS]
+        real = [
+            f"scripts/{n}"
+            for n in real
+            if n[len("check_") : -3] not in GUARDS and n[:-3] not in TOOLCHAIN
+        ]
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+        for name in sorted(TOOLCHAIN):
+            if not (HERE / f"{name}.py").exists():
+                failures.append(
+                    f"FAIL  TOOLCHAIN names {name}, which is not in scripts/; remove the entry"
+                )
+            # A `run:` line, not a mention: ci.yml also names this guard in a
+            # comment above the step, and a substring check stayed green with
+            # the step deleted.
+            elif not re.search(rf"^\s*(?:-\s+)?run:.*\bscripts/{name}\.py\b", workflow, re.M):
+                failures.append(
+                    f"FAIL  TOOLCHAIN leaves {name} out of the sweep, and ci.yml no longer runs it,\n"
+                    f"      so it runs nowhere. Restore the step or remove the exemption."
+                )
+            else:
+                print(f"ok    {name} is left to ci.yml: {TOOLCHAIN[name]}")
         code, output = run(*real)
         if code != 0 or f"{len(real)} passed, 0 failed" not in output:
             failures.append(f"FAIL  every real guard passes and says so: exit {code}\n{output}")
@@ -192,7 +232,7 @@ def main() -> int:
 
     for failure in failures:
         print(failure, file=sys.stderr)
-    print(f"{len(CASES) + 1 - len(failures)} passed, {len(failures)} failed")
+    print(f"{len(CASES) + 1 + len(TOOLCHAIN) - len(failures)} passed, {len(failures)} failed")
     return 1 if failures else 0
 
 

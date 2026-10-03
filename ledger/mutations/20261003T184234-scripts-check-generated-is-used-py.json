@@ -1,0 +1,48 @@
+{
+  "at": "2026-10-03T18:42:34+00:00",
+  "file": "scripts/check_generated_is_used.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_generated_is_used.py"
+  ],
+  "commit": "bce9188",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "back to the GNU-only word boundary",
+      "old": "{stem}([^A-Za-z0-9_]|$)\"",
+      "new": "{stem}\\b\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a keyword import with nothing quoted counts: exit 1, wanted 0"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "no boundary after the stem at all",
+      "old": "{stem}([^A-Za-z0-9_]|$)\"",
+      "new": "{stem}\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a module whose name only starts with the stem is not an import: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the boundary admits an underscore",
+      "old": "{stem}([^A-Za-z0-9_]|$)\"",
+      "new": "{stem}([^A-Za-z0-9]|$)\"",
+      "verdict": "caught",
+      "caught_by": [
+        "a module whose name only starts with the stem is not an import: exit 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

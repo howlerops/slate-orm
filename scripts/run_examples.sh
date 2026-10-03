@@ -89,7 +89,10 @@ if [ "$count" -lt "$least" ]; then
 fi
 
 cd "$root"
-echo "Building $count examples in $crate…"
+# Braced, because the next byte is not ASCII. macOS's `/bin/sh` is bash 3.2,
+# which reads the first byte of `…` as part of the name: `$crate…` expanded
+# `crate\xe2`, unbound under `set -u`, and the runner died here on every Mac.
+echo "Building $count examples in ${crate}…"
 # Incremental off, for the reason `CLAUDE.md` gives: it roughly halves what a
 # build leaves on disk, and linking nine binaries against slatedb, s3s and
 # tonic is one of the places this container runs out. The failure does not say

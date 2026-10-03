@@ -879,6 +879,14 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     # `main` carries the same note about `docs` and `readmes`.
     argv = sys.argv[1:] if argv is None else argv
     sources = [Path(one) for one in argv] if argv else list(SOURCES)
+    # Resolved once, here, because the member walks resolve every path they
+    # find and then ask it `relative_to(root)`. An unresolved root behind a
+    # symlink is not a prefix of its own resolved children: on macOS every
+    # temporary directory is `/var/…` and resolves to `/private/var/…`, so the
+    # suite raised `ValueError` there on the first lookup it found and passed
+    # on Linux, where nothing in the path is a link. A checkout reached through
+    # a symlink would have done the same to the real run.
+    root = root.resolve()
 
     files: list[Path] = []
     for source in sources:

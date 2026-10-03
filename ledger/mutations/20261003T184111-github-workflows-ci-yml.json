@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-03T18:41:11+00:00",
+  "file": ".github/workflows/ci.yml",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_mutate_guard.py"
+  ],
+  "commit": "bce9188",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "ci.yml stops running the exempted guard, its comment kept",
+      "old": "        run: python3 ../../scripts/check_npm_package.py\n",
+      "new": "        run: echo nothing\n",
+      "verdict": "caught",
+      "caught_by": [
+        "TOOLCHAIN leaves check_npm_package out of the sweep, and ci.yml no longer runs it,"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

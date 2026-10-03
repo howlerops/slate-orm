@@ -716,6 +716,26 @@ def run(
     crates: dict[str, str] | None = None,
     inside_crate: str | None = None,
     catalog: str | dict[str, str] | None = CATALOG,
+    linked: bool = False,
+) -> tuple[int, str]:
+    """`fixture_run`, with a raise turned into a failing case.
+
+    A guard that raises takes the whole suite down with it, and a suite that
+    reports nothing is scored by `mutate.py` as nothing having run — so a
+    mutation that made the guard crash could never be counted as caught.
+    """
+    try:
+        return fixture_run(body, crates, inside_crate, catalog, linked)
+    except Exception as raised:  # noqa: BLE001 - any raise is a failing case
+        return 70, f"the guard raised {raised!r}"
+
+
+def fixture_run(
+    body: str | dict[str, str] | None,
+    crates: dict[str, str] | None = None,
+    inside_crate: str | None = None,
+    catalog: str | dict[str, str] | None = CATALOG,
+    linked: bool = False,
 ) -> tuple[int, str]:
     """`crates` adds `crates/<name>/src/lib.rs` files and lists them as members,
     which is the only way to write a case about rule 9.
@@ -724,9 +744,18 @@ def run(
     a directory of their own, so the member *is* the scanned tree. Without it
     no case reaches rule 9's skip-what-is-already-covered branch, and a
     mutation deleting that branch survived — the fixture's source directory was
-    never a listed member."""
+    never a listed member.
+
+    `linked` hands the guard its root through a symlink, which is what every
+    temporary directory on macOS is (`/var` → `/private/var`) and what a
+    checkout reached through a link is anywhere. Made here rather than relied
+    on, so the case means the same thing on Linux."""
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
+        if linked:
+            (root / "real").mkdir()
+            (root / "link").symlink_to(root / "real")
+            root = root / "link"
         workspace(root, catalog)
         if crates:
             listed = ['"crates/quiet"', '"crates/slate-schema"'] + [
@@ -1175,7 +1204,23 @@ def main() -> int:
     if not ok:
         print(f"        exit {code}: {said}")
 
-    total = len(CASES) + len(SCOPE_CASES) + len(CATALOG_CASES) + 1
+    # A root behind a symlink. The member walks resolve every file and ask it
+    # `relative_to(root)`, and an unresolved root is not a prefix of its own
+    # resolved children — so this raised on the first finding, on macOS for
+    # every run of this suite. `run` turns the raise into a named failure,
+    # which is what lets `mutate.py` score it.
+    rogue = (
+        "fn f() {\n    fingerprint::check(table, schema)?;\n}\n"
+        "fn g() {\n    tables.iter().find(|t| t.name() == name);\n}\n"
+    )
+    code, said = run("", crates={"rogue": rogue}, linked=True)
+    ok = code == 1 and "crates/rogue/src/lib.rs contains `fingerprint::check`" in said
+    failed += not ok
+    print(f"{'ok  ' if ok else 'FAIL'}  a root reached through a symlink is read, not raised on")
+    if not ok:
+        print(f"        exit {code}: {said}")
+
+    total = len(CASES) + len(SCOPE_CASES) + len(CATALOG_CASES) + 2
     print(f"\n{total - failed} passed, {failed} failed")
     return 1 if failed else 0
 

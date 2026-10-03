@@ -1,0 +1,33 @@
+{
+  "at": "2026-10-03T18:50:17+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "bce9188",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "root left unresolved",
+      "old": "    root = root.resolve()\n",
+      "new": "\n",
+      "verdict": "caught",
+      "caught_by": [
+        "a handler that authorises before fingerprinting passes",
+        "a handler using the bare resolver fails and names itself",
+        "a fingerprint with no authorisation above it fails",
+        "a check_named with no authorisation above it fails too",
+        "an authorisation too far above the fingerprint does not count",
+        "a fingerprint whose table arrives already authorised passes",
+        "a file with no fingerprint check at all fails, rather than passing",
+        "every file in the directory is read, not only the first"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

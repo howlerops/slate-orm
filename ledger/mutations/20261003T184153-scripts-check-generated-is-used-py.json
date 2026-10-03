@@ -1,0 +1,33 @@
+{
+  "at": "2026-10-03T18:41:53+00:00",
+  "file": "scripts/check_generated_is_used.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_generated_is_used.py"
+  ],
+  "commit": "bce9188",
+  "python": "3.12.2",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "back to the GNU-only word boundary",
+      "old": "{stem}([^A-Za-z0-9_]|$)\"",
+      "new": "{stem}\\\\b\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "no boundary after the stem at all",
+      "old": "{stem}([^A-Za-z0-9_]|$)\"",
+      "new": "{stem}\"",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

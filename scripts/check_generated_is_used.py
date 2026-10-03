@@ -144,9 +144,14 @@ def importers(path: str) -> list[str]:
     `git grep` so build output and `node_modules` are out of scope for free.
     """
     stem = Path(path).stem
-    # POSIX ERE, for `git grep -E`: `[[:space:]]` rather than `\s`.
+    # POSIX ERE, for `git grep -E`: `[[:space:]]` rather than `\s`, and an
+    # explicit non-word-or-end rather than `\b`. `\b` is a GNU extension: glibc
+    # honours it, macOS's regex library reads it as something no line contains,
+    # so on a Mac this found no importer for any module and refused every one —
+    # `scripts/check.sh` red on a clean tree, green in CI. `-P` would restore
+    # `\b` but needs a git built with PCRE, which is the same bet one layer down.
     shaped = (
-        rf"(from|import|require)[[:space:]]+[.\"'/]*{stem}\b"
+        rf"(from|import|require)[[:space:]]+[.\"'/]*{stem}([^A-Za-z0-9_]|$)"
         rf"|[\"'][^\"']*[./]{stem}(\.[A-Za-z]+)?[\"']"
     )
     result = subprocess.run(

@@ -15937,6 +15937,46 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-03",
       "by": "True of the environment-specific half \u2014 `scripts/reclaim.py`, the disk notes, the `gh api` line \u2014 and that half is where the expensive surprises live, so dropping it to be portable would cost more than it saves. An agent elsewhere gets advice that is mostly right and partly about a machine it is not on, which is a visible kind of wrong: the commands fail rather than mislead."
+    },
+    {
+      "entry": "2026-10-03-the-guard-the-sweep-could-not-run.md",
+      "key": "The `\\b` regression is caught only on macOS.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The case that catches it is correct everywhere; on Linux `\\b` and the portable form match the same lines, so there is no behaviour for a Linux test to tell apart. Catching a reintroduction in CI would mean running this suite on a macOS runner for one regex, or a guard banning `\\b` from `-E` patterns, which covers one spelling of a class that is not enumerable (the entry's fourth caveat). The next Mac session's `check.sh` is the detector, and the comment at the pattern says why it is spelled as it is."
+    },
+    {
+      "entry": "2026-10-03-the-guard-the-sweep-could-not-run.md",
+      "key": "`run_examples.sh` still needs GNU `timeout`, which macOS doe",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The runner's home is CI and the Linux container `CLAUDE.md` describes, both of which have coreutils; on a Mac it is a missing tool, the same class as `ruff` or `ty` being absent, and `brew install coreutils` is the remedy. Choosing among a `gtimeout` fallback, a shell reimplementation of the kill-after-budget (the runner reads `timeout`'s exit 124 as \"killed at the budget\"), or an up-front refusal is a design change to a script with its own suite, argued in this entry's Alternatives rejected as deserving its own entry rather than riding on a fix."
+    },
+    {
+      "entry": "2026-10-03-the-guard-the-sweep-could-not-run.md",
+      "key": "`check.sh` on this machine is not green.",
+      "verdict": "moment",
+      "reviewed": "2026-10-03"
+    },
+    {
+      "entry": "2026-10-03-the-guard-the-sweep-could-not-run.md",
+      "key": "Nothing finds the next GNU-only construct.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "GNU-only behaviour is not a list: `\\b`, `\\s`, `\\w`, `sed -i` without a suffix, `grep -P`, `date -d`, high bytes in a bash 3.2 name, `readlink -f`. A guard per spelling is a roster that is always one behind, and a guard for the class would need a second platform to run on. The detector that exists is a session on the other platform running `check.sh`, which is how these three were found; the two scans this entry did (other `git grep -E` callers, unbraced names before a non-ASCII byte) are recorded so the next one knows what was already looked at."
+    },
+    {
+      "entry": "2026-10-03-the-guard-the-sweep-could-not-run.md",
+      "key": "The sweep's exemption is a list maintained by hand.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The failure mode of a missing entry is the one `main` just had: the `scripts` job goes red on the new guard, loudly, on its first push. That is the right direction for a roster to fail. Inferring the exemption (say, any guard that shells out to `npm`) would let a guard exempt itself by what it calls, and the two checks on the roster \u2014 the guard still exists, `ci.yml` still has a `run:` line for it \u2014 stop it going stale the other way."
+    },
+    {
+      "entry": "2026-10-03-the-guard-the-sweep-could-not-run.md",
+      "key": "CI was not watched to green before this entry was written.",
+      "verdict": "moment",
+      "reviewed": "2026-10-03"
     }
   ]
 }

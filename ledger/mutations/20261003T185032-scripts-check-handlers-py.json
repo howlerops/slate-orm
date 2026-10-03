@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-03T18:50:32+00:00",
+  "file": "scripts/check_handlers.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_check_handlers.py"
+  ],
+  "commit": "bce9188",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "root left unresolved, temp dirs not behind a link (Linux's condition)",
+      "old": "    root = root.resolve()\n",
+      "new": "\n",
+      "verdict": "caught",
+      "caught_by": [
+        "a root reached through a symlink is read, not raised on"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

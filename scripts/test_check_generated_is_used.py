@@ -199,6 +199,29 @@ def a_generated_file_that_is_not_committed(root: pathlib.Path) -> None:
     (root / "pkg" / "gen" / "schema.go").unlink()
 
 
+def a_keyword_import_with_nothing_quoted(root: pathlib.Path) -> None:
+    """The first arm of the pattern, which the fixture otherwise never reaches.
+
+    Both importers `tree` writes quote a path, so they match the second arm and
+    the first — `from .schema import`, the only shape the Python adapter in the
+    real tree uses — went untested. It was written with `\\b`, a GNU extension
+    macOS's regex library does not honour, and on a Mac the guard found no
+    importer for any keyword import while this suite stayed green.
+    """
+    tree(root)
+    (root / "web" / "app" / "page.ts").write_text("export const nothing = 1;\n")
+    (root / "web" / "gen" / "labels.py").write_text("from .catalog import CATALOG\n")
+    commit(root)
+
+
+def a_longer_name_with_the_stem_in_front(root: pathlib.Path) -> None:
+    """What the boundary after the stem is for: `catalog_v1` is not `catalog`."""
+    tree(root)
+    (root / "web" / "app" / "page.ts").write_text("export const nothing = 1;\n")
+    (root / "web" / "gen" / "labels.py").write_text("from .catalog_v1 import CATALOG\n")
+    commit(root)
+
+
 def the_workflow_names_none(root: pathlib.Path) -> None:
     """The never-fires case: an empty roster checks nothing and passes."""
     tree(root, workflow="jobs:\n  clients:\n    steps:\n      - run: echo nothing\n")
@@ -254,6 +277,18 @@ CASES = [
         a_generated_file_that_is_not_committed,
         1,
         "is not in the tree",
+    ),
+    (
+        "a keyword import with nothing quoted counts",
+        a_keyword_import_with_nothing_quoted,
+        0,
+        "2 generated declarations, all imported",
+    ),
+    (
+        "a module whose name only starts with the stem is not an import",
+        a_longer_name_with_the_stem_in_front,
+        1,
+        "nothing in web imports",
     ),
     ("a workflow naming no outputs fails", the_workflow_names_none, 1, "no generated files"),
 ]
