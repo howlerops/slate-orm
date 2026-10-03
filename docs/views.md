@@ -84,7 +84,8 @@ expecting the Postgres behaviour gets a security posture they did not intend.
 **So the refusal, the documentation and the eventual error message all have to
 say this**, and saying it late — after somebody has built a permission model on
 it — is the failure mode. Column-level grants are the feature that would
-actually serve that use, and they are a different item.
+actually serve that use, and they are a different item — designed, not yet
+built, in [`column-grants.md`](column-grants.md).
 
 ## 3. The composition is an `AND`, and the order does not matter
 

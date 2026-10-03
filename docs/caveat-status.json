@@ -16032,6 +16032,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-03",
       "by": "One use existed, and grep found it (`grep -rn subsec_nanos crates`, now no hits outside retry.rs). A guard banning `subsec_nanos` would forbid its legitimate uses, such as timing, to prevent a misuse that has happened once. The comment on `jitter` records why the clock alone is not entropy, which is where the next person reaching for it will look."
+    },
+    {
+      "entry": "2026-10-03-column-grants-designed-before-built.md",
+      "key": "It builds nothing.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The handoff prompt and `CLAUDE.md`'s practice for changes of this shape (`views.md`, `ctes.md`, `arrays.md`) put the design first, so that the semantics a security feature fails on are argued before code makes them expensive to change. The build order is in `docs/column-grants.md`, and `docs/agent-handoff.md` now names it as the next work."
+    },
+    {
+      "entry": "2026-10-03-column-grants-designed-before-built.md",
+      "key": "The map is a survey, not a proof.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "A path map cannot prove its own completeness, which is why the note makes the sentinel-bytes oracle the primary test rather than a test per mapped path. The oracle catches a leak by what reaches the caller, whichever path produced it. Until the build exists there is nothing to scan."
+    },
+    {
+      "entry": "2026-10-03-column-grants-designed-before-built.md",
+      "key": "The Postgres comparisons are recalled, not tested",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "As in `views.md`: the decisions follow from this system's additive grants and absent owner concept, not from Postgres, so a wrong recollection would change the framing of what users expect and none of the seven decisions."
+    },
+    {
+      "entry": "2026-10-03-column-grants-designed-before-built.md",
+      "key": "No owner reviewed the semantics.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "A design note is how this repository puts semantics in front of an owner before code commits to them; the note argues each decision so that overruling it is cheap. Building step 1 does not foreclose either decision named here: what a table grant means is unchanged by step 1, and the hidden-column error is step 4."
     }
   ]
 }

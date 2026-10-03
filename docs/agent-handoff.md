@@ -71,12 +71,13 @@ T4 — column-level grants.
     cannot be a privilege boundary, because a caller needs the grant on
     every base table and having it lets them read the columns the view
     omits. "Give the analysts a narrowed view" does not work.
-    WRITE THE DESIGN NOTE FIRST, in the style of `docs/views.md`,
-    `docs/ctes.md` and `docs/arrays.md` — this repository designs before it
-    codes for changes like this. It touches Grant, security.rs, the
-    projection path, the wire and three clients, and the default decides
-    whether it fails open. Decide explicitly what an existing table-level
-    grant means once columns exist.
+    The design note is written: `docs/column-grants.md`. Read it before
+    touching code — its section 4 maps every path a row leaves by, and the
+    obvious design (a column list checked against the projection) leaks
+    through at least ten of them. Build in the order its "Build order"
+    section gives; each step stays refused-by-default until the next lands.
+    The primary test is the sentinel-bytes oracle it describes, not a test
+    per path.
 
 DO NOT DO THESE — they are decided, not forgotten. Each has a `deliberate`
 verdict with an argument in `docs/caveat-status.json`:
