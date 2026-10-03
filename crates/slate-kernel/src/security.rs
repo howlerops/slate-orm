@@ -525,13 +525,10 @@ impl SecurityCatalog {
                 && g.actions.contains(&Action::Read)
                 && context.principal.roles.contains(&g.role)
         }) {
-            match &grant.columns {
-                None => return None,
-                Some(some) => {
-                    narrowed = true;
-                    columns.extend(some.iter().copied());
-                }
-            }
+            // A table-level grant (`None`) settles it: grants only add.
+            let some = grant.columns.as_ref()?;
+            narrowed = true;
+            columns.extend(some.iter().copied());
         }
         if !narrowed {
             return None;

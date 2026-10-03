@@ -155,6 +155,15 @@ Notes on the records:
   `ledger/mutations/20261003T233031-crates-slate-kernel-src-security-rs.json`
   is that refusal again, before the anchors were fixed.
 
+**CI's clippy found one thing this machine's could not.** Run 37162597902 failed
+`question_mark` (clippy 1.99; this container's does not have the lint) on the
+`match` in `readable`. Its suggested `&grant.columns?` would not compile — it
+moves out of a borrow — so the fix is `grant.columns.as_ref()?`, and the
+mutation of that rewritten line (`let ... else { continue }`, the table grant
+no longer settling it) is caught again by
+`a_table_grant_beside_a_column_grant_reads_everything`, in
+`ledger/mutations/20261003T235020-crates-slate-kernel-src-security-rs.json`.
+
 **Regression:**
 
 | crate | passed | failed |

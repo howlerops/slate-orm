@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-03T23:50:20+00:00",
+  "file": "crates/slate-kernel/src/security.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "811317f",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a table grant does not settle it",
+      "old": "            let some = grant.columns.as_ref()?;\n",
+      "new": "            let Some(some) = grant.columns.as_ref() else { continue };\n",
+      "verdict": "caught",
+      "caught_by": [
+        "a_table_grant_beside_a_column_grant_reads_everything"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
