@@ -23,9 +23,32 @@
 # thing to bump and a second way for the two to disagree. What the image
 # promises is the *binary*, and `scripts/check_versions.py` is what keeps its
 # version honest.
+#
+# # Why the builder is pinned to the *build* platform
+#
+# `--platform=$BUILDPLATFORM` means this stage always runs natively and
+# cross-compiles, rather than running under emulation once per target. That is
+# not a micro-optimisation. Measured on `v0.1.0`, which built the obvious way:
+#
+#     the whole release, minus the image      2m27s
+#     the image, linux/amd64 + linux/arm64   76m36s
+#
+# One `buildx` step, and for 76 of those minutes the arm64 half was running
+# `rustc` through QEMU. The comparison that makes it damning is in the same
+# run: `release-build.yml` produced the *aarch64 binary* in 2m02s, because it
+# cross-compiles on an amd64 host. Same code, same profile, ~37x.
+#
+# `ledger/2026-10-02-the-release-that-shipped-five-things.md` has the numbers
+# and why they were not acted on that day.
 
-FROM rust:1-bookworm AS build
+FROM --platform=$BUILDPLATFORM rust:1-bookworm AS build
 WORKDIR /src
+
+# Supplied by buildx, one value per entry in `platforms:`. Declared here rather
+# than used inline so a build invoked by plain `docker build`, which sets
+# neither, fails on the empty case below instead of silently producing a
+# host-architecture binary under an arm64 tag.
+ARG TARGETARCH
 
 # The manifests first, so a source-only change does not re-resolve the
 # dependency graph. `--locked` because an image built from a floating lockfile
@@ -43,12 +66,65 @@ COPY clients/python/testserver clients/python/testserver
 # to `members` so the next one is caught before the push.
 COPY examples/helpdesk examples/helpdesk
 
-RUN cargo build --release --locked -p slate-serverd --bin slate-serverd \
-    && strip target/release/slate-serverd
+# The cross-compile. Three things here are load-bearing and none is obvious.
+#
+# **The C toolchain, because four dependencies are not Rust.** `aws-lc-sys`,
+# `ring`, `lz4-sys` and `zstd-sys` compile C through the `cc` crate, and
+# `aws-lc-sys` additionally drives `cmake`. `cargo` cross-compiles Rust from
+# the target triple alone; a C build script does not, and will happily invoke
+# the *host* compiler and produce x86-64 objects that fail at link with
+# `incompatible with aarch64`. `CC_<triple>` and `CXX_<triple>` are what the
+# `cc` crate reads, `AR_<triple>` what it archives with, and
+# `CARGO_TARGET_<TRIPLE>_LINKER` what cargo links the final binary with. All
+# four are needed; three of them produce a different, later, less obvious
+# failure when missing.
+#
+# The triple is spelled with **underscores** in those names, and that is not a
+# style choice. `cc` accepts either spelling, but `CC_aarch64-unknown-linux-gnu`
+# is not a valid shell identifier, so `export` rejects it outright in `dash` —
+# which is what `/bin/sh` is on this base, and therefore what `RUN` runs.
+#
+# **`strip` is also a cross tool.** The host `strip` does not know aarch64 and
+# says so only after a successful build, which is the worst place to find out.
+# `binutils-aarch64-linux-gnu` arrives with the gcc package and carries it.
+#
+# **The output path moves.** `--target` puts the binary under
+# `target/<triple>/release/`, so the final stage can no longer name a fixed
+# path. It is copied to `/out/` here and the runtime stage reads that, which
+# also means the runtime stage does not have to know the triple.
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) \
+        triple=x86_64-unknown-linux-gnu; prefix= ;; \
+      arm64) \
+        triple=aarch64-unknown-linux-gnu; prefix=aarch64-linux-gnu-; \
+        apt-get update; \
+        apt-get install -y --no-install-recommends \
+          gcc-aarch64-linux-gnu g++-aarch64-linux-gnu cmake; \
+        rm -rf /var/lib/apt/lists/* ;; \
+      *) \
+        echo "TARGETARCH=${TARGETARCH:-<unset>} is not one this image builds;" \
+             "buildx sets it, plain \`docker build\` does not" >&2; \
+        exit 1 ;; \
+    esac; \
+    rustup target add "$triple"; \
+    under="$(echo "$triple" | tr '-' '_')"; \
+    upper="$(echo "$under" | tr 'a-z' 'A-Z')"; \
+    if [ -n "$prefix" ]; then \
+      export "CC_${under}=${prefix}gcc" \
+             "CXX_${under}=${prefix}g++" \
+             "AR_${under}=${prefix}ar" \
+             "CARGO_TARGET_${upper}_LINKER=${prefix}gcc"; \
+    fi; \
+    cargo build --release --locked --target "$triple" \
+      -p slate-serverd --bin slate-serverd; \
+    "${prefix}strip" "target/${triple}/release/slate-serverd"; \
+    mkdir -p /out; \
+    cp "target/${triple}/release/slate-serverd" /out/slate-serverd
 
 FROM gcr.io/distroless/cc-debian12
 
-COPY --from=build /src/target/release/slate-serverd /usr/local/bin/slate-serverd
+COPY --from=build /out/slate-serverd /usr/local/bin/slate-serverd
 
 # 7421 is what `examples/explorer/head.toml` and the quickstart both use, so a
 # reader who has run the demo finds the same number here. It is a default and

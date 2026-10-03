@@ -238,6 +238,12 @@ ELSEWHERE_BLOCKS = {
         "runs the image the step above built, in a docker daemon"
     ),
     "The base is still distroless": "runs the image, in a docker daemon",
+    "The binary inside is built for the architecture on the tin": (
+        "inspects and runs the built image, in a docker daemon. It is the "
+        "cross-compile's own check: a Dockerfile that lost its "
+        "`--platform=$BUILDPLATFORM` handling still builds and still tags the "
+        "result arm64, and only the architecture of the binary inside says so."
+    ),
     "Tag the module path": "pushes a git tag to the remote",
     "Warm the proxy, and fail if it will not resolve": "asks proxy.golang.org",
 }

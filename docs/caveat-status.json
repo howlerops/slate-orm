@@ -15798,6 +15798,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-02",
       "by": "Deliberate scope. The fix is identified in the entry \u2014 cross-compile in the builder stage with `--platform=$BUILDPLATFORM` rather than emulate \u2014 and it edits the one file that produces the shipped artefact, so it wants its own change, its own CI run and its own `--check` against the started container. Folding it into a release write-up would mean changing the build of the thing just published, in the commit that documents publishing it. The number is here so the next release budgets for it."
+    },
+    {
+      "entry": "2026-10-03-the-image-stops-emulating-and-starts-being-run.md",
+      "key": "It does not change what `release.yml` builds.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Correct by construction rather than a gap: that job already asks for both platforms and inherits the speedup from the `Dockerfile` with no edit, which is the whole reason the builder stage is where the fix went. What remains true \u2014 the release path is only exercised on a tag \u2014 is narrowed by this change rather than untouched, because CI now builds the same two images the release will push."
+    },
+    {
+      "entry": "2026-10-03-the-image-stops-emulating-and-starts-being-run.md",
+      "key": "The arm64 image is started under emulation, not on arm64 har",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The boundary is named with what it does and does not catch: a wrong-architecture binary and a broken entrypoint, yes; a genuine aarch64 codegen or atomics problem, no. An arm64 runner is the stronger statement and is a paid resource for a project with no users yet. Emulation at *run* time costs seconds, which is why it is affordable here and was not at build time \u2014 the distinction this whole change is about."
+    },
+    {
+      "entry": "2026-10-03-the-image-stops-emulating-and-starts-being-run.md",
+      "key": "`--version` may not exist.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Deliberately tolerant. The assertion that matters is `docker image inspect`'s declared architecture, which cannot be wrong without the image being wrong; running the binary is a bonus line of output. Making the step depend on a flag the binary may not have would turn a useful extra into a false failure."
+    },
+    {
+      "entry": "2026-10-03-the-image-stops-emulating-and-starts-being-run.md",
+      "key": "Nothing pulls the *published* image.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The same decision `ledger/2026-10-02-the-release-that-shipped-five-things.md` records, now narrower: CI starts both architectures of an image built from this exact `Dockerfile`, so what is unverified is the registry round-trip rather than the image. Re-pulling what was just pushed verifies the registry, not the artefact."
     }
   ]
 }

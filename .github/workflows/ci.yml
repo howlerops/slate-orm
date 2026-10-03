@@ -936,18 +936,68 @@ jobs:
   # after it can run the thing that was built. A build that succeeds and
   # produces a binary that will not start is a green job and a broken release.
   image:
-    name: the container image
+    name: the container image (${{ matrix.platform }})
     runs-on: ubuntu-latest
+    # Both architectures the release publishes, and both *started*.
+    #
+    # This job built one architecture — the runner's — until 2026-10-03, while
+    # `release.yml` pushed two. So the multi-arch path was exercised on release
+    # day and nowhere else, which is the exact shape the comment at the top of
+    # `release.yml` argues against, one level in. `v0.1.0` worked first time,
+    # and that was luck rather than coverage: nothing had ever started the
+    # arm64 half of a published index.
+    #
+    # It is affordable now because the `Dockerfile` cross-compiles rather than
+    # emulating. Adding this before that change would have cost ~75 minutes on
+    # every push to every branch, which is why the v0.1.0 write-up rejected it
+    # at the time and named this as the condition that changes the answer.
+    #
+    # A matrix rather than one job building both, because `load: true` takes a
+    # single platform: a multi-platform build has no local image to run, only
+    # a manifest list, and the whole point here is to *run* each one.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            tag: ci-amd64
+          - platform: linux/arm64
+            tag: ci-arm64
+            emulated: true
     steps:
       - uses: actions/checkout@v5
+      # Only the arm64 leg needs it, and only to *run* the image — the build
+      # is a cross-compile on the host. Installing it unconditionally would
+      # hide that distinction from the next reader.
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.emulated
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: ${{ matrix.platform }}
           load: true
-          tags: slate-serverd:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: slate-serverd:${{ matrix.tag }}
+          # Keyed per platform: one cache shared by two targets thrashes,
+          # because the two builds share no compiled artefacts at all.
+          cache-from: type=gha,scope=image-${{ matrix.tag }}
+          cache-to: type=gha,mode=max,scope=image-${{ matrix.tag }}
+      # The cross-compile's own check, and the one a successful build does not
+      # give you: `file` on the binary inside the image. A `Dockerfile` that
+      # quietly lost its `--platform` handling would still build, still push
+      # under an arm64 tag, and still contain an x86-64 binary.
+      - name: The binary inside is built for the architecture on the tin
+        run: |
+          want='${{ matrix.platform }}'
+          got="$(docker run --rm --platform "$want" --entrypoint /usr/local/bin/slate-serverd \
+                   slate-serverd:${{ matrix.tag }} --version 2>/dev/null || true)"
+          arch="$(docker image inspect slate-serverd:${{ matrix.tag }} \
+                   --format '{{.Os}}/{{.Architecture}}')"
+          echo "image reports $arch, binary said: ${got:-<no --version>}"
+          if [ "$arch" != "$want" ]; then
+            echo "::error::built $arch under the $want tag" >&2
+            exit 1
+          fi
       # The same configuration `release-build.yml` validates the bare binary
       # against, read out of the docs page so the two cannot drift, and run
       # through the image's entrypoint. `--check` exits after validating, so
@@ -963,15 +1013,17 @@ jobs:
           assert panel, "site/docs/quickstart.html has no TOML panel"
           pathlib.Path("image-check.toml").write_text(html.unescape(panel.group(1)))
           PY
-          docker run --rm -v "$PWD/image-check.toml:/etc/slate/head.toml:ro" \
-            slate-serverd:ci --config /etc/slate/head.toml --check
+          docker run --rm --platform ${{ matrix.platform }} \
+            -v "$PWD/image-check.toml:/etc/slate/head.toml:ro" \
+            slate-serverd:${{ matrix.tag }} --config /etc/slate/head.toml --check
       # An image with no shell cannot be poked at by hand, so the one thing
       # worth asserting about the base is asserted here: distroless has no
       # `/bin/sh`, and an image that grew one has stopped being the base this
       # file chose.
       - name: The base is still distroless
         run: |
-          if docker run --rm --entrypoint /bin/sh slate-serverd:ci -c true 2>/dev/null; then
+          if docker run --rm --platform ${{ matrix.platform }} \
+               --entrypoint /bin/sh slate-serverd:${{ matrix.tag }} -c true 2>/dev/null; then
             echo "::error::the image has a shell; the base is no longer distroless" >&2
             exit 1
           fi
