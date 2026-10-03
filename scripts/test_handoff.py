@@ -17,6 +17,8 @@ Run directly: `python3 scripts/test_handoff.py`.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import pathlib
 import subprocess
@@ -177,6 +179,29 @@ def main() -> int:
             "the reasoning after the first sentence is not printed",
             "which the briefing should not print" in text,
             False,
+        )
+
+        # `--hook` is what a SessionStart hook runs, and the field name is
+        # the whole contract: a briefing on stdout under any other key is
+        # printed where nothing reads it.
+        out = io.StringIO()
+        was = handoff.ROOT, handoff.caveat_tool.ROOT
+        handoff.ROOT, handoff.caveat_tool.ROOT = root, root
+        try:
+            with contextlib.redirect_stdout(out):
+                handoff.main(["--hook", "--entries", "1"])
+        finally:
+            handoff.ROOT, handoff.caveat_tool.ROOT = was
+        emitted = json.loads(out.getvalue())
+        case(
+            "--hook names the event it is answering",
+            emitted["hookSpecificOutput"]["hookEventName"],
+            "SessionStart",
+        )
+        case(
+            "--hook carries the briefing as additionalContext",
+            "where it stands" in emitted["hookSpecificOutput"]["additionalContext"],
+            True,
         )
 
     # `shorten` on its own, because the fixture's caveats are short by design.

@@ -42,6 +42,14 @@ commands to ask are printed instead.
 **It does not say what to do next.** It says where the work stopped and what
 was decided about each stopping point. Choosing among those is a person's
 job, and a script that ranked them would be inventing a priority nobody set.
+
+# `--hook`
+
+Emits the briefing as a `SessionStart` hook result, so a session is briefed
+before anybody asks. The JSON wrapper lives here rather than in
+`.claude/settings.json` because a shell pipeline that builds JSON inside a
+JSON string is three levels of quoting and no test; this is one flag with a
+case in the suite.
 """
 
 from __future__ import annotations
@@ -344,10 +352,25 @@ def main(argv: list[str] | None = None) -> int:
         default=RECENT_ENTRIES,
         help=f"how many of the newest ledger entries to brief on (default {RECENT_ENTRIES})",
     )
+    parser.add_argument(
+        "--hook",
+        action="store_true",
+        help="emit the briefing as a SessionStart hook result",
+    )
     args = parser.parse_args(argv)
 
     state = collect(args.entries)
-    if args.json:
+    if args.hook:
+        # `additionalContext` rather than bare stdout: that is the field a
+        # SessionStart hook is read from, and a briefing printed where nothing
+        # reads it is the never-fires failure this repository keeps meeting.
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": render(state),
+            }
+        }))
+    elif args.json:
         print(json.dumps(state, indent=2, sort_keys=True))
     else:
         print(render(state), end="")

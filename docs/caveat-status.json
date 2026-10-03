@@ -15888,6 +15888,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-03",
       "by": "Right for the question it answers and wrong for a different one, stated so the next reader knows which. The ledger is read by its filenames and an entry is dated for the work, not the commit; \"what changed since I was last here\" is a git question and would need a `--since` that walks history. Worth adding when somebody wants it, and not worth guessing at the semantics first."
+    },
+    {
+      "entry": "2026-10-03-the-briefing-as-a-session-start-hook.md",
+      "key": "It does not grant anything.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The correct outcome rather than a shortfall: the permission classifier refused the settings write as self-modification, and it was right to \u2014 an agent that can widen its own authority has none. Consent given in conversation is not the artifact consent has to be; only a person can commit the file. The content is in the entry so applying it is a copy rather than a rewrite."
+    },
+    {
+      "entry": "2026-10-03-the-briefing-as-a-session-start-hook.md",
+      "key": "The hook is not proven to fire.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Unprovable from inside a turn rather than untested: `SessionStart` runs when a session begins, so nothing in this one could trigger it. What is testable is tested \u2014 the flag's output and, critically, the field name it uses, which is the whole contract with the harness. The wiring is verified by the next session that starts with the settings in place, and a hook that did not fire shows up as a session that was not briefed."
+    },
+    {
+      "entry": "2026-10-03-the-briefing-as-a-session-start-hook.md",
+      "key": "5.6 KB on every session start is a real cost.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Named as a belief rather than dressed as a measurement, which is the honest state: 5,593 bytes is measured, and that it pays for itself is not. `--entries` is the knob if it ever looks expensive, and the default for the hook is already 5 rather than 12 for exactly this reason. Measuring whether a briefed session asks better questions is not a measurement this repository can make."
+    },
+    {
+      "entry": "2026-10-03-the-briefing-as-a-session-start-hook.md",
+      "key": "It briefs the model, not the person.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "`additionalContext` is a channel to Claude by construction; there is no hook field that prints to the human's terminal at session start, and `systemMessage` would put 5 KB of Markdown in the UI on every launch. A person runs `python3 scripts/handoff.py` and gets the same thing formatted for reading, which CLAUDE.md now points at."
     }
   ]
 }
