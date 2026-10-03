@@ -71,7 +71,7 @@
 
 use crate::error::KernelError;
 use crate::expr::Expr;
-use slate_schema::{Row, TableDef, TableId};
+use slate_schema::{Ordinal, Row, TableDef, TableId};
 use slate_tuple::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -327,10 +327,14 @@ pub struct Grant {
     role: String,
     table: TableId,
     actions: BTreeSet<Action>,
+    /// The columns a [`read_columns`](Self::read_columns) grant covers.
+    /// `None` is the whole table, including columns added after the grant
+    /// was written; see `docs/column-grants.md` §1.
+    columns: Option<BTreeSet<Ordinal>>,
 }
 
 impl Grant {
-    /// Grant `role` the given actions on `table`.
+    /// Grant `role` the given actions on `table`, over every column.
     pub fn new(
         role: impl Into<String>,
         table: TableId,
@@ -340,7 +344,49 @@ impl Grant {
             role: role.into(),
             table,
             actions: actions.into_iter().collect(),
+            columns: None,
         }
+    }
+
+    /// Grant `role` [`Action::Read`] on only `columns` of `table`.
+    ///
+    /// Read and nothing else, because column-level writes raise questions this
+    /// does not answer (`docs/column-grants.md` §6). A role that also needs to
+    /// write holds a second, table-level grant for that; grants add.
+    ///
+    /// # Errors
+    /// [`KernelError::InvalidGrant`] if a column is not one of the table's, or
+    /// if the set leaves out any column of the primary key. A row is named by
+    /// its key — a cursor is one, `get` takes one — so a reader who could not
+    /// see keys could not page, fetch, or refer back to a row it had read.
+    pub fn read_columns(
+        role: impl Into<String>,
+        table: &TableDef,
+        columns: impl IntoIterator<Item = Ordinal>,
+    ) -> crate::Result<Self> {
+        let columns: BTreeSet<Ordinal> = columns.into_iter().collect();
+        let invalid = |reason: String| KernelError::InvalidGrant {
+            table: table.name().to_owned(),
+            reason,
+        };
+        if let Some(stray) = columns.iter().find(|c| c.0 >= table.columns().len()) {
+            return Err(invalid(format!(
+                "column {} is not one of its columns",
+                stray.0
+            )));
+        }
+        if let Some(key) = table.primary_key().iter().find(|k| !columns.contains(k)) {
+            let name = table.columns().get(key.0).map_or("?", |c| c.name());
+            return Err(invalid(format!(
+                "a column grant must include the whole primary key, and `{name}` is missing"
+            )));
+        }
+        Ok(Self {
+            role: role.into(),
+            table: table.id(),
+            actions: BTreeSet::from([Action::Read]),
+            columns: Some(columns),
+        })
     }
 }
 
@@ -443,6 +489,100 @@ impl SecurityCatalog {
                     && g.actions.contains(&action)
                     && context.principal.roles.contains(&g.role)
             })
+    }
+
+    /// The columns of `table` that `context` may read, or `None` for all of
+    /// them.
+    ///
+    /// The union over every `Read` grant the caller holds there, and `None`
+    /// as soon as one of them is table-level — grants only add, so one
+    /// whole-table grant settles it. The tenant column needs no rule of its
+    /// own: a schema refuses a tenant column that does not lead the primary
+    /// key, and a column grant refuses a set without the whole key, so every
+    /// column grant on a tenant-scoped table already includes it.
+    ///
+    /// `None`, too, for a caller holding no column grant there at all — which
+    /// includes one with no `Read` grant whatever. "Reads nothing" is not
+    /// "reads some": a role granted only `update` has always been able to
+    /// replace whole rows it cannot read, and treating it as narrowed refused
+    /// exactly that. The first draft did, and `security_probe`'s
+    /// `each_handler_authorizes_the_action_it_performs` caught it. Reads by
+    /// such a caller are refused by [`authorize`](Self::authorize), which runs
+    /// first everywhere this is asked.
+    #[must_use]
+    pub fn readable(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+    ) -> Option<BTreeSet<Ordinal>> {
+        if context.is_superuser() {
+            return None;
+        }
+        let mut columns = BTreeSet::new();
+        let mut narrowed = false;
+        for grant in self.grants.iter().filter(|g| {
+            g.table == table.id()
+                && g.actions.contains(&Action::Read)
+                && context.principal.roles.contains(&g.role)
+        }) {
+            match &grant.columns {
+                None => return None,
+                Some(some) => {
+                    narrowed = true;
+                    columns.extend(some.iter().copied());
+                }
+            }
+        }
+        if !narrowed {
+            return None;
+        }
+        // A list naming every column the table has *today* reads as the whole
+        // table, so a grant that happens to be complete costs nothing — no
+        // refused `EXPLAIN`, no nulling pass. Asked against the table as it is
+        // now, which is what keeps it from widening: a column added tomorrow
+        // makes the same list incomplete again, and the reader stops seeing
+        // everything without anyone touching the grant (§1).
+        if columns.len() == table.columns().len() {
+            return None;
+        }
+        Some(columns)
+    }
+
+    /// The columns of `table` that `context` may not read, which a row must
+    /// have nulled before it is handed to them. Empty for a whole-table reader.
+    #[must_use]
+    pub fn concealed(&self, context: &SecurityContext, table: &TableDef) -> Vec<Ordinal> {
+        self.readable(context, table)
+            .map_or_else(Vec::new, |readable| {
+                (0..table.columns().len())
+                    .map(Ordinal)
+                    .filter(|c| !readable.contains(c))
+                    .collect()
+            })
+    }
+
+    /// Refuse `action` unless `context` may read every column of `table`.
+    ///
+    /// For the operations that are only safe with the whole row in view: a
+    /// plan prints the secured predicate, statistics sample every column, and
+    /// a whole-row write either overwrites what the writer cannot see or, in
+    /// its `_if_unchanged` form, compares against it.
+    ///
+    /// # Errors
+    /// [`KernelError::ColumnsWithheld`] if any column is withheld.
+    pub fn require_every_column(
+        &self,
+        context: &SecurityContext,
+        table: &TableDef,
+        action: &'static str,
+    ) -> crate::Result<()> {
+        match self.readable(context, table) {
+            None => Ok(()),
+            Some(_) => Err(KernelError::ColumnsWithheld {
+                table: table.name().to_owned(),
+                action,
+            }),
+        }
     }
 
     /// The mandatory predicate for `context` on `table` and `action`.

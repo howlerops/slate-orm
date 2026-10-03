@@ -1,0 +1,74 @@
+{
+  "at": "2026-10-03T23:29:44+00:00",
+  "file": "crates/slate-kernel/src/security.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "interrupted",
+  "cases": [
+    {
+      "name": "a table grant does not settle it",
+      "old": "                None => return None,\n",
+      "new": "                None => {}\n",
+      "verdict": "caught",
+      "caught_by": [
+        "a_table_grant_beside_a_column_grant_reads_everything"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a caller with no column grant counts as narrowed",
+      "old": "        if !narrowed {\n            return None;\n        }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_writer_with_no_read_grant_is_not_treated_as_narrowed"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a complete list is not the whole table",
+      "old": "        if columns.len() == table.columns().len() {\n            return None;\n        }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_complete_column_list_is_the_whole_table_until_the_table_grows"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the key is not required",
+      "old": "        if let Some(key) = table.primary_key().iter().find(|k| !columns.contains(k)) {",
+      "new": "        if let Some(key) = table.primary_key().iter().find(|_| false) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_grant_must_name_real_columns_and_the_whole_key"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a stray column is accepted",
+      "old": "        if let Some(stray) = columns.iter().find(|c| c.0 >= table.columns().len()) {",
+      "new": "        if let Some(stray) = columns.iter().find(|_| false) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_grant_must_name_real_columns_and_the_whole_key"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ]
+}

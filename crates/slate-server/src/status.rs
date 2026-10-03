@@ -161,6 +161,17 @@ fn error_info(error: &KernelError) -> rpc::ErrorInfo {
             put("table", table.clone());
             put("action", (*action).to_owned());
         }
+        // The table and what was attempted, and not the column: a caller who
+        // referenced it knows which, and naming it would only help one who is
+        // guessing. `docs/column-grants.md` §7.
+        KernelError::ColumnsWithheld { table, action } => {
+            put("table", table.clone());
+            put("action", (*action).to_owned());
+        }
+        KernelError::InvalidGrant { table, reason } => {
+            put("table", table.clone());
+            put("why", reason.clone());
+        }
         KernelError::UnknownTable(id) => put("table_id", id.0.to_string()),
         KernelError::ReplicaTooStale {
             replica,
@@ -237,6 +248,8 @@ pub fn reason_for(error: &KernelError) -> &'static str {
         KernelError::RowNotFound { .. } => "ROW_NOT_FOUND",
         KernelError::UnknownTable(_) => "UNKNOWN_TABLE",
         KernelError::AccessDenied { .. } => "ACCESS_DENIED",
+        KernelError::ColumnsWithheld { .. } => "COLUMNS_WITHHELD",
+        KernelError::InvalidGrant { .. } => "INVALID_GRANT",
         KernelError::TenantRequired { .. } => "TENANT_REQUIRED",
         KernelError::RowCheckFailed { .. } => "ROW_CHECK_FAILED",
         KernelError::SoftDeleteColumnSupplied { .. } => "SOFT_DELETE_COLUMN_SUPPLIED",
@@ -305,7 +318,14 @@ pub fn code_for(error: &KernelError) -> Code {
         // refusal to serve a request that carries no tenant, which is a denial
         // rather than a bad argument: telling the caller to add a tenant would
         // be telling them how to widen their own access.
+        // A grant the configuration could not honour. serverd refuses it at
+        // load, so a running server should never answer with this; if one
+        // does, the fault is the server's setup and not the request, which is
+        // what `FailedPrecondition` says and `Internal` would not.
+        KernelError::InvalidGrant { .. } => Code::FailedPrecondition,
+
         KernelError::AccessDenied { .. }
+        | KernelError::ColumnsWithheld { .. }
         | KernelError::TenantRequired { .. }
         | KernelError::RowCheckFailed { .. } => Code::PermissionDenied,
 

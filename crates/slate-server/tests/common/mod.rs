@@ -243,6 +243,17 @@ pub fn security() -> SecurityCatalog {
         // authorisation loop that stops early, which a mutation demonstrated.
         .grant(Grant::new("two_table_reader", USERS, [Action::Read]))
         .grant(Grant::new("two_table_reader", DOCS, [Action::Read]))
+        // Reads `users` without `email`, for the column-grant tests over the
+        // wire. `own_rows` below filters on `owner`, which this role *can*
+        // read; the kernel suite covers the policy-reads-a-hidden-column case.
+        .grant(
+            Grant::read_columns(
+                "email_blind",
+                &users(),
+                ["tenant_id", "id", "owner"].map(|c| users().ordinal_of(c).expect("column")),
+            )
+            .expect("a valid column grant"),
+        )
         .policy(Policy::new(
             "own_rows",
             USERS,

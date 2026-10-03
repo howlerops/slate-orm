@@ -136,7 +136,9 @@ pub(crate) struct Document {
 /// the grant on the *base* table — and holding it, they can read the columns
 /// the view leaves out by querying the table directly. "Give the analysts a
 /// narrowed view" is the reason people reach for views and it does not work
-/// here; column-level grants are the feature that would.
+/// here. What does is a column grant — `columns = [...]` on a
+/// `[[security.grants]]` block, `GrantSpec::columns` — granting the base table
+/// with the sensitive columns left out; `docs/column-grants.md`.
 #[derive(Deserialize, Debug, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct View {
@@ -815,6 +817,12 @@ pub(crate) struct GrantSpec {
     pub(crate) tables: Vec<String>,
     /// `read`, `insert`, `update`, `delete`, or `all`.
     pub(crate) actions: Vec<String>,
+    /// The columns a read grant covers. Absent is every column, including
+    /// ones added later; present narrows the grant to exactly these, and is
+    /// refused unless it names one table, grants `read` alone, and includes
+    /// the whole primary key. See `docs/column-grants.md`.
+    #[serde(default)]
+    pub(crate) columns: Option<Vec<String>>,
 }
 
 /// A row-level policy.

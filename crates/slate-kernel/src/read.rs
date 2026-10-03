@@ -69,6 +69,82 @@ fn narrowed(query: &Query, aggregates: &[Aggregate], group: &[Ordinal]) -> Query
 /// `Projection::All` is already everything, so it is returned unchanged rather
 /// than expanded into an explicit set — which would look identical and would
 /// stop `wanted` short-circuiting the decoder.
+/// `row` with every `concealed` column put back to null.
+pub(crate) fn conceal(row: Row, concealed: &[Ordinal]) -> Row {
+    if concealed.is_empty() {
+        return row;
+    }
+    let mut values = row.into_values();
+    for ordinal in concealed {
+        if let Some(slot) = values.get_mut(ordinal.0) {
+            *slot = Value::Null;
+        }
+    }
+    Row::new(values)
+}
+
+/// Refuse `query` if it reads, anywhere, a column outside `readable`.
+///
+/// Every place the caller's own request names a column: what it projects,
+/// filters on, sorts by, partitions or orders a window by, and what its
+/// computed values read. Grouping and aggregation arrive here already folded
+/// into the projection by `narrowed`, and a join's key arrives as part of the
+/// probe's filter, so both are covered by the same walk rather than a second
+/// one. What the *security layer* adds — the row policy, the tenant and
+/// soft-delete filters — is not in `query` yet and is not refused: a policy
+/// may legitimately read a column its subject cannot, and those columns are
+/// concealed on the way out instead. See `docs/column-grants.md` §2 and §3.
+///
+/// Refusing rather than nulling is the point. A filter is a probe: binary
+/// search on `salary > x` reads a hidden salary exactly, whether or not the
+/// value is ever returned.
+fn refuse_unreadable(
+    table: &TableDef,
+    query: &Query,
+    readable: &BTreeSet<Ordinal>,
+    action: &'static str,
+) -> Result<()> {
+    let width = table.columns().len();
+    let mut referenced = query.filter.columns();
+    if let Some(columns) = query.projection.columns() {
+        referenced.extend(columns.iter().copied());
+    }
+    referenced.extend(query.sort.iter().map(|key| key.column));
+    for window in &query.window {
+        window.collect_columns(&mut referenced);
+    }
+    for scalar in &query.compute {
+        referenced.extend(scalar.columns());
+    }
+    // An ordinal at or past the table's width names a computed value, whose
+    // own inputs were just walked.
+    if referenced
+        .iter()
+        .any(|column| column.0 < width && !readable.contains(column))
+    {
+        return Err(KernelError::ColumnsWithheld {
+            table: table.name().to_owned(),
+            action,
+        });
+    }
+    Ok(())
+}
+
+/// `query`, with "every column" narrowed to the ones `readable` allows.
+///
+/// Narrowed rather than refused, because every client asks for every column
+/// by default and a narrowed role refused on its default query would be a
+/// role nobody could use. Narrowing only removes, so it cannot widen what the
+/// caller sees. A query that *names* its columns is left alone: it has
+/// already been through `refuse_unreadable`.
+fn readable_projection(query: &Query, readable: &BTreeSet<Ordinal>) -> Query {
+    let mut narrowed = query.clone();
+    if narrowed.projection.columns().is_none() {
+        narrowed.projection = Projection::Columns(readable.iter().copied().collect());
+    }
+    narrowed
+}
+
 fn widened(projection: &Projection, windows: &[crate::window::Window]) -> Projection {
     if windows.is_empty() {
         return projection.clone();
@@ -483,9 +559,11 @@ impl<'a> SecuredReads<'a> {
     ) -> Result<Option<Row>> {
         self.security.authorize(context, table, Action::Read)?;
         let filter = self.security.row_filter(context, table, Action::Read)?;
+        let concealed = self.security.concealed(context, table);
         Ok(read_row_unchecked(self.snapshot, table, primary_key)
             .await?
-            .filter(|row| filter.admits(row)))
+            .filter(|row| filter.admits(row))
+            .map(|row| conceal(row, &concealed)))
     }
 
     /// Check the caller may see a *plan* for every table involved.
@@ -506,12 +584,64 @@ impl<'a> SecuredReads<'a> {
     ) -> Result<()> {
         for table in tables {
             self.security.authorize(context, table, Action::Explain)?;
+            // A plan prints the secured predicate — the policy's literals and
+            // the columns it reads — and lists what it decodes. Refused for a
+            // narrowed reader rather than redacted: a printer written to be
+            // partial is one more thing to keep partial. `column-grants.md` §5.
+            self.security
+                .require_every_column(context, table, "EXPLAIN")?;
         }
         Ok(())
     }
 
-    /// Plan `query` with the caller's security filter folded in.
+    /// Plan `query` with the caller's security filter folded in, and with
+    /// whatever the caller may not read refused or withheld.
     pub(crate) fn plan(
+        self,
+        context: &SecurityContext,
+        table: &TableDef,
+        query: &Query,
+    ) -> Result<Plan> {
+        // Authorised first, so a caller holding no grant at all is told that
+        // rather than that some column is withheld from them.
+        self.security.authorize(context, table, Action::Read)?;
+        let Some(readable) = self.security.readable(context, table) else {
+            return self.plan_secured(context, table, query);
+        };
+        refuse_unreadable(table, query, &readable, "this read")?;
+        let mut plan = self.plan_secured(context, table, &readable_projection(query, &readable))?;
+        plan.concealed = self.security.concealed(context, table);
+        Ok(plan)
+    }
+
+    /// Plan the read a predicate write makes, over **whole** rows.
+    ///
+    /// The caller's references are refused exactly as a read's are — a
+    /// `delete_where` on `salary > x` is the same probe as a query on it — but
+    /// nothing is narrowed or concealed, because these rows are written back:
+    /// `update_where` stores them with its assignments applied and
+    /// `delete_where` erases their index entries by their values. A row with a
+    /// hidden column nulled would overwrite that column in the first case and
+    /// leave its index entries behind in the second. What the caller is
+    /// *returned* is concealed by the write, from [`SecurityCatalog::concealed`].
+    pub(crate) async fn execute_for_write(
+        self,
+        context: &SecurityContext,
+        table: &'a TableDef,
+        query: &Query,
+    ) -> Result<QueryCursor<'a>> {
+        self.security.authorize(context, table, Action::Read)?;
+        if let Some(readable) = self.security.readable(context, table) {
+            refuse_unreadable(table, query, &readable, "this write's predicate")?;
+        }
+        let plan = self.plan_secured(context, table, query)?;
+        let cursor = QueryCursor::open(self.limits, self.snapshot, table, plan, query).await?;
+        Ok(cursor.with_window(query.limit, query.offset))
+    }
+
+    /// [`plan`](Self::plan) without the column rules, for a query they have
+    /// already been applied to.
+    fn plan_secured(
         self,
         context: &SecurityContext,
         table: &TableDef,

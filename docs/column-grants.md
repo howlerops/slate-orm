@@ -13,9 +13,12 @@ check in the projection. That design would ship a privilege boundary with at
 least ten holes in it, because **the projection is not how columns leave this
 system**. Most of this note is about the other ways.
 
-It settles seven things, builds nothing, and leaves two questions open.
+It settles seven things — six held, and §7 withdrawn when it was built — and
+leaves two questions open. **Built** in the kernel and the daemon's
+configuration; the "Build order" section at the end says which steps landed
+and which did not.
 
-## What it does today, measured
+## What it did before, measured
 
 The table `staff (id, name, salary, owner)` has one policy, `owner =
 :principal`. A role `analyst` holds `Read` on the table. Principal 7 owns both
@@ -57,7 +60,7 @@ a table are the **union** over every grant it holds there:
 readable(context, table) =
     every column                                   if superuser
     every column                                   if any held grant is table-level
-    ⋃ { grant.columns : held column grants }       otherwise, plus the tenant column (see the end)
+    ⋃ { grant.columns : held column grants }       otherwise
     ∅  (and the read is denied as today)           if none
 ```
 
@@ -206,22 +209,38 @@ for a column-restricted reader.** `update_where` remains available, because
 its assignments name the columns they write and §2 already makes their scalars
 references.
 
-## 7. A hidden column draws the same error as a column that does not exist
+## ~~7. A hidden column draws the same error as a column that does not exist~~
 
-A column-restricted caller who names a hidden column gets the same
+**Withdrawn when it was built.** A narrowed caller who references a hidden
+column gets `PERMISSION_DENIED` with reason `COLUMNS_WITHHELD`, naming the
+table and what was attempted and **not** the column. The paragraphs below are
+the argument as written; what changed is the cost, which was underestimated.
+
+Column names are resolved to ordinals in `slate-server/src/convert.rs` by
+converters that take no security context — deliberately, and
+`scripts/check_handlers.py` rule 3 is written about exactly the converters
+that resolve a request's tables without one. Answering `NoSuchColumn` for a
+hidden column means threading the caller's context through every one of them.
+Against that, what it hides is a column's *name*, never a value: the schema
+reaches every client out of band through code generation, and Postgres shows
+column names to any role through its catalogs. A large change to the wire path
+to hide what is usually public was the wrong trade, and saying so beats
+building it to the letter.
+
+~~A column-restricted caller who names a hidden column gets the same
 `NoSuchColumn` as one who names a column that is not there, at the same place
 in the wire path (`resolve_stored_column` in `convert.rs`), so the error does
 not confirm the column exists. Answering `AccessDenied: column salary`
 instead would hand the narrowed role a schema oracle. A role restricted to
 `id, name` could enumerate the table's other columns by guessing names. That
 is the same class as security-review finding 8, a column *count* disclosed to
-a caller with no grant, which was treated as a defect there.
+a caller with no grant, which was treated as a defect there.~~
 
-The cost is a worse message for a misconfigured role: "no such column
+~~The cost is a worse message for a misconfigured role: "no such column
 `salary`" when the column is right there in the schema file. That cost is
 accepted, and the operator's side gets the precise answer. The load-time
 summary that serverd already prints for grants should list each column grant
-in full.
+in full.~~
 
 ## The wire and the clients
 
@@ -242,7 +261,8 @@ It is refused at load when any of these holds:
 - `actions` holds anything but `read` (§6);
 - a column does not exist;
 - the primary key is incomplete (§1);
-- the same role holds `explain` on that table (§5).
+- the same role holds `explain` on that table without a whole-table `read`
+  (§5) — with one, its reads are not narrowed and the plan is safe to show.
 
 `deny_unknown_fields` currently makes `columns` a hard error, so an older
 server refuses a newer config rather than silently ignoring the restriction.
@@ -278,7 +298,8 @@ unrestricted caller's rows with the hidden columns nulled.
 ## Build order
 
 Each step is refused-by-default until the next lands, so no intermediate state
-fails open:
+fails open. Steps 1, 2 and 4 landed, and the oracle half of step 3; what did
+not is marked.
 
 1. **Kernel.** `Grant` gains an optional column set, and `SecurityCatalog` gains
    `readable(context, table)`. Column grants are refused for any action but
@@ -287,12 +308,21 @@ fails open:
    decoded/returned split in the executor. Narrow `get`, `Related` and
    `returning`. Refuse `Explain`, `analyze`, whole-row writes and the
    `_if_unchanged` forms for restricted callers.
-3. **The sentinel oracle** across the kernel suites, with the new guard
-   requiring every row-returning path to pass through the narrowing function.
-4. **serverd.** Add the `columns` key and its load-time refusals, and make the
-   wire's column resolution answer `NoSuchColumn` for hidden columns (§7).
+3. **The sentinel oracle** across the kernel suites — *built*, as
+   `crates/slate-kernel/tests/column_grants.rs`, over its own battery rather
+   than every existing suite — with the new guard requiring every
+   row-returning path to pass through the narrowing function — **not built**.
+   The concealment sits in `QueryCursor::next`, the one exit every read and
+   join side passes through, plus `get` and the two predicate writes'
+   returned rows; a new row-returning path that bypassed the cursor would not
+   be caught by anything but the oracle.
+4. **serverd.** The `columns` key and its load-time refusals — *built*. The
+   §7 half was withdrawn.
 5. **The three clients**, through the conformance runner, with the sentinel
-   scan over their responses.
+   scan over their responses — **not built**. No client API changed; one
+   end-to-end test over gRPC (`a_column_grant_holds_over_the_wire` in
+   `slate-server/tests/security_probe.rs`) covers `Query`, `Get` and a
+   refused filter.
 
 ## Left open
 
@@ -327,7 +357,9 @@ aggregates over readable columns that correlate with hidden ones.** A role that
 can read `title` and `department` can often infer `salary` band. No access
 control on columns closes that, and this design does not pretend to.
 
-**It does not address the tenant column.** On a tenant-scoped table the tenant
-column is the caller's own tenant on every row they can see. Hiding it would
-hide only what the caller already supplied, so it is treated as readable
-whenever the table is.
+**It needs no rule for the tenant column.** A schema refuses a tenant column
+that does not lead the primary key, and §1 refuses a column grant without the
+whole key, so every column grant on a tenant-scoped table already includes it.
+The first draft of the build added the tenant column explicitly; the test
+written for that rule could not build its fixture, because the schema refused
+it, and the rule was deleted as dead.

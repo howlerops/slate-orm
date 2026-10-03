@@ -1,0 +1,32 @@
+{
+  "at": "2026-10-03T23:17:04+00:00",
+  "file": "crates/slate-kernel/src/exec.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the cursor conceals nothing",
+      "old": "            return Ok(Some(crate::read::conceal(row, &self.concealed)));",
+      "new": "            return Ok(Some(row));",
+      "verdict": "caught",
+      "caught_by": [
+        "every_column_means_every_readable_column_and_the_policys_are_withheld",
+        "no_hidden_value_reaches_a_narrowed_reader_by_any_path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

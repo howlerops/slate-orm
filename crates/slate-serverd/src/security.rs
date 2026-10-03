@@ -45,12 +45,18 @@ pub(crate) fn catalog(
     let mut built = SecurityCatalog::new();
 
     for grant in &security.grants {
-        let actions = actions(&grant.actions, &format!("grant to `{}`", grant.role))?;
+        let place = format!("grant to `{}`", grant.role);
+        let actions = actions(&grant.actions, &place)?;
+        if let Some(columns) = &grant.columns {
+            built = built.grant(column_grant(catalog, grant, &actions, columns, &place)?);
+            continue;
+        }
         for name in &grant.tables {
-            let table = table(catalog, name, &format!("grant to `{}`", grant.role))?;
+            let table = table(catalog, name, &place)?;
             built = built.grant(Grant::new(&grant.role, table.id(), actions.clone()));
         }
     }
+    explain_needs_every_column(security)?;
 
     for spec in &security.policies {
         let place = format!("policy `{}`", spec.name);
@@ -102,6 +108,88 @@ pub(crate) fn catalog(
     }
 
     Ok(built)
+}
+
+/// A grant with `columns`, checked the way `docs/column-grants.md` asks.
+///
+/// One table, because a column list names one table's columns and a grant
+/// over several would have to mean the same names in each. `read` alone,
+/// because column-level writes are not designed (§6) — and refused rather
+/// than quietly ignored, so a config written for a future that does not exist
+/// yet fails here instead of granting less than its author meant.
+fn column_grant(
+    catalog: &Catalog,
+    grant: &config::GrantSpec,
+    actions: &[Action],
+    columns: &[String],
+    place: &str,
+) -> Started<Grant> {
+    let [name] = grant.tables.as_slice() else {
+        return Err(Fault::at(
+            place.to_owned(),
+            "a grant with `columns` must name exactly one table, because the columns are that table's",
+        ));
+    };
+    if actions.iter().any(|action| *action != Action::Read) {
+        return Err(Fault::at(
+            place.to_owned(),
+            "a grant with `columns` may grant `read` and nothing else; column-level writes are not \
+             supported. Grant the writes in a second, table-level grant",
+        ));
+    }
+    let table = table(catalog, name, place)?;
+    let mut ordinals = Vec::with_capacity(columns.len());
+    for column in columns {
+        let ordinal = table.ordinal_of(column).ok_or_else(|| {
+            Fault::at(
+                place.to_owned(),
+                format!("`{column}` is not a column of `{name}`"),
+            )
+        })?;
+        ordinals.push(ordinal);
+    }
+    Grant::read_columns(&grant.role, table, ordinals)
+        .map_err(|why| Fault::at(place.to_owned(), why.to_string()))
+}
+
+/// Refuse `explain` for a role whose only read of a table is by column.
+///
+/// The kernel refuses the `EXPLAIN` itself (a plan prints the secured
+/// predicate), so a role configured this way holds a grant it can never use.
+/// Said here, at load, because the alternative is an operator who granted
+/// `explain` on purpose discovering at query time that it does nothing.
+fn explain_needs_every_column(security: &config::Security) -> Started<()> {
+    let names = |spec: &config::GrantSpec, wanted: &[&str]| {
+        spec.actions.iter().any(|a| wanted.contains(&a.as_str()))
+    };
+    for narrow in security.grants.iter().filter(|g| g.columns.is_some()) {
+        let Some(table) = narrow.tables.first() else {
+            continue;
+        };
+        let held = security.grants.iter().filter(|g| {
+            g.role == narrow.role && g.columns.is_none() && g.tables.iter().any(|t| t == table)
+        });
+        let mut explains = false;
+        let mut reads_whole = false;
+        for spec in held {
+            explains |= names(spec, &["explain", "everything"]);
+            reads_whole |= names(spec, &["read", "all", "everything"]);
+        }
+        if explains && !reads_whole {
+            // Only a whole-table read would make the plan safe to show.
+            return Err(Fault::at(
+                format!("grant to `{}`", narrow.role),
+                format!(
+                    "`{}` reads only some columns of `{table}` and is also granted `explain` on it; \
+                     a plan prints the row policy's predicate and what it decodes, so EXPLAIN is \
+                     refused for a column-restricted reader and this grant could never be used. \
+                     Remove `explain`, or grant `read` on the whole table",
+                    narrow.role
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn table<'a>(catalog: &'a Catalog, name: &str, place: &str) -> Started<&'a TableDef> {
@@ -423,5 +511,73 @@ using = "owner = 'seven'"
         .to_string();
         assert!(error.contains("policy `own_rows`"), "{error}");
         assert!(error.contains("`using`"), "{error}");
+    }
+
+    /// `columns` narrows a read grant to those columns of the one table, and
+    /// the kernel sees exactly that: every column but `email`.
+    #[test]
+    fn a_column_grant_reads_only_its_columns() {
+        let (tables, security, _) = fixture(
+            r#"
+[[security.grants]]
+role = "app"
+tables = ["users"]
+actions = ["read"]
+columns = ["tenant_id", "id", "owner"]
+"#,
+        )
+        .unwrap();
+        let users = tables.table_by_name("users").unwrap();
+        let readable = security.readable(&caller(1, 1), users).expect("narrowed");
+        let email = users.ordinal_of("email").unwrap();
+        assert!(!readable.contains(&email));
+        assert_eq!(readable.len(), 3);
+    }
+
+    fn refused(text: &str) -> String {
+        fixture(text)
+            .expect_err("the grant should have been refused")
+            .to_string()
+    }
+
+    #[test]
+    fn a_column_grant_that_cannot_be_honoured_is_refused_at_load() {
+        let unknown = refused(
+            "[[security.grants]]\nrole = \"app\"\ntables = [\"users\"]\nactions = [\"read\"]\ncolumns = [\"tenant_id\", \"id\", \"nope\"]\n",
+        );
+        assert!(
+            unknown.contains("`nope` is not a column of `users`"),
+            "{unknown}"
+        );
+
+        let no_key = refused(
+            "[[security.grants]]\nrole = \"app\"\ntables = [\"users\"]\nactions = [\"read\"]\ncolumns = [\"id\", \"email\"]\n",
+        );
+        assert!(no_key.contains("whole primary key"), "{no_key}");
+
+        let writes = refused(
+            "[[security.grants]]\nrole = \"app\"\ntables = [\"users\"]\nactions = [\"read\", \"update\"]\ncolumns = [\"tenant_id\", \"id\"]\n",
+        );
+        assert!(writes.contains("`read` and nothing else"), "{writes}");
+
+        let two_tables = refused(
+            "[[security.grants]]\nrole = \"app\"\ntables = [\"users\", \"users\"]\nactions = [\"read\"]\ncolumns = [\"tenant_id\", \"id\"]\n",
+        );
+        assert!(two_tables.contains("exactly one table"), "{two_tables}");
+    }
+
+    /// `explain` beside a column-only read can never be used, so it is said at
+    /// load; beside a whole-table read it is fine.
+    #[test]
+    fn explain_beside_a_column_only_read_is_refused_at_load() {
+        let narrowed = refused(
+            "[[security.grants]]\nrole = \"app\"\ntables = [\"users\"]\nactions = [\"read\"]\ncolumns = [\"tenant_id\", \"id\"]\n\n[[security.grants]]\nrole = \"app\"\ntables = [\"users\"]\nactions = [\"explain\"]\n",
+        );
+        assert!(narrowed.contains("EXPLAIN is"), "{narrowed}");
+
+        fixture(
+            "[[security.grants]]\nrole = \"app\"\ntables = [\"users\"]\nactions = [\"read\"]\ncolumns = [\"tenant_id\", \"id\"]\n\n[[security.grants]]\nrole = \"app\"\ntables = [\"users\"]\nactions = [\"read\", \"explain\"]\n",
+        )
+        .expect("a whole-table read makes the plan safe to show");
     }
 }

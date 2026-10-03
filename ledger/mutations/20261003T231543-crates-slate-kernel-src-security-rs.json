@@ -1,0 +1,90 @@
+{
+  "at": "2026-10-03T23:15:43+00:00",
+  "file": "crates/slate-kernel/src/security.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a table grant does not settle it",
+      "old": "                None => return None,\n",
+      "new": "                None => {}\n",
+      "verdict": "caught",
+      "caught_by": [
+        "a_table_grant_beside_a_column_grant_reads_everything",
+        "no_hidden_value_reaches_a_narrowed_reader_by_any_path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a complete list is not the whole table",
+      "old": "        if columns.len() == table.columns().len() {\n            return None;\n        }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_complete_column_list_is_the_whole_table_until_the_table_grows"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the key is not required",
+      "old": "        if let Some(key) = table.primary_key().iter().find(|k| !columns.contains(k)) {",
+      "new": "        if let Some(key) = table.primary_key().iter().find(|_| false) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_grant_must_name_real_columns_and_the_whole_key"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a stray column is accepted",
+      "old": "        if let Some(stray) = columns.iter().find(|c| c.0 >= table.columns().len()) {",
+      "new": "        if let Some(stray) = columns.iter().find(|_| false) {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_grant_must_name_real_columns_and_the_whole_key"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "nothing is concealed",
+      "old": "        self.readable(context, table).map_or_else(Vec::new, |readable| {",
+      "new": "        self.readable(context, table).filter(|_| false).map_or_else(Vec::new, |readable| {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_narrowed_delete_where_leaves_no_index_entry_behind",
+        "a_narrowed_update_where_keeps_what_it_cannot_see",
+        "every_column_means_every_readable_column_and_the_policys_are_withheld",
+        "no_hidden_value_reaches_a_narrowed_reader_by_any_path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every column is never required",
+      "old": "            Some(_) => Err(KernelError::ColumnsWithheld {\n                table: table.name().to_owned(),\n                action,\n            }),",
+      "new": "            Some(_) => { let _ = action; Ok(()) }",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

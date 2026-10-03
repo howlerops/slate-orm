@@ -1,0 +1,86 @@
+{
+  "at": "2026-10-03T23:26:59+00:00",
+  "file": "crates/slate-serverd/src/security.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bin",
+    "slate-serverd",
+    "--no-fail-fast",
+    "security::"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "columns are ignored",
+      "old": "        if let Some(columns) = &grant.columns {",
+      "new": "        if let Some(columns) = grant.columns.as_ref().filter(|_| false) {",
+      "verdict": "caught",
+      "caught_by": [
+        "security::tests::a_column_grant_that_cannot_be_honoured_is_refused_at_load",
+        "security::tests::a_column_grant_reads_only_its_columns"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "several tables are accepted",
+      "old": "    let [name] = grant.tables.as_slice() else {",
+      "new": "    let Some(name) = grant.tables.first() else {",
+      "verdict": "caught",
+      "caught_by": [
+        "security::tests::a_column_grant_that_cannot_be_honoured_is_refused_at_load"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "writes are accepted",
+      "old": "    if actions.iter().any(|action| *action != Action::Read) {",
+      "new": "    if actions.iter().any(|action| *action != Action::Read && false) {",
+      "verdict": "caught",
+      "caught_by": [
+        "security::tests::a_column_grant_that_cannot_be_honoured_is_refused_at_load"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an unknown column is skipped",
+      "old": "        let ordinal = table.ordinal_of(column).ok_or_else(|| {",
+      "new": "        let Some(ordinal) = table.ordinal_of(column) else { continue };\n        let _unused: Started<slate_schema::Ordinal> = Some(ordinal).ok_or_else(|| {",
+      "verdict": "nothing-ran",
+      "caught_by": [],
+      "suites_reported": 0,
+      "expect_survivor": null
+    },
+    {
+      "name": "explain beside a narrow read is accepted",
+      "old": "        if explains && !reads_whole {",
+      "new": "        if explains && !reads_whole && false {",
+      "verdict": "caught",
+      "caught_by": [
+        "security::tests::explain_beside_a_column_only_read_is_refused_at_load"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a whole-table read does not excuse explain",
+      "old": "            reads_whole |= names(spec, &[\"read\", \"all\", \"everything\"]);",
+      "new": "            reads_whole |= names(spec, &[]);",
+      "verdict": "caught",
+      "caught_by": [
+        "security::tests::explain_beside_a_column_only_read_is_refused_at_load"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

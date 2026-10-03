@@ -935,6 +935,13 @@ impl<'a> RecordTransaction<'a> {
     /// unique, which is the right answer for the identifiers and timestamps
     /// that usually exceed it.
     pub async fn analyze(&self, context: &SecurityContext, table: &TableDef) -> Result<TableStats> {
+        // Histogram bounds are values sampled from every column, so a narrowed
+        // reader would get its withheld columns back as statistics. Refused
+        // rather than narrowed to the readable ones: a partial `analyze` would
+        // produce statistics the planner then trusts for every caller.
+        self.security.authorize(context, table, Action::Read)?;
+        self.security
+            .require_every_column(context, table, "analyze")?;
         let column_count = table.columns().len();
         // An expression index keys on a value no column holds, so nothing
         // above this line would ever describe it and the planner was left
@@ -1166,6 +1173,12 @@ impl<'a> RecordTransaction<'a> {
         row: &Row,
     ) -> Result<()> {
         self.security.authorize(context, table, Action::Update)?;
+        // A whole-row replace from a caller who cannot read every column
+        // would have to supply the ones it cannot see — overwriting them blind
+        // or guessing. `update_where`, whose assignments name what they write,
+        // is the form for a narrowed reader. `docs/column-grants.md` §6.
+        self.security
+            .require_every_column(context, table, "a whole-row update")?;
         row.validate(table)?;
 
         let primary_key = row.primary_key_values(table);
@@ -1236,6 +1249,11 @@ impl<'a> RecordTransaction<'a> {
         expected: &Row,
     ) -> Result<()> {
         self.security.authorize(context, table, Action::Update)?;
+        // `expected` is compared column by column against the stored row, so
+        // for a narrowed reader `RowChanged` would answer "does this hidden
+        // column hold v" — an equality oracle on every column it cannot see.
+        self.security
+            .require_every_column(context, table, "a compare-and-swap update")?;
         row.validate(table)?;
         expected.validate(table)?;
 
@@ -1280,6 +1298,9 @@ impl<'a> RecordTransaction<'a> {
     ) -> Result<()> {
         self.security.authorize(context, table, Action::Insert)?;
         self.security.authorize(context, table, Action::Update)?;
+        // The update half replaces the whole row; see `update`.
+        self.security
+            .require_every_column(context, table, "an upsert")?;
         row.validate(table)?;
         // The row policy before the read, which is what `write_many` was fixed
         // to do and this path was not. It reads the key first, so the read
@@ -1404,6 +1425,9 @@ impl<'a> RecordTransaction<'a> {
         }
         if mode.may_replace() {
             self.security.authorize(context, table, Action::Update)?;
+            // Replacing is a whole-row update; see `update`.
+            self.security
+                .require_every_column(context, table, "a whole-row replace")?;
         }
 
         // Validate everything before reading anything: a batch that cannot be
@@ -1793,6 +1817,10 @@ impl<'a> RecordTransaction<'a> {
         expected: &Row,
     ) -> Result<()> {
         self.security.authorize(context, table, Action::Delete)?;
+        // The same oracle as `update_if_unchanged`'s: `expected` is compared
+        // against every stored column.
+        self.security
+            .require_every_column(context, table, "a compare-and-swap delete")?;
         expected.validate(table)?;
 
         // Refused before the read, for the reason the update's twin gives: a
@@ -1892,6 +1920,9 @@ impl<'a> RecordTransaction<'a> {
         let matched = self
             .matching_rows(context, table, predicate, at_most)
             .await?;
+        // Concealed on the way back to the caller and not before: the cascade
+        // below needs every column of the row it removes.
+        let concealed = self.security.concealed(context, table);
         let mut removed = Vec::with_capacity(matched.len());
         for row in matched {
             // Per row, the identical path the keyed delete takes: the cascade
@@ -1903,7 +1934,7 @@ impl<'a> RecordTransaction<'a> {
             for (owner, victim) in &doomed {
                 self.remove_row(owner, victim).await?;
             }
-            removed.push(row);
+            removed.push(crate::read::conceal(row, &concealed));
         }
         Ok(removed)
     }
@@ -2065,10 +2096,30 @@ impl<'a> RecordTransaction<'a> {
         if assignments.is_empty() {
             return Ok(Vec::new());
         }
+        // An assignment's value is computed from the existing row, so it is a
+        // reference like any other: `SET name = name || salary` would copy a
+        // hidden column into a visible one. Its *target* is not checked: a
+        // table-level `Update` grant writes every column, and a narrowed
+        // reader writing one it cannot read learns nothing from it, since what
+        // comes back is concealed below.
+        if let Some(readable) = self.security.readable(context, table)
+            && assignments.iter().any(|(_, scalar)| {
+                scalar
+                    .columns()
+                    .iter()
+                    .any(|c| c.0 < table.columns().len() && !readable.contains(c))
+            })
+        {
+            return Err(KernelError::ColumnsWithheld {
+                table: table.name().to_owned(),
+                action: "this update's assignments",
+            });
+        }
 
         let matched = self
             .matching_rows(context, table, predicate, at_most)
             .await?;
+        let concealed = self.security.concealed(context, table);
         let mut written = Vec::with_capacity(matched.len());
         for existing in matched {
             let mut values = existing.values().to_vec();
@@ -2091,7 +2142,7 @@ impl<'a> RecordTransaction<'a> {
             self.check_foreign_keys(context, table, &next, Some(&existing), &HashSet::new())
                 .await?;
             self.write_row(table, &next, Some(existing)).await?;
-            written.push(next);
+            written.push(crate::read::conceal(next, &concealed));
         }
         Ok(written)
     }
@@ -2115,8 +2166,10 @@ impl<'a> RecordTransaction<'a> {
         predicate: Expr,
         at_most: Option<usize>,
     ) -> Result<Vec<Row>> {
+        // Whole rows, because they are written back; see `execute_for_write`.
         let mut cursor = self
-            .execute(context, table, &Query::all().filter(predicate))
+            .reads()
+            .execute_for_write(context, table, &Query::all().filter(predicate))
             .await?;
         let mut rows = Vec::new();
         while let Some(row) = cursor.next().await? {

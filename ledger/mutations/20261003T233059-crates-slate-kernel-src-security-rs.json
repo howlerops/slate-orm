@@ -1,0 +1,18 @@
+{
+  "at": "2026-10-03T23:30:59+00:00",
+  "file": "crates/slate-kernel/src/security.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "interrupted",
+  "cases": []
+}

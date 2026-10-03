@@ -1,0 +1,45 @@
+{
+  "at": "2026-10-03T23:31:29+00:00",
+  "file": "crates/slate-kernel/src/security.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "nothing is concealed",
+      "old": "            .map_or_else(Vec::new, |readable| {",
+      "new": "            .filter(|_| false)\n            .map_or_else(Vec::new, |readable| {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_narrowed_delete_where_leaves_no_index_entry_behind",
+        "every_column_means_every_readable_column_and_the_policys_are_withheld",
+        "a_narrowed_update_where_keeps_what_it_cannot_see",
+        "no_hidden_value_reaches_a_narrowed_reader_by_any_path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every column is never required",
+      "old": "            Some(_) => Err(KernelError::ColumnsWithheld {\n                table: table.name().to_owned(),\n                action,\n            }),",
+      "new": "            Some(_) => { let _ = action; Ok(()) }",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

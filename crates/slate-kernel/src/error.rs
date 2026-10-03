@@ -108,6 +108,38 @@ pub enum KernelError {
         action: &'static str,
     },
 
+    /// The caller may read only some of this table's columns, and the request
+    /// needs one it may not.
+    ///
+    /// Raised for a query that *references* an unreadable column anywhere — its
+    /// projection, filter, sort, grouping, aggregates, windows or computed
+    /// values — and for the operations that need every column to be safe:
+    /// `EXPLAIN`, `analyze`, a whole-row `update` or `upsert`, and the two
+    /// `_if_unchanged` forms. See `docs/column-grants.md`.
+    ///
+    /// The column is not named. A caller who referenced it already knows its
+    /// name, and an operator reading the error has the grant to compare
+    /// against; naming it would only help a caller who is guessing.
+    #[error(
+        "access denied: this role reads only some columns of `{table}`, and {action} \
+         needs a column it cannot read"
+    )]
+    ColumnsWithheld {
+        /// The table named.
+        table: String,
+        /// What was attempted.
+        action: &'static str,
+    },
+
+    /// A grant was built that cannot be honoured.
+    #[error("invalid grant on `{table}`: {reason}")]
+    InvalidGrant {
+        /// The table the grant names.
+        table: String,
+        /// What is wrong with it.
+        reason: String,
+    },
+
     /// A tenant-scoped table was reached by a context with no tenant.
     ///
     /// Refused rather than defaulted, because the only available default would

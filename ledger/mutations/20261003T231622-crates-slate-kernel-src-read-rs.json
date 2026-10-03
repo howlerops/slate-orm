@@ -1,0 +1,132 @@
+{
+  "at": "2026-10-03T23:16:22+00:00",
+  "file": "crates/slate-kernel/src/read.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "the filter is not a reference",
+      "old": "    let mut referenced = query.filter.columns();\n",
+      "new": "    let mut referenced = BTreeSet::new();\n",
+      "verdict": "caught",
+      "caught_by": [
+        "a_reference_to_a_hidden_column_is_refused_wherever_it_is",
+        "a_narrowed_update_where_keeps_what_it_cannot_see"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the projection is not a reference",
+      "old": "    if let Some(columns) = query.projection.columns() {\n        referenced.extend(columns.iter().copied());\n    }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_reference_to_a_hidden_column_is_refused_wherever_it_is"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the sort is not a reference",
+      "old": "    referenced.extend(query.sort.iter().map(|key| key.column));\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_reference_to_a_hidden_column_is_refused_wherever_it_is"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "windows are not references",
+      "old": "    for window in &query.window {\n        window.collect_columns(&mut referenced);\n    }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_reference_to_a_hidden_column_is_refused_wherever_it_is"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "computed values are not references",
+      "old": "    for scalar in &query.compute {\n        referenced.extend(scalar.columns());\n    }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "a_reference_to_a_hidden_column_is_refused_wherever_it_is",
+        "no_hidden_value_reaches_a_narrowed_reader_by_any_path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "every column is not narrowed",
+      "old": "    if narrowed.projection.columns().is_none() {",
+      "new": "    if narrowed.projection.columns().is_none() && false {",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "get does not conceal",
+      "old": "            .map(|row| conceal(row, &concealed)))",
+      "new": "            .map(|row| conceal(row, &[])))",
+      "verdict": "caught",
+      "caught_by": [
+        "every_column_means_every_readable_column_and_the_policys_are_withheld",
+        "no_hidden_value_reaches_a_narrowed_reader_by_any_path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a read's plan conceals nothing",
+      "old": "        plan.concealed = self.security.concealed(context, table);\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "every_column_means_every_readable_column_and_the_policys_are_withheld",
+        "no_hidden_value_reaches_a_narrowed_reader_by_any_path"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a write's predicate is not checked",
+      "old": "            refuse_unreadable(table, query, &readable, \"this write's predicate\")?;",
+      "new": "            let _ = (&readable, \"this write's predicate\");",
+      "verdict": "caught",
+      "caught_by": [
+        "a_narrowed_update_where_keeps_what_it_cannot_see"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "explain does not need every column",
+      "old": "            self.security\n                .require_every_column(context, table, \"EXPLAIN\")?;",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

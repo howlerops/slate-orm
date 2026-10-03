@@ -1,0 +1,46 @@
+{
+  "at": "2026-10-03T23:28:01+00:00",
+  "file": "crates/slate-server/src/status.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-server",
+    "--test",
+    "security_probe",
+    "--test",
+    "every_error_is_classified",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a withheld column is not a permission refusal",
+      "old": "        | KernelError::ColumnsWithheld { .. }\n        | KernelError::TenantRequired { .. }",
+      "new": "        | KernelError::TenantRequired { .. }",
+      "verdict": "caught",
+      "caught_by": [
+        "every_kernel_error_has_a_code_and_a_reason",
+        "a_column_grant_holds_over_the_wire"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "a withheld column has no reason token",
+      "old": "        KernelError::ColumnsWithheld { .. } => \"COLUMNS_WITHHELD\",\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "every_kernel_error_has_a_code_and_a_reason",
+        "a_column_grant_holds_over_the_wire"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

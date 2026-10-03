@@ -1,0 +1,142 @@
+{
+  "at": "2026-10-03T23:19:05+00:00",
+  "file": "crates/slate-kernel/src/record.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "column_grants",
+    "--no-fail-fast"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "update needs no columns",
+      "old": "            .require_every_column(context, table, \"a whole-row update\")?;",
+      "new": "            .grants(context, table, Action::Read);",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "update_if_unchanged needs no columns",
+      "old": "            .require_every_column(context, table, \"a compare-and-swap update\")?;",
+      "new": "            .grants(context, table, Action::Read);",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "upsert needs no columns",
+      "old": "            .require_every_column(context, table, \"an upsert\")?;",
+      "new": "            .grants(context, table, Action::Read);",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a bulk replace needs no columns",
+      "old": "                .require_every_column(context, table, \"a whole-row replace\")?;",
+      "new": "                .grants(context, table, Action::Read);",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "delete_if_unchanged needs no columns",
+      "old": "            .require_every_column(context, table, \"a compare-and-swap delete\")?;",
+      "new": "            .grants(context, table, Action::Read);",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "analyze needs no columns",
+      "old": "            .require_every_column(context, table, \"analyze\")?;",
+      "new": "            .grants(context, table, Action::Read);",
+      "verdict": "caught",
+      "caught_by": [
+        "the_operations_that_need_every_column_are_refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "analyze asks about columns before the grant",
+      "old": "        self.security\n            .authorize(context, table, Action::Read)?;\n        self.security\n            .require_every_column(context, table, \"analyze\")?;",
+      "new": "        self.security\n            .require_every_column(context, table, \"analyze\")?;",
+      "verdict": "caught",
+      "caught_by": [
+        "a_role_with_no_grant_is_still_told_it_has_none"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "delete_where returns hidden columns",
+      "old": "            removed.push(crate::read::conceal(row, &concealed));",
+      "new": "            removed.push(crate::read::conceal(row, &concealed[..0]));",
+      "verdict": "caught",
+      "caught_by": [
+        "a_narrowed_delete_where_leaves_no_index_entry_behind"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "update_where returns hidden columns",
+      "old": "            written.push(crate::read::conceal(next, &concealed));",
+      "new": "            written.push(crate::read::conceal(next, &concealed[..0]));",
+      "verdict": "caught",
+      "caught_by": [
+        "a_narrowed_update_where_keeps_what_it_cannot_see"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "an assignment may read a hidden column",
+      "old": "                    .any(|c| c.0 < table.columns().len() && !readable.contains(c))",
+      "new": "                    .any(|c| c.0 < table.columns().len() && !readable.contains(c) && false)",
+      "verdict": "caught",
+      "caught_by": [
+        "a_narrowed_update_where_keeps_what_it_cannot_see"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a predicate write reads concealed rows",
+      "old": "            .reads()\n            .execute_for_write(context, table, &Query::all().filter(predicate))",
+      "new": "            .reads()\n            .execute(context, table, &Query::all().filter(predicate))",
+      "verdict": "caught",
+      "caught_by": [
+        "a_narrowed_update_where_keeps_what_it_cannot_see",
+        "a_narrowed_delete_where_leaves_no_index_entry_behind"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

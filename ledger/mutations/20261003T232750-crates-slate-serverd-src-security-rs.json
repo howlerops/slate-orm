@@ -1,0 +1,32 @@
+{
+  "at": "2026-10-03T23:27:50+00:00",
+  "file": "crates/slate-serverd/src/security.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--bin",
+    "slate-serverd",
+    "--no-fail-fast",
+    "security::"
+  ],
+  "commit": "a287146",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "an unknown column becomes column zero",
+      "old": "        let ordinal = table.ordinal_of(column).ok_or_else(|| {",
+      "new": "        let ordinal = table.ordinal_of(column).or(Some(slate_schema::Ordinal(0))).ok_or_else(|| {",
+      "verdict": "caught",
+      "caught_by": [
+        "security::tests::a_column_grant_that_cannot_be_honoured_is_refused_at_load"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

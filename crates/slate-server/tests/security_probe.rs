@@ -1112,3 +1112,97 @@ async fn an_authenticated_caller_still_learns_who_holds_the_lease() {
     assert!(answered.generation.is_some(), "{answered:?}");
     assert!(!answered.holder.is_empty(), "{answered:?}");
 }
+
+/// A column grant holds end to end: the hidden column never reaches the
+/// caller through `Query` or `Get`, and a filter on it is refused with a
+/// reason a client can match, rather than answered.
+#[tokio::test]
+async fn a_column_grant_holds_over_the_wire() {
+    const SENTINEL: &str = "sentinel@hidden.example";
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+    // A `fn`, for the reason `each_handler_authorizes_the_action_it_performs`
+    // gives: a closure fixes its message type on first use.
+    fn as_<T>(role: &str) -> impl Fn(T) -> tonic::Request<T> + '_ {
+        move |message| common::as_principal(message, "u64:1", Some("u64:1"), role)
+    }
+
+    client
+        .insert(as_("app")(insert(vec![wire(&user(1, 1, 1, SENTINEL))])))
+        .await
+        .expect("the full-table role inserts");
+
+    let query = |filter: Option<pb::Expr>| pb::QueryRequest {
+        transaction: String::new(),
+        query: Some(pb::Query {
+            filter,
+            ..common::plain_query("users")
+        }),
+        freshness: None,
+    };
+    let (rows, _) = common::drain(
+        client
+            .query(as_("email_blind")(query(None)))
+            .await
+            .expect("a narrowed reader may query")
+            .into_inner(),
+    )
+    .await;
+    assert_eq!(rows.len(), 1, "the row is visible; only its column is not");
+    assert!(
+        !format!("{rows:?}").contains(SENTINEL),
+        "the hidden column came back: {rows:?}"
+    );
+
+    let got = client
+        .get(as_("email_blind")(pb::GetRequest {
+            transaction: String::new(),
+            table: "users".to_owned(),
+            primary_key: Some(wire(&slate_schema::Row::new(vec![
+                slate_tuple::Value::U64(1),
+                slate_tuple::Value::U64(1),
+            ]))),
+            freshness: None,
+            schema: Some(claim("users")),
+        }))
+        .await
+        .expect("a narrowed reader may get");
+    assert!(
+        !format!("{got:?}").contains(SENTINEL),
+        "the hidden column came back: {got:?}"
+    );
+
+    let email = common::users().ordinal_of("email").expect("email");
+    let probe = slate_server::convert::expr_to_proto(
+        &slate_server::convert::Space::table(&common::users()),
+        &slate_kernel::Expr::eq(email, slate_tuple::Value::Str(SENTINEL.to_owned())),
+    );
+    let refused = client
+        .query(as_("email_blind")(query(Some(probe))))
+        .await
+        .expect_err("a filter on a hidden column is a probe");
+    assert_eq!(refused.code(), Code::PermissionDenied, "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(refused.details()).contains("COLUMNS_WITHHELD"),
+        "{refused:?}"
+    );
+    assert!(
+        refused.message().contains("only some columns"),
+        "{refused:?}"
+    );
+
+    // And the full-table role still sees it, or none of the above meant anything.
+    let (rows, _) = common::drain(
+        client
+            .query(as_("app")(query(None)))
+            .await
+            .expect("app queries")
+            .into_inner(),
+    )
+    .await;
+    assert!(
+        format!("{rows:?}").contains(SENTINEL),
+        "the sentinel is not in the store"
+    );
+}

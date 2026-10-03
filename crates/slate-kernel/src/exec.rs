@@ -155,6 +155,10 @@ pub struct QueryCursor<'a> {
     /// almost always empty or a single entry, where a bitset would be walked
     /// word by word to find the same one or two ordinals.
     transient: Vec<Ordinal>,
+    /// Columns the caller may not read, nulled as each row is handed out —
+    /// after the residual, the sort and any window, all of which may need
+    /// them. See [`Plan::concealed`].
+    concealed: Vec<Ordinal>,
     /// Which computed value, if any, comes out of the index entry rather than
     /// being evaluated. See [`crate::plan::expression_position`].
     from_entry: Option<usize>,
@@ -585,6 +589,7 @@ impl<'a> QueryCursor<'a> {
             filter_columns: plan.predicate_columns,
             decode_columns,
             transient,
+            concealed: plan.concealed,
             from_entry,
             residual: plan.residual,
             prefetch: DEFAULT_PREFETCH,
@@ -744,7 +749,7 @@ impl<'a> QueryCursor<'a> {
                 continue;
             }
             self.yielded += 1;
-            return Ok(Some(row));
+            return Ok(Some(crate::read::conceal(row, &self.concealed)));
         }
         Ok(None)
     }

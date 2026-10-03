@@ -269,6 +269,17 @@ pub struct Plan {
     pub estimated_rows: f64,
     /// Estimated cost, in object-storage round trips. See [`crate::stats`].
     pub estimated_cost: f64,
+    /// Columns put back to null on every row before it is handed out, because
+    /// the caller may not read them.
+    ///
+    /// Not the same rule as the executor's `transient`, and not foldable into
+    /// it: those are nulled *before* the residual runs, and these may be what
+    /// the residual reads. A row policy can filter on a column its subject is
+    /// not granted, so the column is decoded, the policy is evaluated against
+    /// it, and only then is it withheld. Empty for a caller who may read
+    /// every column, and set by the security layer rather than the planner —
+    /// planning has no context to ask. See `docs/column-grants.md` §3.
+    pub concealed: Vec<Ordinal>,
 }
 
 impl Plan {
@@ -732,6 +743,7 @@ pub fn plan_hinted(
             filter_first: false,
             estimated_rows: 0.0,
             estimated_cost: 0.0,
+            concealed: Vec::new(),
         };
     }
 
@@ -896,6 +908,7 @@ pub fn plan_hinted(
         filter_first,
         estimated_rows,
         estimated_cost,
+        concealed: Vec::new(),
     }
 }
 

@@ -71,13 +71,13 @@ T4 — column-level grants.
     cannot be a privilege boundary, because a caller needs the grant on
     every base table and having it lets them read the columns the view
     omits. "Give the analysts a narrowed view" does not work.
-    The design note is written: `docs/column-grants.md`. Read it before
-    touching code — its section 4 maps every path a row leaves by, and the
-    obvious design (a column list checked against the projection) leaks
-    through at least ten of them. Build in the order its "Build order"
-    section gives; each step stays refused-by-default until the next lands.
-    The primary test is the sentinel-bytes oracle it describes, not a test
-    per path.
+    Built in the kernel and the daemon: `docs/column-grants.md`, whose
+    "Build order" section says which steps landed. What is left is its
+    step 3's guard — a check that every row-returning path conceals,
+    in the style of `scripts/check_handlers.py` — and step 5, the same
+    restricted identity through the three clients' conformance runner.
+    The sentinel oracle is `crates/slate-kernel/tests/column_grants.rs`;
+    extend it rather than adding a test per path.
 
 DO NOT DO THESE — they are decided, not forgotten. Each has a `deliberate`
 verdict with an argument in `docs/caveat-status.json`:
