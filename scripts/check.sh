@@ -95,6 +95,7 @@ check-sh-guard|.|python3 scripts/test_check_sh.py
 versions|.|python3 scripts/check_versions.py
 versions-guard|.|python3 scripts/test_check_versions.py
 npm-package-guard|.|python3 scripts/test_check_npm_package.py
+handoff|.|python3 scripts/test_handoff.py
 mutate-harness|.|python3 scripts/test_mutate.py
 cited-tests|.|python3 scripts/check_cited_tests.py
 cited-tests-guard|.|python3 scripts/test_check_cited_tests.py

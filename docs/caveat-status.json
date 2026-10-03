@@ -15860,6 +15860,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-03",
       "by": "Correct and deliberate: this change makes turning them on safe, which was the point, and turning them on needs the names claimed and credentials added \u2014 decisions and account actions that are not this repository's to take. `docs/releasing.md` lists exactly what a person has to do, and the tri-state means a half-configured state fails the release rather than shipping quietly."
+    },
+    {
+      "entry": "2026-10-03-a-briefing-that-reads-the-tree.md",
+      "key": "It cannot tell whether CI is green.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Argued in the entry and the argument holds: a briefing that needs a token and a network fails in exactly the container that has neither, which is the property `scripts/check.sh` is built around. The consequence is named honestly \u2014 the most actionable thing on arrival is the thing it will not mention \u2014 and mitigated by printing the `gh api` line rather than leaving the reader to compose one."
+    },
+    {
+      "entry": "2026-10-03-a-briefing-that-reads-the-tree.md",
+      "key": "It has no idea what anybody intends.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "A choice, and the alternative is worse: a script that ranked the live edges would publish an ordering nobody set, and it would be read as one somebody did. What it reports \u2014 where work stopped and what was decided there \u2014 is the part that is actually recorded. The real exposure is a session that leaves something half-finished without writing it down, which the ledger discipline prevents at commit time and not mid-change; nothing here can fix that, and a script claiming to would hide it."
+    },
+    {
+      "entry": "2026-10-03-a-briefing-that-reads-the-tree.md",
+      "key": "Twelve entries is a guess.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Bounded was the requirement and twelve meets it; the number itself is unmeasured and the entry says so. `--entries` exists precisely because it is a guess, so a reader who wants more pays for more rather than arguing with a constant. Tuning it would mean measuring what a reader retains, which is not a measurement this repository can make."
+    },
+    {
+      "entry": "2026-10-03-a-briefing-that-reads-the-tree.md",
+      "key": "It reads the filename's date, not the commit's.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Right for the question it answers and wrong for a different one, stated so the next reader knows which. The ledger is read by its filenames and an entry is dated for the work, not the commit; \"what changed since I was last here\" is a git question and would need a `--since` that walks history. Worth adding when somebody wants it, and not worth guessing at the semantics first."
     }
   ]
 }

@@ -1,0 +1,75 @@
+{
+  "at": "2026-10-03T17:04:24+00:00",
+  "file": "scripts/handoff.py",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/test_handoff.py"
+  ],
+  "commit": "0585372",
+  "python": "3.11.15",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the entry count stops bounding anything",
+      "old": "    return entries[:count]",
+      "new": "    return entries",
+      "verdict": "caught",
+      "caught_by": [
+        "the count bounds what is shown: 2, wanted 1",
+        "and bounds the edges with it: ['2026-01-01-older.md', '2026-02-02-newer.md'], wanted ['2026-02-02-newer.md']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a claim is printed whole, however long",
+      "old": "    if len(claim) <= limit:\n        return claim",
+      "new": "    if True:\n        return claim",
+      "verdict": "caught",
+      "caught_by": [
+        "a claim is cut at its first sentence: 'The first sentence stops here. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more. And then a great deal more.', wanted 'The first sentence stops here.'",
+        "a claim with no sentence break is cut to the limit: 500, wanted 140"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "entries come back oldest first",
+      "old": "    for path in sorted((ROOT / \"ledger\").glob(\"*.md\"), reverse=True):",
+      "new": "    for path in sorted((ROOT / \"ledger\").glob(\"*.md\")):",
+      "verdict": "caught",
+      "caught_by": [
+        "entries come back newest first: ['2026-01-01-older.md', '2026-02-02-newer.md'], wanted ['2026-02-02-newer.md', '2026-01-01-older.md']",
+        "an entry's kind is read: 'process', wanted 'fix'",
+        "the span is the oldest and newest shown: '2026-02-02 to 2026-01-01', wanted '2026-01-01 to 2026-02-02'",
+        "and bounds the edges with it: ['2026-01-01-older.md'], wanted ['2026-02-02-newer.md']"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a caveat loses the verdict recorded against it",
+      "old": "            \"verdict\": verdict.get(\"verdict\", \"untriaged\"),",
+      "new": "            \"verdict\": \"untriaged\",",
+      "verdict": "caught",
+      "caught_by": [
+        "each entry's caveat is found, with its verdict: [('A newer edge.', 'untriaged'), ('An older edge.', 'untriaged')], wanted [('A newer edge.', 'deliberate'), ('An older edge.', 'deliberate')]"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "commits since the tag are counted from the tag instead of to it",
+      "old": "    since_tag = git(\"rev-list\", \"--count\", f\"{tag}..HEAD\") if tag else \"\"",
+      "new": "    since_tag = git(\"rev-list\", \"--count\", f\"HEAD..{tag}\") if tag else \"\"",
+      "verdict": "caught",
+      "caught_by": [
+        "commits since the tag are counted: 0, wanted 1"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -113,6 +113,18 @@ branch with no pull request. Turning it on found eleven real defects in one
 morning. **A check that never fires is a check nobody has debugged** — which
 applies to anything you add here too.
 
+**Coming to this cold?** One command prints where it stands — the git
+position, the caveat frame, what is still `narrowed` and what closes it, the
+newest entries and the caveats they stopped at:
+
+```sh
+python3 scripts/handoff.py            # the briefing; --json for a machine
+```
+
+It derives all of that rather than restating it, for the reason this file has
+been wrong twice: a written summary is stale within a day. It never reaches
+the network, so it prints the command to ask about CI rather than guessing.
+
 Locally, **start with one command**:
 
 ```sh

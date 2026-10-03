@@ -476,6 +476,7 @@ jobs:
       - run: python3 scripts/check_versions.py
       - run: python3 scripts/test_check_versions.py
       - run: python3 scripts/test_check_npm_package.py
+      - run: python3 scripts/test_handoff.py
       # Nine steps that `check.sh` had been running and no workflow did, found
       # by reading the roster in the other direction:
       # `scripts/test_check_sh.py` held every CI step to the script and nothing
