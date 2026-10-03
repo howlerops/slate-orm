@@ -15916,6 +15916,27 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-03",
       "by": "`additionalContext` is a channel to Claude by construction; there is no hook field that prints to the human's terminal at session start, and `systemMessage` would put 5 KB of Markdown in the UI on every launch. A person runs `python3 scripts/handoff.py` and gets the same thing formatted for reading, which CLAUDE.md now points at."
+    },
+    {
+      "entry": "2026-10-03-a-prompt-for-the-next-agent.md",
+      "key": "The two tasks and four refusals will rot.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Named in the file itself rather than hidden, and the mitigation is structural: the prompt's first instruction tells the agent to trust `scripts/handoff.py` over the text, so a stale task list degrades to a wrong suggestion rather than a wrong picture of the tree. No guard can tell a stale judgement from a current one \u2014 that is what makes it a judgement \u2014 so keeping it true rides on the same rule as every other doc here: a change that invalidates it fixes it."
+    },
+    {
+      "entry": "2026-10-03-a-prompt-for-the-next-agent.md",
+      "key": "It does not brief a human.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Two audiences, two artefacts, deliberately. The prompt is written to be pasted at an agent and reads as instructions; a person arriving cold wants `CLAUDE.md` for the standards and `scripts/handoff.py` for the state, both of which this file points at. One document serving both would be worse at each."
+    },
+    {
+      "entry": "2026-10-03-a-prompt-for-the-next-agent.md",
+      "key": "It assumes the next agent is a Claude Code session in this c",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "True of the environment-specific half \u2014 `scripts/reclaim.py`, the disk notes, the `gh api` line \u2014 and that half is where the expensive surprises live, so dropping it to be portable would cost more than it saves. An agent elsewhere gets advice that is mostly right and partly about a machine it is not on, which is a visible kind of wrong: the commands fail rather than mislead."
     }
   ]
 }

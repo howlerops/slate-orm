@@ -125,6 +125,11 @@ It derives all of that rather than restating it, for the reason this file has
 been wrong twice: a written summary is stale within a day. It never reaches
 the network, so it prints the command to ask about CI rather than guessing.
 
+**Handing the work to another agent?** [`docs/agent-handoff.md`](docs/agent-handoff.md)
+is a prompt to paste, whose first instruction is to run the script above. It
+carries only what does not move — the standards, what is deliberately left
+undone, and what only the repository's owner can do.
+
 Locally, **start with one command**:
 
 ```sh
