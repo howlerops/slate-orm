@@ -16011,6 +16011,27 @@
       "key": "One measurement machine, and GETs against an in-process S3 s",
       "verdict": "moment",
       "reviewed": "2026-10-03"
+    },
+    {
+      "entry": "2026-10-03-the-jitter-that-was-always-half.md",
+      "key": "Two processes in step are told apart by ASLR.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The residual needs two processes whose clocks read the same nanosecond, whose sequence numbers agree, and whose counter sits at the same address, which means address-space randomisation is off. Before the fix every macOS process hit it on every call. Separating processes further needs an entropy source per process, and every portable one either panics on wasm32-unknown-unknown (process ids) or reads OS entropy that the target may not have; the entry's Alternatives rejected has each one."
+    },
+    {
+      "entry": "2026-10-03-the-jitter-that-was-always-half.md",
+      "key": "The clock is still read on `wasm32-unknown-unknown`",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Unchanged by this fix and unreachable from the wasm build as it stands: `slate-wasm` never calls `with_retries` or `RetryPolicy` (grep of crates/slate-wasm/src finds neither), and the retry loop's sleep is `tokio::time::sleep`, which that target cannot run anyway. A wasm caller that retries would need a timer before it needed a clock, so the clock is not the first thing to fix."
+    },
+    {
+      "entry": "2026-10-03-the-jitter-that-was-always-half.md",
+      "key": "Nothing scans for other uses of a clock's low digits as rand",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "One use existed, and grep found it (`grep -rn subsec_nanos crates`, now no hits outside retry.rs). A guard banning `subsec_nanos` would forbid its legitimate uses, such as timing, to prevent a misuse that has happened once. The comment on `jitter` records why the clock alone is not entropy, which is where the next person reaching for it will look."
     }
   ]
 }

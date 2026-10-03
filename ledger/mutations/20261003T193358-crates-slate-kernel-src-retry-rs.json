@@ -1,0 +1,67 @@
+{
+  "at": "2026-10-03T19:33:58+00:00",
+  "file": "crates/slate-kernel/src/retry.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--lib",
+    "--test",
+    "writer",
+    "--no-fail-fast"
+  ],
+  "commit": "ed4726f",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the sequence is left out of the mix",
+      "old": "    let mut x = clock ^ place.rotate_left(32) ^ sequence.wrapping_mul(0x9e37_79b9_7f4a_7c15);",
+      "new": "    let mut x = clock ^ place.rotate_left(32);",
+      "verdict": "caught",
+      "caught_by": [
+        "retry::tests::a_clock_that_does_not_move_still_spreads_the_backoff"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the place is left out of the mix",
+      "old": "    let mut x = clock ^ place.rotate_left(32) ^ sequence.wrapping_mul(0x9e37_79b9_7f4a_7c15);",
+      "new": "    let mut x = clock ^ sequence.wrapping_mul(0x9e37_79b9_7f4a_7c15);",
+      "verdict": "caught",
+      "caught_by": [
+        "retry::tests::two_processes_in_step_wake_apart"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "back to the sub-second digits (the original)",
+      "old": "        .map_or(0, |d| d.as_nanos() as u64);\n    let sequence = SEQUENCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);",
+      "new": "        .map_or(0, |d| u64::from(d.subsec_nanos()) % 1000 * 0);\n    let sequence = 0 * SEQUENCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);",
+      "verdict": "caught",
+      "caught_by": [
+        "backoff_grows_then_stops_growing"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the spread ignores its entropy",
+      "old": "    half + width.mul_f64((entropy >> 11) as f64 / (1u64 << 53) as f64)",
+      "new": "    half + width.mul_f64(0.0 * entropy as f64)",
+      "verdict": "caught",
+      "caught_by": [
+        "retry::tests::two_processes_in_step_wake_apart",
+        "retry::tests::a_clock_that_does_not_move_still_spreads_the_backoff",
+        "backoff_grows_then_stops_growing"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -78,20 +78,52 @@ impl RetryPolicy {
 
 /// Randomise a duration into `[half, full]`.
 ///
-/// The entropy is the wall clock's sub-second field. That is not a good random
-/// number, but it does not need to be: the only job is to keep colliding
-/// writers from waking together, and any source that differs between processes
-/// does that.
+/// It need not be a good random number: the only job is to keep colliding
+/// writers from waking together. It does have to *vary*, and the first version
+/// did not everywhere. It read the clock's sub-second nanoseconds modulo a
+/// thousand, and macOS's `SystemTime` counts in microseconds, so that was zero
+/// on every call — every backoff exactly half its ceiling, every writer that
+/// collided once waking in lockstep to collide again. Linux's clock has the
+/// digits, which is why CI never saw it; `backoff_grows_then_stops_growing`
+/// failed on the first Mac it ran on.
+///
+/// So three inputs, none of which has to carry the whole job:
+///
+/// - the clock's whole nanosecond reading, for variation across time;
+/// - a process-wide sequence number, so two calls inside one clock tick still
+///   differ — which is the case that failed;
+/// - the address of that sequence number, which address-space randomisation
+///   places differently in each process, so two processes whose clocks and
+///   sequences agree still differ. Not the process id: that panics on
+///   `wasm32-unknown-unknown`, which this crate builds for.
 fn jitter(full: Duration) -> Duration {
     if full.is_zero() {
         return full;
     }
-    let entropy = std::time::SystemTime::now()
+    let clock = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::from(d.subsec_nanos()));
+        .map_or(0, |d| d.as_nanos() as u64);
+    let sequence = SEQUENCE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    let place = core::ptr::addr_of!(SEQUENCE) as usize as u64;
+    spread(full, mix(clock, sequence, place))
+}
+
+static SEQUENCE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Three inputs to one well-spread word: SplitMix64's finaliser over their
+/// combination, so a sequence that moves by one moves every bit of the output.
+const fn mix(clock: u64, sequence: u64, place: u64) -> u64 {
+    let mut x = clock ^ place.rotate_left(32) ^ sequence.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    x ^ (x >> 31)
+}
+
+/// `full` scaled into `[half, full]` by the top 53 bits of `entropy`.
+fn spread(full: Duration, entropy: u64) -> Duration {
     let half = full / 2;
-    let spread = full.saturating_sub(half);
-    half + spread.mul_f64((entropy % 1000) as f64 / 1000.0)
+    let width = full.saturating_sub(half);
+    half + width.mul_f64((entropy >> 11) as f64 / (1u64 << 53) as f64)
 }
 
 /// Run `attempt` until it stops losing conflicts.
@@ -118,4 +150,38 @@ where
     // Every attempt was a retryable failure; report the last one as-is so the
     // caller sees a conflict rather than an invented "out of retries" error.
     Err(last.unwrap_or(KernelError::TransactionConflict))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{mix, spread};
+    use core::time::Duration;
+
+    /// The case that failed, made independent of the machine: a clock that
+    /// does not move between calls. Only the sequence number changes, and the
+    /// backoffs must still spread out. On Linux the old code would have passed
+    /// the integration test and this one alike only by its clock's luck.
+    #[test]
+    fn a_clock_that_does_not_move_still_spreads_the_backoff() {
+        let full = Duration::from_millis(64);
+        let waits: std::collections::BTreeSet<Duration> = (0..64)
+            .map(|sequence| spread(full, mix(1_000_000_000, sequence, 0x7f00_0000)))
+            .collect();
+        assert!(
+            waits.len() > 48,
+            "{} distinct waits from 64 calls",
+            waits.len()
+        );
+        assert!(waits.iter().all(|w| *w >= full / 2 && *w <= full));
+    }
+
+    /// Two processes whose clocks and sequence numbers agree differ by where
+    /// their counter lives, and nothing else.
+    #[test]
+    fn two_processes_in_step_wake_apart() {
+        let full = Duration::from_millis(64);
+        let one = spread(full, mix(1_000_000_000, 7, 0x7f00_0000));
+        let other = spread(full, mix(1_000_000_000, 7, 0x7f00_1000));
+        assert_ne!(one, other);
+    }
 }
