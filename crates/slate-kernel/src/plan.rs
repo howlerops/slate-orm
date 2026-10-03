@@ -1636,23 +1636,33 @@ struct MatchContext<'a> {
 /// candidate — which is a table scan rather than a wrong answer, and is the
 /// same conclusion `match_key` reaches by producing an unbounded range.
 ///
-/// **Which term is a guess, and a deliberately plain one.** The first is
-/// taken, which after `tokenize` is the lexicographically smallest. Choosing
-/// the *rarest* would be better and needs a per-term document count — the same
-/// statistic `TERM_SELECTIVITY` does not have — so the alternative on offer is
-/// a heuristic dressed as a decision: the longest word, say, which is wrong
-/// for a search containing one long common word. Deterministic beats
-/// arbitrary, and the terms not chosen are still checked, by the residual, on
-/// every row the scan admits.
+/// **The rarest term**, by the counts `analyze` collects: the range is walked
+/// and every row under it is read, so the term holding the fewest rows is the
+/// cheapest one to range on, and the terms not chosen are still checked, by
+/// the residual, on every row the walk admits.
+///
+/// Ties go to the first, which after `tokenize` is the lexicographically
+/// smallest — and with no counts every term ties at `TERM_SELECTIVITY`, so an
+/// unanalysed table ranges on the first term exactly as it did before there
+/// were counts to choose by. Before them the choice was that first term by
+/// necessity; the alternative then on offer was a heuristic, the longest word,
+/// which is wrong for a search containing one long common word.
 fn text_term<'a>(cx: &MatchContext<'a>, index: &IndexDef) -> Option<&'a String> {
     let column = index.columns().first()?.ordinal;
-    cx.predicate
+    let terms = cx
+        .predicate
         .conjuncts()
         .into_iter()
         .find_map(|conjunct| match conjunct {
-            Expr::Contains { column: c, terms } if *c == column => terms.first(),
+            Expr::Contains { column: c, terms } if *c == column => Some(terms),
             _ => None,
-        })
+        })?;
+    // `min_by` keeps the first of equal elements, which is the tie rule above.
+    terms.iter().min_by(|a, b| {
+        cx.stats
+            .term_selectivity(column, a)
+            .total_cmp(&cx.stats.term_selectivity(column, b))
+    })
 }
 
 /// An inverted index, ranged on one term of a `contains`.
@@ -1676,7 +1686,10 @@ fn match_text_index(
     }
     encode_value_into(&mut prefix, &Value::Str(term.clone()), Direction::Asc);
 
-    let mut bound_selectivity = crate::stats::TERM_SELECTIVITY;
+    // The rows under this one term — counted, if `analyze` has seen the
+    // column, and `TERM_SELECTIVITY` if not.
+    let column = index.columns().first()?.ordinal;
+    let mut bound_selectivity = cx.stats.term_selectivity(column, term);
     if let Some(predicate) = partial {
         bound_selectivity *= cx.stats.predicate_selectivity(predicate);
     }

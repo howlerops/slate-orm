@@ -70,7 +70,7 @@ pub use scalar::{CalendarPart, CalendarUnit, Metric, Scalar, TimeUnit};
 pub use security::{
     Action, Deleted, Grant, Policy, PolicyPredicate, Principal, SecurityCatalog, SecurityContext,
 };
-pub use stats::{ColumnStats, Histogram, Statistics, TableStats};
+pub use stats::{ColumnStats, Histogram, Statistics, TableStats, TermCounter, TermStats};
 pub use store::{
     KeyRange, KeyValue, KvIterator, KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder,
 };

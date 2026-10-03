@@ -220,7 +220,7 @@ that `prebuilt.py` does not know is refused rather than run.
 - **`run_examples.sh` will not build its examples in debug on this container**,
   and the failure is the ENOSPC-in-disguise above: `LLVM ERROR: IO failure on
   output stream` and a linker `Bus error`, met three times in one session, once
-  with `df` reporting 8.0K free. Measured: the nine `slate-slatedb` examples are
+  with `df` reporting 8.0K free. Measured: the `slate-slatedb` examples — nine of them then — were
   **131 MB at `--release`** against well over 1.4 GB in debug, which is
   `-C debuginfo=2` and nothing else. The script already takes both knobs it
   needs, so build them yourself and point it at them:

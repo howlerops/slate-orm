@@ -1,0 +1,54 @@
+{
+  "at": "2026-10-03T19:17:14+00:00",
+  "file": "crates/slate-kernel/src/plan.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "fulltext",
+    "--no-fail-fast"
+  ],
+  "commit": "9b060f8",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the most common term is ranged",
+      "old": "    terms.iter().min_by(|a, b| {",
+      "new": "    terms.iter().max_by(|a, b| {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_search_ranges_on_its_rarest_term"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the first term is ranged, as before",
+      "old": "    terms.iter().min_by(|a, b| {",
+      "new": "    terms.iter().take(1).min_by(|a, b| {",
+      "verdict": "caught",
+      "caught_by": [
+        "a_search_ranges_on_its_rarest_term"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the index candidate ignores the count",
+      "old": "    let mut bound_selectivity = cx.stats.term_selectivity(column, term);",
+      "new": "    let mut bound_selectivity = crate::stats::TERM_SELECTIVITY;",
+      "verdict": "caught",
+      "caught_by": [
+        "a_rare_term_takes_the_index_and_a_common_one_does_not",
+        "the_crossover_is_where_the_cost_model_puts_every_index"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

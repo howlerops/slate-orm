@@ -140,12 +140,13 @@ uses.
 
 An inverted index is ranged on **one** term of a `contains` — a prefix of the
 keyspace — with the remaining terms left to the residual, which re-checks all
-of them on every row the scan admits. Which term is taken is the first, which
-after `tokenize` is the lexicographically smallest. Choosing the *rarest* would
-be better and needs a per-term document count, which is not collected; the
-alternative on offer is a heuristic dressed as a decision (the longest word,
-say, which is wrong for a search containing one long common word), so the
-choice is deterministic rather than clever.
+of them on every row the scan admits. Which term is taken is the **rarest**, by
+the per-term counts `analyze` collects (below); ties go to the first, which
+after `tokenize` is the lexicographically smallest, so a table never analysed
+ranges on the first term exactly as it always did. Until the counts existed
+the first term was the choice by necessity, and the alternative then on offer
+was a heuristic dressed as a decision — the longest word, which is wrong for a
+search containing one long common word.
 
 Two things are refused rather than guessed:
 
@@ -197,9 +198,11 @@ So the honest state of the feature is:
 
 - A `contains` with no text index is a table scan with the predicate as a
   residual, and is correct.
-- A `contains` *with* one is costed the ordinary way, and on a corpus where
-  the average term is not vanishingly rare the planner prefers the scan. A
-  caller who knows the term is rare says `using_index`, which is a first-class
+- A `contains` *with* one is costed the ordinary way. **On an analysed table
+  the estimate it is costed from is the term's own count** (below), so a rare
+  word takes the index and a common one scans; on a table never analysed it
+  is still `TERM_SELECTIVITY`, and the planner scans. A caller who knows
+  better than the statistics says `using_index`, which is a first-class
   hint the kernel and the wire already carry — and which, since the clients
   went in, all three of them can send: Python's `Query.using_index`, Go's
   `Query.Hint` with `slate.UsingIndex`, TypeScript's `query.hint` with
@@ -208,16 +211,51 @@ So the honest state of the feature is:
   word `contains` and would pass with the index deleted.
 - `the_planner_costs_a_text_index_like_any_other` asserts exactly that
   equivalence, so a future change that costs the text path specially breaks a
-  test rather than passing quietly.
+  test rather than passing quietly. The counts did not break it and were not
+  meant to: they change the estimate a search starts from, the way a column's
+  distinct count changes an equality's, and never the cost of the rows the
+  estimate implies.
 
 Two things would change the verdict, and both are measurements rather than
 opinions:
 
-1. **A per-term posting count**, collected by `analyze`, would let the planner
-   know that `earthsea` is rare and `the` is not. The structure can hold
-   millions of distinct keys, so this is a sampled statistic rather than an
-   exact one, and sampling a Zipf distribution for the *rare* tail is the hard
-   part.
+1. ~~**A per-term posting count**, collected by `analyze`, would let the
+   planner know that `earthsea` is rare and `the` is not.~~ **Collected, and
+   the crossover measured.** `analyze` counts, for every column a text index
+   is on, how many rows hold each term — through the same scan and the same
+   tokenizer as the index's own writes. It is not a sample: a sample finds the
+   common words and is blind to exactly the rare ones that matter. It is a
+   Space-Saving counter of 10,000 words: exact whenever the vocabulary fits,
+   and otherwise every word is estimated to within one ten-thousandth of the
+   column's postings — the frequent ones from their counters, the tail from
+   what the counter evicted and a k-minimum-values
+   sketch of the vocabulary; `TermStats` and `TermCounter` in `stats.rs` hold
+   the reasoning, and each of their three estimates was chosen against an
+   exact count of the same stream.
+
+   `crates/slate-slatedb/examples/term_crossover.rs` measures where it lands.
+   200,000 rows over a real S3 server; term `k<n>` is in exactly `n` rows,
+   spread evenly, which is the index's worst case; every arm opens its own
+   store. Three runs, from this build:
+
+   ```
+   build: slate-slatedb 0.1.0 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | aarch64-apple-darwin | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+   ```
+
+   | | run 1 | run 2 | run 3 |
+   | --- | --- | --- | --- |
+   | the planner, **without** counts, takes the index for | no rung | no rung | no rung |
+   | the planner, **with** counts, takes the index up to | 24 rows | 24 rows | 24 rows |
+   | the cost constants predict the index wins below | 25 rows | 25 rows | 25 rows |
+   | a forced walk of the index made fewer GETs up to | 32 rows | 32 rows | 32 rows |
+   | GETs spent over the cheaper arm, summed over 12 rungs, scanning always | 318 | 250 | 226 |
+   | the same, the planner choosing with counts | 40 | 59 | 46 |
+
+   So the counted planner switches exactly where the cost model says, and
+   the model is a rung or two conservative against the measurement: at 48
+   rows the two arms tied (66 against 66, 66 against 65, 67 against 66). The
+   scan's own GETs ranged from 51 to 73 between arms, which is most of what
+   is left of the regret; the index's did not move by more than a few.
 ### The keyword is worth having even where the index is not chosen
 
 An earlier draft of this note argued the opposite — that a `CONTAINS` the

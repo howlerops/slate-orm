@@ -1,0 +1,31 @@
+{
+  "at": "2026-10-03T19:17:58+00:00",
+  "file": "crates/slate-kernel/src/record.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "fulltext",
+    "--no-fail-fast"
+  ],
+  "commit": "9b060f8",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "analyze counts every indexed column, not only text ones",
+      "old": "            .filter(|index| index.is_text())\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "an_ordinary_index_on_text_has_no_words_counted"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

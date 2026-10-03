@@ -308,7 +308,7 @@
       "cases": [
         {
           "name": "a crate's floor drops below the examples it has",
-          "old": "    slate-slatedb) least=9 ;;",
+          "old": "    slate-slatedb) least=10 ;;",
           "new": "    slate-slatedb) least=2 ;;"
         }
       ]

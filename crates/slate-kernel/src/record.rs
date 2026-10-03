@@ -46,7 +46,10 @@ use crate::read::{self, SecuredReads};
 use crate::retry::{RetryPolicy, with_retries};
 use crate::scalar::Scalar;
 use crate::security::{Action, Deleted, SecurityCatalog, SecurityContext};
-use crate::stats::{ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TableStats};
+use crate::stats::{
+    ColumnStats, HISTOGRAM_SAMPLE, Histogram, Statistics, TERM_TRACKING_LIMIT, TableStats,
+    TermCounter,
+};
 use crate::store::{KvReadStore, KvSnapshot, KvStore, KvTransaction, ScanOrder};
 use crate::token::ReadToken;
 use futures::future::BoxFuture;
@@ -56,7 +59,7 @@ use slate_schema::{
     PartialRow, ReferentialAction, Row, SchemaError, TableDef, encode_body,
 };
 use slate_tuple::{Value, ValueType};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -968,10 +971,31 @@ impl<'a> RecordTransaction<'a> {
         // the same data twice gives the same statistics, and a planner whose
         // choices move between runs is one nobody can reason about.
         let mut rng = Xorshift::new();
+        // Every column a text index is on, counted once however many indexes
+        // share it. Fed from the same scan as everything else, so the counts
+        // describe the rows `context` can see, as the rest of this does — not
+        // the index's own entries, which a raw walk would read past the policy.
+        let mut texts: BTreeMap<Ordinal, TermCounter> = table
+            .indexes()
+            .iter()
+            .filter(|index| index.is_text())
+            .filter_map(|index| index.columns().first())
+            .map(|column| (column.ordinal, TermCounter::new(TERM_TRACKING_LIMIT)))
+            .collect();
 
         let mut cursor = self.execute(context, table, &Query::all()).await?;
         while let Some(row) = cursor.next().await? {
             row_count += 1;
+            for (ordinal, counter) in &mut texts {
+                // `tokenize` deduplicates, so this is one count per row per
+                // term: the number of rows holding a term, which is the
+                // number of index entries under it.
+                if let Some(Value::Str(text)) = row.get(*ordinal) {
+                    for term in slate_schema::tokenize(text) {
+                        counter.add(&term);
+                    }
+                }
+            }
             // Computed once and borrowed by both passes below. Evaluating the
             // expression twice per row would double what an expression index
             // costs `analyze`, and the expressions worth indexing are the ones
@@ -1067,6 +1091,9 @@ impl<'a> RecordTransaction<'a> {
                     }
                 }
             }
+        }
+        for (ordinal, counter) in texts {
+            stats = stats.with_terms(ordinal, counter.finish());
         }
         Ok(stats)
     }

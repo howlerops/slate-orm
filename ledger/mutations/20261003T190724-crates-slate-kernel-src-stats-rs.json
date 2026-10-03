@@ -1,0 +1,114 @@
+{
+  "at": "2026-10-03T19:07:24+00:00",
+  "file": "crates/slate-kernel/src/stats.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--lib",
+    "--test",
+    "fulltext",
+    "--no-fail-fast"
+  ],
+  "commit": "9b060f8",
+  "python": "3.12.2",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "contains ignores the counts",
+      "old": "                    .map(|term| self.term_selectivity(*column, term))\n",
+      "new": "                    .map(|_| TERM_SELECTIVITY)\n",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "an uncounted column reads as empty",
+      "old": "            None => TERM_SELECTIVITY,\n        }\n    }",
+      "new": "            None => 0.0,\n        }\n    }",
+      "verdict": "caught",
+      "caught_by": [
+        "a_rare_term_takes_the_index_and_a_common_one_does_not",
+        "the_planner_costs_a_text_index_like_any_other",
+        "analyze_counts_the_rows_holding_each_term"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "a tracked count is not raised to the tail",
+      "old": "            .map_or(self.untracked, |&count| (count as f64).max(self.untracked))",
+      "new": "            .map_or(self.untracked, |&count| count as f64)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the tail is not capped at the guarantee",
+      "old": "(tail_postings / tail_terms).clamp(1.0, smallest.max(1) as f64)",
+      "new": "(tail_postings / tail_terms).max(1.0)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the tail is not floored at one row",
+      "old": "(tail_postings / tail_terms).clamp(1.0, smallest.max(1) as f64)",
+      "new": "(tail_postings / tail_terms).min(smallest.max(1) as f64)",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "the hash is not finalised",
+      "old": "    hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);\n    hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);\n    hash ^ (hash >> 31)",
+      "new": "    hash",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "below the sketch the vocabulary is estimated anyway",
+      "old": "        if self.sketch.len() < VOCABULARY_SKETCH {\n            return self.sketch.len() as f64;\n        }\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "stats::tests::the_vocabulary_is_estimated_to_within_a_tenth"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "eviction keeps no error",
+      "old": "        *error = smallest;\n",
+      "new": "        *error = 0;\n",
+      "verdict": "caught",
+      "caught_by": [
+        "stats::tests::past_capacity_the_counts_keep_space_savings_guarantees",
+        "stats::tests::the_tail_estimate_is_near_the_tails_true_mean"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    },
+    {
+      "name": "an evicting counter claims to be exact",
+      "old": "        self.evicted = true;\n",
+      "new": "",
+      "verdict": "caught",
+      "caught_by": [
+        "stats::tests::past_capacity_the_counts_keep_space_savings_guarantees",
+        "stats::tests::the_tail_estimate_is_near_the_tails_true_mean"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

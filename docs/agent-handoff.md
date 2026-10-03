@@ -64,17 +64,7 @@ assuming; `scripts/handoff.py` prints the `gh api` line for it.
 BRANCH: develop on `claude/rust-orm-record-layer-gswxlu`, merge to `main`
 when green. Do not open a pull request unless asked.
 
-WHAT IS LEFT, both scoped and both with the design already argued:
-
-T3 — per-term posting counts for the full-text index.
-    The one explicitly-open item in `docs/orm-comparison.md`'s full-text row.
-    An inverted index is costed like any secondary index, so the planner
-    takes a table scan until a term returns about 1 row in 8,000
-    (SCAN_ROW_COST / POINT_READ_COST, both measured). Give the planner a
-    per-term posting count so a selective term wins. There is an existing
-    test asserting text and ordinary indexes cost the same — if you cost
-    text specially, that test must break deliberately, not be deleted.
-    Show the crossover moving with a measurement.
+WHAT IS LEFT, scoped and with the design already argued:
 
 T4 — column-level grants.
     The real multi-tenant blocker, named in the views row: a view here

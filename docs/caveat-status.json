@@ -15977,6 +15977,40 @@
       "key": "CI was not watched to green before this entry was written.",
       "verdict": "moment",
       "reviewed": "2026-10-03"
+    },
+    {
+      "entry": "2026-10-03-a-rare-word-takes-the-index.md",
+      "key": "The line sits a rung or two left of the measured one.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The gap is the cost constants', not the counts': the counted planner flips at 24 where `SCAN_ROW_COST / POINT_READ_COST` predicts 25, so the statistic does exactly what the model asks. Moving the model to 32-48 would mean recalibrating `SCAN_ROW_COST` on one fixture at one size, which `stats.rs` records as the mistake it has already been; and the error is on the cheap side, a bounded scan where an index would have saved about a third. The measured line is in `docs/full-text.md` section 6 for whoever next measures the scan constant."
+    },
+    {
+      "entry": "2026-10-03-a-rare-word-takes-the-index.md",
+      "key": "Spread rows only.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Density is not modelled for any index, ordinary or inverted, and `ascending_walk` measured it as a 21x effect that is a property of the predicate rather than the index's kind (`docs/full-text.md` section 6, item 2). A density-aware read cost would change ordinary plans far more often than text ones, so it is its own change with its own measurement; spreading the fixture's rows tests the case the current constant describes, and is the conservative one."
+    },
+    {
+      "entry": "2026-10-03-a-rare-word-takes-the-index.md",
+      "key": "Independence across terms is unchanged.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "The assumption runs through every conjunction `predicate_selectivity` estimates, not only searches, and the comment on `Expr::Contains` already names it as more wrong for words than for columns. Correlation statistics are a different structure from per-term counts. The counts make each factor right, and the planner's index decision rests on one term's count, the rarest, not on the product."
+    },
+    {
+      "entry": "2026-10-03-a-rare-word-takes-the-index.md",
+      "key": "Counts are per column, across every tenant.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-03",
+      "by": "Same choice and same reasoning as the histograms and distinct counts beside it: `analyze` describes what its context can see, the recommendation is to run it as a superuser, and per-tenant statistics would multiply the vocabulary by the tenant count. A tenant-skewed word is estimated at its global rate, which costs a plan and never an answer, since the residual re-checks every term."
+    },
+    {
+      "entry": "2026-10-03-a-rare-word-takes-the-index.md",
+      "key": "One measurement machine, and GETs against an in-process S3 s",
+      "verdict": "moment",
+      "reviewed": "2026-10-03"
     }
   ]
 }

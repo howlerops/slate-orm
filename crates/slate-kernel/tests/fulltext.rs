@@ -33,7 +33,7 @@
 
 use slate_kernel::memory::MemoryStore;
 use slate_kernel::plan::{Access, plan_full, plan_hinted};
-use slate_kernel::stats::{ColumnStats, TableStats};
+use slate_kernel::stats::{ColumnStats, TableStats, TermStats};
 use slate_kernel::{
     AccessHint, Action, Expr, Grant, Projection, Query, RecordStore, ScanOrder, SecurityCatalog,
     SecurityContext, SortKey,
@@ -342,6 +342,15 @@ fn a_search_makes_the_index_a_candidate_and_nothing_else_does() {
 /// are in primary-key order, which is a real property and an unmeasured one —
 /// would break this, and breaking it deliberately is the shape a future
 /// measurement would take.
+///
+/// **Per-term counts did not break it, and were not meant to.** They change
+/// the *estimate* a search starts from, the way a column's distinct count
+/// changes an equality's — never the cost of the rows the estimate implies.
+/// This compares the two with no counts, where the estimate is still
+/// `TERM_SELECTIVITY`; `a_rare_term_takes_the_index_and_a_common_one_does_not`
+/// is the same planner given counts, and
+/// `the_crossover_is_where_the_cost_model_puts_every_index` checks the counted
+/// verdict flips exactly where an equality's does.
 #[test]
 fn the_planner_costs_a_text_index_like_any_other() {
     let text = table();
@@ -397,6 +406,168 @@ fn the_planner_costs_a_text_index_like_any_other() {
              were costed differently"
         );
     }
+}
+
+/// `analyze` counts the rows holding each term, through the same scan and the
+/// same tokenizer the index is written with.
+#[tokio::test]
+async fn analyze_counts_the_rows_holding_each_term() {
+    let store = seeded().await;
+    let txn = store.begin().await.unwrap();
+    let stats = txn.analyze(&root(), &table()).await.unwrap();
+    let title = col("title");
+    // Two of the five titles hold `wizard`, one holds `earthsea`, and
+    // `second` is in row 5's title only — its body says "the fifth".
+    assert_eq!(stats.term_selectivity(title, "wizard"), 2.0 / 5.0);
+    assert_eq!(stats.term_selectivity(title, "earthsea"), 1.0 / 5.0);
+    assert_eq!(stats.term_selectivity(title, "second"), 1.0 / 5.0);
+    // Counted exhaustively, so a word no title holds is in no row.
+    assert_eq!(stats.term_selectivity(title, "solaris-free"), 0.0);
+    // `body` carries no text index, so its words were not counted and keep
+    // the flat estimate rather than being reported as absent.
+    assert_eq!(
+        stats.term_selectivity(col("body"), "first"),
+        slate_kernel::stats::TERM_SELECTIVITY
+    );
+}
+
+/// Only a column a text index is on has its words counted. An ordinary index
+/// on a string column keys on the whole value, so no count of its words can
+/// change which path a search takes, and counting them would make `analyze`
+/// pay for a vocabulary on every indexed string column a schema has.
+#[tokio::test]
+async fn an_ordinary_index_on_text_has_no_words_counted() {
+    const BY_BODY: IndexId = IndexId(11);
+    let table = TableDef::builder("docs", T)
+        .column("id", ValueType::U64)
+        .column("title", ValueType::Str)
+        .nullable_column("body", ValueType::Str)
+        .primary_key(["id"])
+        .index(
+            IndexDef::builder("by_title", BY_TITLE)
+                .column("title")
+                .text(),
+        )
+        .index(IndexDef::builder("by_body", BY_BODY).column("body"))
+        .build()
+        .expect("valid schema");
+    let catalog = Catalog::from_tables([table.clone()]).expect("catalog");
+    let security = SecurityCatalog::new().grant(Grant::new("r", T, Action::ALL));
+    let store = RecordStore::new(MemoryStore::new(), catalog, security);
+    let txn = store.begin().await.unwrap();
+    txn.insert_many(&root(), &table, &rows()).await.unwrap();
+    let stats = txn.analyze(&root(), &table).await.unwrap();
+    assert_eq!(stats.term_selectivity(col("title"), "wizard"), 2.0 / 5.0);
+    assert_eq!(
+        stats.term_selectivity(col("body"), "first"),
+        slate_kernel::stats::TERM_SELECTIVITY,
+        "an ordinary index's column had its words counted"
+    );
+}
+
+fn verdict(stats: &TableStats, search: &str) -> &'static str {
+    let plan = plan_full(
+        &table(),
+        std::sync::Arc::new(Expr::contains(col("title"), search)),
+        ScanOrder::Ascending,
+        &Projection::All,
+        stats,
+        None,
+        &[],
+    );
+    match plan.access {
+        Access::IndexScan { .. } => "index",
+        Access::TableScan { .. } => "scan",
+        other => panic!("unexpected access: {other:?}"),
+    }
+}
+
+/// **The point of counting.** Before, every search on a million rows was a
+/// table scan, the word three rows hold included; with counts, the rare word
+/// takes the index and the common one still scans.
+#[test]
+fn a_rare_term_takes_the_index_and_a_common_one_does_not() {
+    let rows = 1_000_000;
+    let uncounted = TableStats::with_row_count(rows);
+    let counted = TableStats::with_row_count(rows).with_terms(
+        col("title"),
+        TermStats::exact([("earthsea".to_owned(), 3), ("the".to_owned(), 500_000)]),
+    );
+    assert_eq!(verdict(&uncounted, "earthsea"), "scan", "the before");
+    assert_eq!(verdict(&uncounted, "the"), "scan");
+    assert_eq!(verdict(&counted, "earthsea"), "index", "the after");
+    assert_eq!(verdict(&counted, "the"), "scan");
+
+    // The estimate a search starts from, which is what a join or a limit
+    // reads: the term's own fraction, and with two terms their product.
+    let estimate = |stats: &TableStats, search: &str| {
+        stats.predicate_selectivity(&Expr::contains(col("title"), search))
+    };
+    assert_eq!(estimate(&counted, "earthsea"), 3.0 / 1_000_000.0);
+    assert_eq!(estimate(&counted, "the"), 0.5);
+    assert_eq!(estimate(&counted, "the earthsea"), 0.5 * 3.0 / 1_000_000.0);
+    assert_eq!(
+        estimate(&uncounted, "earthsea"),
+        slate_kernel::stats::TERM_SELECTIVITY
+    );
+}
+
+/// Where the verdict flips, on the cost model: the same one-in-8,000 every
+/// non-covering index has (`docs/full-text.md` §6), now reachable by a term.
+/// Printed, because the number is the finding; asserted to the band the two
+/// measured constants put it in.
+#[test]
+fn the_crossover_is_where_the_cost_model_puts_every_index() {
+    let rows = 1_000_000u64;
+    let at = |holding: u64| {
+        let stats = TableStats::with_row_count(rows).with_terms(
+            col("title"),
+            TermStats::exact([("earthsea".to_owned(), holding)]),
+        );
+        verdict(&stats, "earthsea")
+    };
+    let flip = (1..=rows)
+        .collect::<Vec<_>>()
+        .partition_point(|&n| at(n) == "index");
+    println!("at {rows} rows the index is chosen up to {flip} rows holding the term");
+    let predicted =
+        rows as f64 * slate_kernel::stats::SCAN_ROW_COST / slate_kernel::stats::POINT_READ_COST;
+    assert!(
+        (flip as f64) > predicted * 0.5 && (flip as f64) < predicted * 2.0,
+        "flipped at {flip}, the cost constants predict about {predicted}"
+    );
+}
+
+/// A two-term search ranges on whichever term holds fewer rows. Without counts
+/// both tie and the first — lexicographically — is taken, as before.
+#[test]
+fn a_search_ranges_on_its_rarest_term() {
+    let rows = 1_000_000;
+    let range = |stats: &TableStats, search: &str| {
+        let plan = plan_hinted(
+            &table(),
+            std::sync::Arc::new(Expr::contains(col("title"), search)),
+            ScanOrder::Ascending,
+            &Projection::All,
+            stats,
+            None,
+            &[],
+            Some(AccessHint::Index(BY_TITLE)),
+            &[],
+        );
+        match plan.access {
+            Access::IndexScan { range, .. } => range,
+            other => panic!("the hint was not taken: {other:?}"),
+        }
+    };
+    let uncounted = TableStats::with_row_count(rows);
+    let counted = TableStats::with_row_count(rows).with_terms(
+        col("title"),
+        TermStats::exact([("a".to_owned(), 400_000), ("zyzzyva".to_owned(), 2)]),
+    );
+    assert_eq!(range(&counted, "a zyzzyva"), range(&counted, "zyzzyva"));
+    assert_ne!(range(&counted, "a zyzzyva"), range(&counted, "a"));
+    assert_eq!(range(&uncounted, "a zyzzyva"), range(&uncounted, "a"));
 }
 
 #[test]

@@ -250,10 +250,11 @@ pub const LIKE_SELECTIVITY: f64 = 0.1;
 ///
 /// A thousandth, and a guess — the same kind of guess [`LIKE_SELECTIVITY`] is
 /// and for a sharper reason: a histogram describes where a *column's values*
-/// sort, and a term is not one of them. What would answer this is the inverted
-/// index's own distribution, how many rows hold each term, which is a second
-/// statistic over a structure that can carry millions of distinct keys and is
-/// not collected.
+/// sort, and a term is not one of them. What answers it is how many rows hold
+/// each term, which `analyze` now counts — see [`TermStats`] — so this is the
+/// estimate for a column whose terms have **not** been counted: one never
+/// analysed, or [`TableStats::assumed`]. An analysed text column does not
+/// reach this number.
 ///
 /// The basis for the number is the same one [`ColumnStats::default`] uses, one
 /// order the other way: an un-analysed column is assumed to have a hundred
@@ -271,6 +272,250 @@ pub const LIKE_SELECTIVITY: f64 = 0.1;
 /// Getting it wrong costs a plan, never an answer: the residual re-checks
 /// every term on every row the scan admits, whichever path produced it.
 pub const TERM_SELECTIVITY: f64 = 0.001;
+
+/// Distinct terms [`TermCounter`] tracks per text column.
+///
+/// The same bound as `DISTINCT_TRACKING_LIMIT`, for the same reason: `analyze`
+/// reads the whole table and cannot hold all of it, and a text column's
+/// vocabulary is the one statistic here that routinely runs to millions. Below
+/// it every count is exact; above it the frequent terms keep counts that are
+/// right to within the smallest one held, and the rest share one estimate.
+pub const TERM_TRACKING_LIMIT: usize = 10_000;
+
+/// Hashes the vocabulary sketch keeps: a k-minimum-values estimate, whose
+/// relative error is about `1 / sqrt(k)` — three percent at this size.
+const VOCABULARY_SKETCH: usize = 1_024;
+
+/// How many rows hold each term of one text-indexed column.
+///
+/// **What the planner needed and `TERM_SELECTIVITY` could not say.** A
+/// non-covering index is chosen when it returns about one row in 8,000, so a
+/// flat guess of a thousandth sent every search to a table scan — including a
+/// search for a word three rows hold, which is the case an inverted index
+/// exists for. With this, `earthsea` and `the` are different questions.
+///
+/// A term's count is the number of *rows* holding it, which is also the
+/// number of index entries under it: [`tokenize`](slate_schema::tokenize)
+/// deduplicates within a row, so one row writes one entry per distinct term.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TermStats {
+    /// Rows expected to hold each tracked term: exact while the counter never
+    /// evicted, and an estimate — see [`TermCounter::finish`] — once it had.
+    counts: BTreeMap<String, f64>,
+    /// Rows expected to hold a term with no entry above.
+    ///
+    /// Zero when the count was exhaustive: a term the counter never saw is in
+    /// no row. Otherwise the mean of the untracked tail, capped at what the
+    /// counter guarantees no untracked term exceeds.
+    ///
+    /// Not floored at one row, though a term in the tail is in at least one:
+    /// both readers already are — the search's selectivity at one row of the
+    /// table, the index candidate's rows admitted at one — so a floor here was
+    /// a third copy of a rule, and a mutation removing it changed no verdict.
+    untracked: f64,
+}
+
+impl TermStats {
+    /// Counts known to be complete: every term not listed is in no row.
+    ///
+    /// What a test or a caller with its own counts builds; `analyze` builds
+    /// one through [`TermCounter`].
+    #[must_use]
+    pub fn exact(counts: impl IntoIterator<Item = (String, u64)>) -> Self {
+        Self {
+            counts: counts
+                .into_iter()
+                .map(|(term, count)| (term, count as f64))
+                .collect(),
+            untracked: 0.0,
+        }
+    }
+
+    /// Rows expected to hold `term`.
+    #[must_use]
+    pub fn documents(&self, term: &str) -> f64 {
+        self.counts.get(term).copied().unwrap_or(self.untracked)
+    }
+}
+
+/// Counts terms across a table in bounded memory, for [`TermStats`].
+///
+/// **Space-Saving** (Metwally, Agrawal and El Abbadi, 2005): at most
+/// `capacity` counters; a new term arriving when they are full takes the
+/// smallest counter's place and inherits its count as its error. Until that
+/// first eviction nothing is approximate at all, which for a table whose
+/// vocabulary fits is every count exact. After it, two guarantees hold and
+/// both are used:
+///
+/// - a tracked term's true count lies in `count - error ..= count`;
+/// - an untracked term's true count is at most the smallest counter.
+///
+/// **Why not a sample of rows**, which is how the histograms are built: a
+/// sample finds the common terms and is blind to exactly the ones that matter
+/// here. At a one-percent sample a term in three rows is usually absent, and
+/// absent cannot be told from absent-because-rare-enough-to-win. The counter
+/// sees every posting.
+///
+/// **Why the tail needs a second structure.** Space-Saving's counters always
+/// sum to the number of postings — an eviction hands the evicted count to the
+/// newcomer — so "postings minus what is tracked" is always zero and says
+/// nothing. What *was* evicted is exactly the sum of the errors, and it
+/// belongs to two kinds of word: the untracked ones, and the occurrences a
+/// tracked word had before it took its counter. Both are estimated at one
+/// mean, so the mass divides by both — every word except those held since
+/// their first occurrence. How many words there were is the k-minimum-values
+/// sketch: the `VOCABULARY_SKETCH` smallest hashes seen, whose largest says
+/// how densely the hash space was hit.
+#[derive(Debug)]
+pub struct TermCounter {
+    capacity: usize,
+    /// The term in each slot, its count, and the error it inherited.
+    terms: Vec<(String, u64, u64)>,
+    slot: std::collections::HashMap<String, usize>,
+    /// `(count, slot)`, so the smallest counter is the first entry. The slot
+    /// breaks ties, which makes eviction depend on arrival order and nothing
+    /// else: the same table analysed twice gives the same statistics.
+    by_count: std::collections::BTreeSet<(u64, usize)>,
+    evicted: bool,
+    sketch: std::collections::BTreeSet<u64>,
+}
+
+impl TermCounter {
+    /// A counter holding at most `capacity` terms.
+    #[must_use]
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            terms: Vec::new(),
+            slot: std::collections::HashMap::new(),
+            by_count: std::collections::BTreeSet::new(),
+            evicted: false,
+            sketch: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// One row holds `term`. Call once per distinct term per row.
+    pub fn add(&mut self, term: &str) {
+        let hash = term_hash(term);
+        if self.sketch.len() < VOCABULARY_SKETCH {
+            self.sketch.insert(hash);
+        } else if let Some(&largest) = self.sketch.last()
+            && hash < largest
+            && self.sketch.insert(hash)
+        {
+            self.sketch.pop_last();
+        }
+
+        // Every slot `slot` and `by_count` name is one `terms` holds: slots
+        // are only ever appended or overwritten in place, never removed.
+        if let Some(&at) = self.slot.get(term)
+            && let Some((_, count, _)) = self.terms.get_mut(at)
+        {
+            self.by_count.remove(&(*count, at));
+            *count += 1;
+            self.by_count.insert((*count, at));
+            return;
+        }
+        if self.terms.len() < self.capacity {
+            let at = self.terms.len();
+            self.terms.push((term.to_owned(), 1, 0));
+            self.slot.insert(term.to_owned(), at);
+            self.by_count.insert((1, at));
+            return;
+        }
+        let Some((smallest, at)) = self.by_count.pop_first() else {
+            return;
+        };
+        let Some((old, count, error)) = self.terms.get_mut(at) else {
+            return;
+        };
+        self.evicted = true;
+        self.slot.remove(old.as_str());
+        old.clear();
+        old.push_str(term);
+        *count = smallest + 1;
+        *error = smallest;
+        self.slot.insert(term.to_owned(), at);
+        self.by_count.insert((smallest + 1, at));
+    }
+
+    /// Distinct terms seen, exactly while the sketch is not full.
+    fn vocabulary(&self) -> f64 {
+        if self.sketch.len() < VOCABULARY_SKETCH {
+            return self.sketch.len() as f64;
+        }
+        let largest = self.sketch.last().copied().unwrap_or(u64::MAX).max(1);
+        (VOCABULARY_SKETCH - 1) as f64 / (largest as f64 / u64::MAX as f64)
+    }
+
+    /// The statistics, and the end of counting.
+    ///
+    /// After an eviction, three choices, each made against an exact count of
+    /// the same stream rather than argued for:
+    ///
+    /// - **A tracked word holds what it was counted since it took its counter,
+    ///   plus the tail's mean if it inherited an error.** Its occurrences
+    ///   before then are exactly an untracked word's, which is what the mean
+    ///   estimates; a word with no error has been held since its first
+    ///   occurrence and is exact. Against an exact count of a 5,000-word Zipf
+    ///   stream through 1,000 counters, its mean absolute error was 6.2 rows,
+    ///   the lower bound alone 7.0 and the counter's upper bound 10.3; that
+    ///   comparison is a test, so the rule cannot quietly become the worse
+    ///   one.
+    /// - **The tail's mean divides the evicted mass by every word not held
+    ///   since its first occurrence**, the accounting above. The first draft
+    ///   divided by the untracked words only, which counted the mass once and
+    ///   handed it out twice: on a 1,500-word vocabulary through 1,000
+    ///   counters it put the mean at 34.7 rows against a true 15.8, where this
+    ///   says 15.9.
+    /// - **An untracked word's estimate is capped at the smallest counter**,
+    ///   which Space-Saving guarantees no untracked word exceeds. Not
+    ///   decoration: 120 words cycling through 100 counters put the draft's
+    ///   uncapped mean at 4,995 rows against a ceiling of 1,000.
+    #[must_use]
+    pub fn finish(self) -> TermStats {
+        if !self.evicted {
+            return TermStats::exact(self.terms.into_iter().map(|(t, c, _)| (t, c)));
+        }
+        let smallest = self.by_count.first().map_or(0, |&(count, _)| count) as f64;
+        let evicted: u64 = self.terms.iter().map(|(_, _, error)| error).sum();
+        let exact = self
+            .terms
+            .iter()
+            .filter(|(_, _, error)| *error == 0)
+            .count();
+        let sharing = (self.vocabulary() - exact as f64).max(1.0);
+        let untracked = (evicted as f64 / sharing).min(smallest);
+        TermStats {
+            counts: self
+                .terms
+                .into_iter()
+                .map(|(term, count, error)| {
+                    let since = (count - error) as f64;
+                    (term, if error > 0 { since + untracked } else { since })
+                })
+                .collect(),
+            untracked,
+        }
+    }
+}
+
+/// A term's position in the vocabulary sketch's hash space.
+///
+/// FNV-1a, then SplitMix64's finaliser: FNV alone is fast and fixed but
+/// clusters short similar strings, which is the whole vocabulary of a text
+/// column, and a k-minimum-values estimate assumes hashes spread uniformly.
+/// Fixed rather than `RandomState` so two analyses of one table agree.
+fn term_hash(term: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in term.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    hash ^ (hash >> 31)
+}
 
 /// Cost of one comparison level when sorting a row: CPU only, no I/O, so
 /// several orders of magnitude below a round trip.
@@ -413,6 +658,8 @@ pub struct TableStats {
     /// Held apart from [`ColumnStats`] so that stays small and `Copy`: a
     /// histogram is a hundred values and is read on far fewer paths.
     histograms: BTreeMap<StatTarget, Histogram>,
+    /// Rows holding each term, for each column a text index is on.
+    terms: BTreeMap<Ordinal, TermStats>,
 }
 
 impl Default for TableStats {
@@ -433,6 +680,7 @@ impl TableStats {
             row_count: 1_000,
             columns: BTreeMap::new(),
             histograms: BTreeMap::new(),
+            terms: BTreeMap::new(),
         }
     }
 
@@ -443,6 +691,7 @@ impl TableStats {
             row_count,
             columns: BTreeMap::new(),
             histograms: BTreeMap::new(),
+            terms: BTreeMap::new(),
         }
     }
 
@@ -480,6 +729,28 @@ impl TableStats {
         self.histograms
             .insert(StatTarget::Expression(index), histogram);
         self
+    }
+
+    /// Record how many rows hold each term of a text-indexed column.
+    #[must_use]
+    pub fn with_terms(mut self, ordinal: Ordinal, terms: TermStats) -> Self {
+        self.terms.insert(ordinal, terms);
+        self
+    }
+
+    /// The fraction of rows holding `term` in `ordinal`'s text.
+    ///
+    /// [`TERM_SELECTIVITY`] when the column's terms have not been counted,
+    /// which keeps every unanalysed search costed exactly as it was.
+    #[must_use]
+    pub fn term_selectivity(&self, ordinal: Ordinal, term: &str) -> f64 {
+        match self.terms.get(&ordinal) {
+            Some(terms) => {
+                let rows = self.row_count.max(1) as f64;
+                (terms.documents(term) / rows).clamp(0.0, 1.0)
+            }
+            None => TERM_SELECTIVITY,
+        }
     }
 
     /// How `ordinal`'s values are spread, if that has been measured.
@@ -650,11 +921,19 @@ impl TableStats {
             // one document is the case this index exists for.
             //
             // No terms is no rows: see `Expr::Contains`.
-            Expr::Contains { terms, .. } => {
+            //
+            // With counted terms each factor is that term's own fraction, so a
+            // search naming a rare word is estimated as rare; without, each is
+            // `TERM_SELECTIVITY`, which is the estimate this always gave.
+            Expr::Contains { column, terms } => {
                 if terms.is_empty() {
                     return 0.0;
                 }
-                let independent = TERM_SELECTIVITY.powi(terms.len().min(8) as i32);
+                let independent: f64 = terms
+                    .iter()
+                    .take(8)
+                    .map(|term| self.term_selectivity(*column, term))
+                    .product();
                 independent.max(1.0 / (self.row_count.max(1)) as f64)
             }
             // A regular expression says nothing about where its matches sort,
@@ -744,5 +1023,279 @@ impl Statistics {
     #[must_use]
     pub fn has(&self, table: TableId) -> bool {
         self.tables.contains_key(&table)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::cast_precision_loss)]
+
+    use super::{TermCounter, VOCABULARY_SKETCH};
+    use std::collections::HashMap;
+
+    /// A Zipf-distributed stream of `postings` terms over `vocabulary` words,
+    /// with exponent `s`, from a fixed seed — the shape a text column's words
+    /// actually have, which is a few very common words and a long tail held by
+    /// one or two rows each.
+    fn zipf(postings: usize, vocabulary: usize, s: f64) -> Vec<String> {
+        let weights: Vec<f64> = (1..=vocabulary)
+            .map(|rank| 1.0 / (rank as f64).powf(s))
+            .collect();
+        let total: f64 = weights.iter().sum();
+        let mut cumulative = Vec::with_capacity(vocabulary);
+        let mut running = 0.0;
+        for weight in &weights {
+            running += weight / total;
+            cumulative.push(running);
+        }
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        (0..postings)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let draw = (state >> 11) as f64 / (1u64 << 53) as f64;
+                let rank = cumulative
+                    .partition_point(|&c| c < draw)
+                    .min(vocabulary - 1);
+                format!("w{rank}")
+            })
+            .collect()
+    }
+
+    fn oracle(stream: &[String]) -> HashMap<&str, u64> {
+        let mut counts = HashMap::new();
+        for term in stream {
+            *counts.entry(term.as_str()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    #[test]
+    fn every_count_is_exact_while_the_vocabulary_fits() {
+        let stream = zipf(20_000, 500, 1.1);
+        let truth = oracle(&stream);
+        let mut counter = TermCounter::new(truth.len());
+        for term in &stream {
+            counter.add(term);
+        }
+        let stats = counter.finish();
+        for (term, &count) in &truth {
+            assert_eq!(stats.documents(term), count as f64, "{term}");
+        }
+        // Exhaustive, so a word it never saw is in no row — not in "a few".
+        assert_eq!(stats.documents("never-written"), 0.0);
+    }
+
+    /// The two guarantees Space-Saving makes, checked against an exact count
+    /// of the same stream. Capacity is a fiftieth of the vocabulary, so most
+    /// words are evicted and the tail estimate does real work.
+    #[test]
+    fn past_capacity_the_counts_keep_space_savings_guarantees() {
+        let postings = 200_000;
+        let capacity = 1_000;
+        let stream = zipf(postings, 50_000, 1.1);
+        let truth = oracle(&stream);
+        let mut counter = TermCounter::new(capacity);
+        for term in &stream {
+            counter.add(term);
+        }
+        let exact_from_the_start: std::collections::HashSet<String> = counter
+            .terms
+            .iter()
+            .filter(|(_, _, error)| *error == 0)
+            .map(|(term, ..)| term.clone())
+            .collect();
+        assert!(
+            !exact_from_the_start.is_empty(),
+            "the stream held no word from the start"
+        );
+        let stats = counter.finish();
+        let bound = (postings / capacity) as f64;
+
+        assert!(
+            stats.untracked <= bound,
+            "the tail estimate {} exceeds the bound {bound} no untracked word can",
+            stats.untracked
+        );
+        // A word held since its first occurrence never inherited an error, so
+        // its count is not an estimate at all.
+        for (term, &count) in &truth {
+            if exact_from_the_start.contains(*term) {
+                assert_eq!(stats.documents(term), count as f64, "{term}");
+            }
+        }
+        // Every word, tracked or not, within N / capacity. A tracked word is
+        // off by the tail's mean less what it held before taking a counter,
+        // and both are at most the smallest counter; an untracked word and its
+        // estimate are each at most the smallest counter too.
+        for (term, &count) in &truth {
+            let estimate = stats.documents(term);
+            assert!(
+                (estimate - count as f64).abs() <= bound,
+                "{term}: holds {count}, estimated {estimate}, bound {bound}"
+            );
+        }
+    }
+
+    /// The one condition the ceiling exists for: the sketch reading the
+    /// vocabulary low.
+    ///
+    /// With the vocabulary right, the evicted mass over the words sharing it
+    /// cannot exceed the smallest counter — every error is at most that, and
+    /// there are at least as many sharers as errors — and a search of 148
+    /// streams with a vocabulary just past capacity found none that did. The
+    /// sketch is an estimate, though, and a low one shrinks the divisor. So
+    /// this counts 1,200 words cycling through 1,150 counters, then makes the
+    /// sketch say about 1,023, which is what a low reading looks like.
+    #[test]
+    fn a_vocabulary_read_low_keeps_the_tail_under_its_ceiling() {
+        let postings = 120_000;
+        let capacity = 1_150;
+        let mut counter = TermCounter::new(capacity);
+        for i in 0..postings {
+            counter.add(&format!("c{}", i % 1_200));
+        }
+        let step = u64::MAX / VOCABULARY_SKETCH as u64;
+        counter.sketch = (1..=VOCABULARY_SKETCH as u64).map(|i| i * step).collect();
+        assert!(
+            counter.vocabulary() < 1_100.0,
+            "the sketch was not read low"
+        );
+        let stats = counter.finish();
+        let ceiling = (postings / capacity) as f64;
+        assert!(
+            stats.untracked <= ceiling,
+            "tail estimated at {} rows, above the {ceiling} no untracked word can hold",
+            stats.untracked
+        );
+    }
+
+    /// The rule for a word that inherited an error, against the rules it was
+    /// chosen over, on the stream where they differed most. An oracle rather
+    /// than a fixed number: whichever rule is cheaper to state, this one has
+    /// to stay the more accurate.
+    #[test]
+    fn a_word_that_inherited_an_error_is_estimated_better_than_its_bounds() {
+        let stream = zipf(200_000, 5_000, 1.1);
+        let truth = oracle(&stream);
+        let mut counter = TermCounter::new(1_000);
+        for term in &stream {
+            counter.add(term);
+        }
+        let held: HashMap<String, (u64, u64)> = counter
+            .terms
+            .iter()
+            .map(|(term, count, error)| (term.clone(), (*count, *error)))
+            .collect();
+        let stats = counter.finish();
+        let error = |rule: &dyn Fn(&str) -> f64| {
+            truth
+                .iter()
+                .map(|(term, &count)| (rule(term) - count as f64).abs())
+                .sum::<f64>()
+                / truth.len() as f64
+        };
+        let ours = error(&|term| stats.documents(term));
+        let lower = error(&|term| {
+            held.get(term)
+                .map_or(stats.untracked, |&(count, error)| (count - error) as f64)
+        });
+        let upper = error(&|term| {
+            held.get(term)
+                .map_or(stats.untracked, |&(count, _)| count as f64)
+        });
+        println!("mean absolute error: ours {ours:.3}, lower bound {lower:.3}, upper {upper:.3}");
+        assert!(
+            ours < lower && ours < upper,
+            "{ours} against {lower} and {upper}"
+        );
+    }
+
+    /// Within six percent, which is about two standard errors for a sketch of
+    /// 1,024 hashes. Tighter than "close" on purpose: without the finaliser in
+    /// `term_hash`, FNV-1a alone missed two of these vocabularies by 8.5% and
+    /// 9.9%, and a bar of ten percent passed it.
+    #[test]
+    fn the_vocabulary_is_estimated_to_within_two_standard_errors() {
+        let mut streams: Vec<Vec<String>> = [VOCABULARY_SKETCH / 2, 5_000, 40_000]
+            .into_iter()
+            .map(|distinct| {
+                (0..distinct)
+                    .flat_map(|i| [format!("t{i}"), format!("t{i}")])
+                    .collect()
+            })
+            .collect();
+        streams.push(zipf(200_000, 50_000, 1.1));
+        streams.push(zipf(200_000, 5_000, 1.1));
+        streams.push(zipf(500_000, 200_000, 1.1));
+        for stream in streams {
+            let distinct = oracle(&stream).len();
+            let mut counter = TermCounter::new(16);
+            for term in &stream {
+                counter.add(term);
+            }
+            let estimate = counter.vocabulary();
+            let error = (estimate - distinct as f64).abs() / distinct as f64;
+            assert!(error <= 0.06, "{distinct} distinct estimated as {estimate}");
+            if distinct < VOCABULARY_SKETCH {
+                assert_eq!(estimate, distinct as f64, "below the sketch it counts");
+            }
+        }
+    }
+
+    /// The tail estimate against the tail's true mean. Not a guarantee — the
+    /// mean of a Zipf tail is a property of the distribution, not of the
+    /// algorithm — so this asserts a factor and prints what it found.
+    ///
+    /// Two streams: a long tail, and a vocabulary half again the counter's
+    /// size, which is where the accounting of the evicted mass decides the
+    /// answer. The draft's denominator was off by 2.2x on the second and
+    /// within the factor on the first, which is why the first alone was not
+    /// enough to catch it.
+    #[test]
+    fn the_tail_estimate_is_near_the_tails_true_mean() {
+        for (vocabulary, factor) in [(50_000, 1.5), (1_500, 1.15)] {
+            tail_within(vocabulary, factor);
+        }
+    }
+
+    fn tail_within(vocabulary: usize, factor: f64) {
+        let stream = zipf(200_000, vocabulary, 1.1);
+        let truth = oracle(&stream);
+        let mut counter = TermCounter::new(1_000);
+        for term in &stream {
+            counter.add(term);
+        }
+        let stats = counter.finish();
+        let untracked: Vec<f64> = truth
+            .iter()
+            .filter(|(term, _)| !stats.counts.contains_key(**term))
+            .map(|(_, &count)| count as f64)
+            .collect();
+        let mean = untracked.iter().sum::<f64>() / untracked.len() as f64;
+        println!(
+            "tail: {} words untracked, true mean {mean:.2}, estimated {:.2}",
+            untracked.len(),
+            stats.untracked
+        );
+        assert!(
+            stats.untracked / mean < factor && mean / stats.untracked < factor,
+            "tail estimated at {} against a true mean of {mean}",
+            stats.untracked
+        );
+    }
+
+    #[test]
+    fn two_analyses_of_one_stream_agree() {
+        let stream = zipf(50_000, 20_000, 1.1);
+        let run = || {
+            let mut counter = TermCounter::new(500);
+            for term in &stream {
+                counter.add(term);
+            }
+            counter.finish()
+        };
+        assert_eq!(run(), run());
     }
 }

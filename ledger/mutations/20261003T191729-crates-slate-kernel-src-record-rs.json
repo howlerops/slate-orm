@@ -1,0 +1,51 @@
+{
+  "at": "2026-10-03T19:17:29+00:00",
+  "file": "crates/slate-kernel/src/record.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--test",
+    "fulltext",
+    "--no-fail-fast"
+  ],
+  "commit": "9b060f8",
+  "python": "3.12.2",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "analyze counts nothing",
+      "old": "                        counter.add(&term);\n",
+      "new": "                        let _ = &term;\n",
+      "verdict": "caught",
+      "caught_by": [
+        "analyze_counts_the_rows_holding_each_term"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "analyze counts every indexed column, not only text ones",
+      "old": "            .filter(|index| index.is_text())\n",
+      "new": "",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the counts are dropped",
+      "old": "            stats = stats.with_terms(ordinal, counter.finish());\n",
+      "new": "            let _ = (ordinal, counter);\n",
+      "verdict": "caught",
+      "caught_by": [
+        "analyze_counts_the_rows_holding_each_term"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

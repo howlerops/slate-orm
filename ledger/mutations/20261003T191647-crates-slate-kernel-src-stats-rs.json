@@ -1,0 +1,32 @@
+{
+  "at": "2026-10-03T19:16:47+00:00",
+  "file": "crates/slate-kernel/src/stats.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-kernel",
+    "--lib",
+    "--test",
+    "fulltext",
+    "--no-fail-fast"
+  ],
+  "commit": "9b060f8",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the tail is not capped at the guarantee",
+      "old": "let untracked = (evicted as f64 / sharing).min(smallest);",
+      "new": "let untracked = evicted as f64 / sharing;",
+      "verdict": "caught",
+      "caught_by": [
+        "stats::tests::a_vocabulary_read_low_keeps_the_tail_under_its_ceiling"
+      ],
+      "suites_reported": 2,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
