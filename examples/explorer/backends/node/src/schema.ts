@@ -6,7 +6,7 @@
 // positionally-wrong. This file is that declaration, produced from the
 // catalog itself so the two cannot drift.
 
-import type { CheckRule, ForeignKey, Schemas, TableDef, Value } from "@slate-orm/client/edge";
+import type { CheckRule, ForeignKey, Schemas, TableDef, Value } from "@slate-orm/client";
 
 /**
  * One column of a row, with its tag checked.

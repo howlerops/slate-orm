@@ -170,6 +170,16 @@ stale.**
   asks for a worse rank to be written down rather than tuned away, so `RANKS`
   carries the new figure and a note saying why.
 
+**CI found one thing no local check could.** I had hand-edited the
+generated `examples/explorer/backends/node/src/schema.ts` to import from
+`@slate-orm/client/edge`. `scripts/codegen.py --check`, which runs only in
+CI's demo job because it needs a built head node, reported the file as drift
+(run 37222665203). The edit was also unnecessary: the import is
+`import type`, which is erased at build time, so the Worker bundle never loads
+grpc-js through it. The generator's output is restored, the drift check passes
+locally against a built node, and the four-adapter run still agrees on all 143
+cases.
+
 ## What this does not do
 
 - **It is not deployed to Cloudflare.** It runs under `workerd` locally and in
