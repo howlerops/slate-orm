@@ -1206,3 +1206,209 @@ async fn a_column_grant_holds_over_the_wire() {
         "the sentinel is not in the store"
     );
 }
+
+/// The rest of the read and write surface over the wire, as a narrowed role:
+/// a join, a grouped aggregate, and both predicate writes with `returning`.
+/// Every response is scanned for the hidden value, and the store is read
+/// afterwards as the full-table role to show the writes kept what their caller
+/// could not see.
+#[tokio::test]
+async fn a_column_grant_holds_over_joins_aggregates_and_predicate_writes() {
+    use slate_kernel::{Aggregate, Expr, Join, Query, Scalar};
+    use slate_server::convert::{
+        Space, aggregate_to_proto_query, column_ref, expr_to_proto, join_to_proto, scalar_to_proto,
+    };
+    const SENTINEL: &str = "sentinel@hidden.example";
+    fn as_<T>(role: &str) -> impl Fn(T) -> tonic::Request<T> + '_ {
+        move |message| common::as_principal(message, "u64:1", Some("u64:1"), role)
+    }
+    let users = common::users();
+    let col = |name: &str| users.ordinal_of(name).expect("column");
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+    client
+        .insert(as_("app")(insert(vec![
+            wire(&user(1, 1, 1, SENTINEL)),
+            wire(&user(1, 2, 1, "second-sentinel@hidden.example")),
+        ])))
+        .await
+        .expect("the full-table role inserts");
+    let mut seen = Vec::new();
+
+    let join = Join::equating(col("id"), col("id"));
+    let stream = client
+        .join(as_("email_blind")(pb::JoinRequest {
+            transaction: String::new(),
+            join: Some(join_to_proto(&users, &users, &join)),
+            freshness: None,
+        }))
+        .await
+        .expect("a narrowed reader may join on a readable key")
+        .into_inner();
+    let (joined, _) = common::drain_joined(stream).await;
+    assert_eq!(joined.len(), 2);
+    seen.push(format!("{joined:?}"));
+
+    let refused = client
+        .join(as_("email_blind")(pb::JoinRequest {
+            transaction: String::new(),
+            join: Some(join_to_proto(
+                &users,
+                &users,
+                &Join::equating(col("email"), col("email")),
+            )),
+            freshness: None,
+        }))
+        .await
+        .expect_err("a join key on a hidden column is a reference");
+    assert_eq!(refused.code(), Code::PermissionDenied, "{refused:?}");
+    seen.push(format!("{refused:?}"));
+
+    let stream = client
+        .aggregate(as_("email_blind")(pb::AggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(aggregate_to_proto_query(
+                &users,
+                &Query::all(),
+                &[col("owner")],
+                &[Aggregate::Count],
+                &Expr::True,
+            )),
+            freshness: None,
+        }))
+        .await
+        .expect("a narrowed reader may group by a readable column")
+        .into_inner();
+    let (groups, _) = common::drain_groups(stream).await;
+    assert_eq!(groups.len(), 1);
+    seen.push(format!("{groups:?}"));
+
+    let refused = client
+        .aggregate(as_("email_blind")(pb::AggregateRequest {
+            transaction: String::new(),
+            aggregate: Some(aggregate_to_proto_query(
+                &users,
+                &Query::all(),
+                &[col("email")],
+                &[Aggregate::Count],
+                &Expr::True,
+            )),
+            freshness: None,
+        }))
+        .await
+        .expect_err("grouping by a hidden column discloses it");
+    assert_eq!(refused.code(), Code::PermissionDenied, "{refused:?}");
+    seen.push(format!("{refused:?}"));
+
+    let space = Space::input(&users, 0, 0);
+    let updated = client
+        .update_where(as_("email_blind_editor")(pb::UpdateWhereRequest {
+            transaction: String::new(),
+            table: "users".to_owned(),
+            filter: Some(expr_to_proto(
+                &space,
+                &Expr::eq(col("id"), slate_tuple::Value::U64(1)),
+            )),
+            assignments: vec![pb::Assignment {
+                column: Some(column_ref(0, col("owner").0)),
+                value: Some(scalar_to_proto(&space, &Scalar::column(col("owner")))),
+            }],
+            returning: true,
+            schema: Some(claim("users")),
+        }))
+        .await
+        .expect("a narrowed editor may update by a readable predicate")
+        .into_inner();
+    assert_eq!(updated.rows.len(), 1);
+    seen.push(format!("{updated:?}"));
+
+    let deleted = client
+        .delete_where(as_("email_blind_editor")(pb::DeleteWhereRequest {
+            transaction: String::new(),
+            table: "users".to_owned(),
+            filter: Some(expr_to_proto(
+                &space,
+                &Expr::eq(col("id"), slate_tuple::Value::U64(2)),
+            )),
+            returning: true,
+            schema: Some(claim("users")),
+        }))
+        .await
+        .expect("a narrowed editor may delete by a readable predicate")
+        .into_inner();
+    assert_eq!(deleted.rows.len(), 1);
+    seen.push(format!("{deleted:?}"));
+
+    for (at, text) in seen.iter().enumerate() {
+        assert!(
+            !text.contains("hidden.example"),
+            "response {at} carried a hidden value: {text}"
+        );
+    }
+
+    // The update wrote back the whole row it read, so the hidden column must
+    // have survived it; the full-table role reads it unchanged.
+    let (rows, _) = common::drain(
+        client
+            .query(as_("app")(pb::QueryRequest {
+                transaction: String::new(),
+                query: Some(common::plain_query("users")),
+                freshness: None,
+            }))
+            .await
+            .expect("app queries")
+            .into_inner(),
+    )
+    .await;
+    assert_eq!(rows.len(), 1, "the delete removed exactly its row");
+    assert!(
+        format!("{rows:?}").contains(SENTINEL),
+        "the narrowed update erased the hidden column"
+    );
+}
+
+/// A policy that filters on a column its subject cannot read: the column is
+/// decoded to evaluate the policy and must not come back over the wire.
+#[tokio::test]
+async fn a_policys_hidden_column_is_withheld_over_the_wire() {
+    // The owner id is the sentinel: it occurs nowhere else in the request or
+    // the response unless the column leaks.
+    const OWNER: &str = "u64:4242424242";
+    fn as_<T>(role: &str) -> impl Fn(T) -> tonic::Request<T> + '_ {
+        move |message| common::as_principal(message, OWNER, Some("u64:1"), role)
+    }
+    let backing = Arc::new(MemoryStore::new());
+    let serving = serving_leader(Arc::clone(&backing)).await;
+    let mut client = serving.client().await;
+    client
+        .insert(as_("app")(insert(vec![wire(&user(
+            1,
+            1,
+            4_242_424_242,
+            "a@example.com",
+        ))])))
+        .await
+        .expect("insert");
+    let (rows, _) = common::drain(
+        client
+            .query(as_("owner_blind")(pb::QueryRequest {
+                transaction: String::new(),
+                query: Some(common::plain_query("users")),
+                freshness: None,
+            }))
+            .await
+            .expect("an owner-blind reader may query")
+            .into_inner(),
+    )
+    .await;
+    assert_eq!(rows.len(), 1, "the policy admits the caller's own row");
+    assert!(
+        !format!("{rows:?}").contains("4242424242"),
+        "the policy's column came back: {rows:?}"
+    );
+    assert!(
+        format!("{rows:?}").contains("a@example.com"),
+        "the readable column is there"
+    );
+}

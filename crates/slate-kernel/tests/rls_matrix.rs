@@ -61,6 +61,16 @@ fn col(name: &str) -> Ordinal {
 fn security() -> SecurityCatalog {
     SecurityCatalog::new()
         .grant(Grant::new("reader", DOCUMENTS, [Action::Read]))
+        // Every column but `owner_id`, which is the one the policy reads. See
+        // `every_access_path_withholds_the_policys_column`.
+        .grant(
+            Grant::read_columns(
+                "analyst",
+                &documents(),
+                ["tenant_id", "id", "title", "score", "embedding"].map(col),
+            )
+            .unwrap(),
+        )
         .policy(Policy::new(
             "own_documents",
             DOCUMENTS,
@@ -138,9 +148,13 @@ fn titles(rows: &[Row]) -> Vec<String> {
 type Run = fn(
     &RecordStore<MemoryStore>,
     SecurityContext,
-) -> std::pin::Pin<Box<dyn Future<Output = Vec<String>> + Send + '_>>;
+) -> std::pin::Pin<Box<dyn Future<Output = Vec<Row>> + Send + '_>>;
 
-/// One named read path, run as `ctx`, yielding the titles it let through.
+/// One named read path, run as `ctx`, yielding the rows it let through.
+///
+/// Rows rather than titles, so that what a path returns *besides* the right
+/// rows can be checked too: `every_access_path_withholds_the_policys_column`
+/// runs the same paths as a reader who may not see `owner_id`.
 struct Path {
     name: &'static str,
     /// The titles this path should return, sorted. Every path that reads the
@@ -167,14 +181,12 @@ fn paths() -> Vec<Path> {
         path!("table scan", &PERMITTED, |store, ctx| {
             let table = documents();
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .query(&ctx, &table, Expr::True, ScanOrder::Ascending)
+            txn.query(&ctx, &table, Expr::True, ScanOrder::Ascending)
                 .await
                 .unwrap()
                 .collect()
                 .await
-                .unwrap();
-            titles(&rows)
+                .unwrap()
         }),
         path!(
             "index scan on a secondary index",
@@ -182,53 +194,47 @@ fn paths() -> Vec<Path> {
             |store, ctx| {
                 let table = documents();
                 let txn = store.begin().await.unwrap();
-                let rows = txn
-                    .query(
-                        &ctx,
-                        &table,
-                        Expr::compare(col("score"), CmpOp::Ge, Value::I64(0)),
-                        ScanOrder::Ascending,
-                    )
-                    .await
-                    .unwrap()
-                    .collect()
-                    .await
-                    .unwrap();
-                titles(&rows)
+                txn.query(
+                    &ctx,
+                    &table,
+                    Expr::compare(col("score"), CmpOp::Ge, Value::I64(0)),
+                    ScanOrder::Ascending,
+                )
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap()
             }
         ),
         path!("descending scan", &PERMITTED, |store, ctx| {
             let table = documents();
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .query(&ctx, &table, Expr::True, ScanOrder::Descending)
+            txn.query(&ctx, &table, Expr::True, ScanOrder::Descending)
                 .await
                 .unwrap()
                 .collect()
                 .await
-                .unwrap();
-            titles(&rows)
+                .unwrap()
         }),
         path!("point get on the full primary key", &[], |store, ctx| {
             // Asks for exactly one row Alice may not see. It must come back
             // empty, not forbidden: see `security.rs` for why probing matters.
             let table = documents();
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .execute(
-                    &ctx,
-                    &table,
-                    &Query::all().filter(
-                        Expr::eq(col("tenant_id"), Value::Uuid(Uuid::from_u128(TENANT_A)))
-                            .and(Expr::eq(col("id"), Value::U64(3))),
-                    ),
-                )
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap();
-            titles(&rows)
+            txn.execute(
+                &ctx,
+                &table,
+                &Query::all().filter(
+                    Expr::eq(col("tenant_id"), Value::Uuid(Uuid::from_u128(TENANT_A)))
+                        .and(Expr::eq(col("id"), Value::U64(3))),
+                ),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
         }),
         path!(
             "point gets from an IN over the key",
@@ -236,21 +242,19 @@ fn paths() -> Vec<Path> {
             |store, ctx| {
                 let table = documents();
                 let txn = store.begin().await.unwrap();
-                let rows = txn
-                    .execute(
-                        &ctx,
-                        &table,
-                        &Query::all().filter(Expr::In {
-                            column: col("id"),
-                            values: (1..=5).map(Value::U64).collect(),
-                        }),
-                    )
-                    .await
-                    .unwrap()
-                    .collect()
-                    .await
-                    .unwrap();
-                titles(&rows)
+                txn.execute(
+                    &ctx,
+                    &table,
+                    &Query::all().filter(Expr::In {
+                        column: col("id"),
+                        values: (1..=5).map(Value::U64).collect(),
+                    }),
+                )
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap()
             }
         ),
         path!(
@@ -261,86 +265,76 @@ fn paths() -> Vec<Path> {
                 // filled before the policy ran, the forbidden rows would be here.
                 let table = documents();
                 let txn = store.begin().await.unwrap();
-                let rows = txn
-                    .execute(
-                        &ctx,
-                        &table,
-                        &Query::all().sort_by([SortKey::desc(col("score"))]).limit(5),
-                    )
-                    .await
-                    .unwrap()
-                    .collect()
-                    .await
-                    .unwrap();
-                titles(&rows)
+                txn.execute(
+                    &ctx,
+                    &table,
+                    &Query::all().sort_by([SortKey::desc(col("score"))]).limit(5),
+                )
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap()
             }
         ),
         path!("a computed column, sorted by", &PERMITTED, |store, ctx| {
             let table = documents();
             let doubled = Query::computed(&table, 0);
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .execute(
-                    &ctx,
-                    &table,
-                    &Query::all()
-                        .computing([Scalar::column(col("score")) * 2i64])
-                        .sort_by([SortKey::asc(doubled)]),
-                )
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap();
-            titles(&rows)
+            txn.execute(
+                &ctx,
+                &table,
+                &Query::all()
+                    .computing([Scalar::column(col("score")) * 2i64])
+                    .sort_by([SortKey::asc(doubled)]),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
         }),
         path!("LIKE", &PERMITTED, |store, ctx| {
             let table = documents();
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .execute(
-                    &ctx,
-                    &table,
-                    &Query::all().filter(Expr::like(col("title"), "%o%")),
-                )
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap();
-            titles(&rows)
+            txn.execute(
+                &ctx,
+                &table,
+                &Query::all().filter(Expr::like(col("title"), "%o%")),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
         }),
         path!("ILIKE", &PERMITTED, |store, ctx| {
             let table = documents();
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .execute(
-                    &ctx,
-                    &table,
-                    &Query::all().filter(Expr::ilike(col("title"), "%O%")),
-                )
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap();
-            titles(&rows)
+            txn.execute(
+                &ctx,
+                &table,
+                &Query::all().filter(Expr::ilike(col("title"), "%O%")),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
         }),
         path!("a regular expression", &PERMITTED, |store, ctx| {
             let table = documents();
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .execute(
-                    &ctx,
-                    &table,
-                    &Query::all().filter(Expr::matches(col("title"), ".")),
-                )
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap();
-            titles(&rows)
+            txn.execute(
+                &ctx,
+                &table,
+                &Query::all().filter(Expr::matches(col("title"), ".")),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
         }),
         path!("nearest-neighbour search", &PERMITTED, |store, ctx| {
             // The target sits nearest the rows Alice may *not* see, so a search
@@ -348,22 +342,21 @@ fn paths() -> Vec<Path> {
             let table = documents();
             let distance = Query::computed(&table, 0);
             let txn = store.begin().await.unwrap();
-            let rows = txn
-                .execute(
-                    &ctx,
-                    &table,
-                    &Query::all()
-                        .computing([Scalar::column(col("embedding"))
-                            .distance(vec![0.5_f32, 1.0], Metric::L2)])
-                        .sort_by([SortKey::asc(distance)])
-                        .limit(3),
-                )
-                .await
-                .unwrap()
-                .collect()
-                .await
-                .unwrap();
-            titles(&rows)
+            txn.execute(
+                &ctx,
+                &table,
+                &Query::all()
+                    .computing([
+                        Scalar::column(col("embedding")).distance(vec![0.5_f32, 1.0], Metric::L2)
+                    ])
+                    .sort_by([SortKey::asc(distance)])
+                    .limit(3),
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap()
         }),
         path!(
             "a projection that an index covers",
@@ -373,20 +366,18 @@ fn paths() -> Vec<Path> {
                 // be skipped — and skipping it must not skip the policy.
                 let table = documents();
                 let txn = store.begin().await.unwrap();
-                let rows = txn
-                    .query_projected(
-                        &ctx,
-                        &table,
-                        Expr::compare(col("score"), CmpOp::Ge, Value::I64(0)),
-                        ScanOrder::Ascending,
-                        &Projection::Columns(vec![col("title"), col("score")]),
-                    )
-                    .await
-                    .unwrap()
-                    .collect()
-                    .await
-                    .unwrap();
-                titles(&rows)
+                txn.query_projected(
+                    &ctx,
+                    &table,
+                    Expr::compare(col("score"), CmpOp::Ge, Value::I64(0)),
+                    ScanOrder::Ascending,
+                    &Projection::Columns(vec![col("title"), col("score")]),
+                )
+                .await
+                .unwrap()
+                .collect()
+                .await
+                .unwrap()
             }
         ),
     ]
@@ -402,7 +393,7 @@ async fn every_access_path_applies_the_policy() {
     // breaks the policy it usually breaks it on more than one path.
     let mut failures: Vec<String> = Vec::new();
     for path in paths() {
-        let got = (path.run)(&store, alice()).await;
+        let got = titles(&(path.run)(&store, alice()).await);
 
         let leaked: Vec<&str> = FORBIDDEN
             .into_iter()
@@ -430,6 +421,44 @@ async fn every_access_path_applies_the_policy() {
         failures.len(),
         failures.join("\n  ")
     );
+}
+
+/// The same twelve paths, as Alice with a column grant that leaves out
+/// `owner_id` — the very column the policy filters on. Each must return the
+/// rows the policy admits, as before, and none may carry the column: it was
+/// decoded to evaluate the policy and has to be withheld on the way out,
+/// whichever access path produced the row. `docs/column-grants.md` §3.
+///
+/// No path here references `owner_id` itself, so none is refused; every one
+/// reaches the concealment. That is why this battery and not another: the
+/// column grants' own oracle in `column_grants.rs` covers the refusals.
+#[tokio::test]
+async fn every_access_path_withholds_the_policys_column() {
+    let store = seeded().await;
+    let analyst = SecurityContext::new(
+        Principal::new(Value::Uuid(Uuid::from_u128(ALICE)))
+            .with_tenant(Value::Uuid(Uuid::from_u128(TENANT_A)))
+            .with_role("analyst"),
+    );
+    let mut failures: Vec<String> = Vec::new();
+    for path in paths() {
+        let rows = (path.run)(&store, analyst.clone()).await;
+        let expected: Vec<String> = path.expected.iter().map(|s| (*s).to_owned()).collect();
+        if titles(&rows) != expected {
+            failures.push(format!(
+                "{}: returned {:?}, expected {expected:?}",
+                path.name,
+                titles(&rows)
+            ));
+        }
+        if let Some(row) = rows
+            .iter()
+            .find(|r| r.get(col("owner_id")) != Some(&Value::Null))
+        {
+            failures.push(format!("{}: handed out owner_id: {row:?}", path.name));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n  "));
 }
 
 /// Grouping happens after the policy, so the counts describe the caller's slice

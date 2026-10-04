@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-04T17:00:21+00:00",
+  "file": "crates/slate-kernel/src/read.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_concealment.py"
+  ],
+  "commit": "47c939c",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "get stops reading raw, so its entry goes stale",
+      "old": "        Ok(read_row_unchecked(self.snapshot, table, primary_key)",
+      "new": "        Ok(super_read(self.snapshot, table, primary_key)",
+      "verdict": "caught",
+      "caught_by": [
+        "check_concealment: FAIL  ROSTER names `get` in crates/slate-kernel/src/read.rs, which no longer calls a primitive; remove the entry, or a new call in a function of the same name will be excused by a reason written for something else."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

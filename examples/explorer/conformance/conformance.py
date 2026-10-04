@@ -461,6 +461,16 @@ CASES: list[tuple[str, str, Any, str]] = [
     # switching SDKs has to rewrite their error handling.
     ("a reader may not explain", "/api/explain", {"table": "books"}, "reader"),
     ("a stranger may not read", "/api/query", {"table": "books"}, "stranger"),
+    # A column grant through three SDKs. The read is the interesting half: it
+    # must succeed, with `born` null in every row, and all three clients must
+    # render that null the same way. The refusals must carry the same kind.
+    ("an analyst reads authors without born", "/api/query",
+     {"table": "authors", "sort": [{"column": 0, "direction": "asc"}]}, "analyst"),
+    ("an analyst may not filter on born", "/api/query",
+     {"table": "authors", "filter": {"op": "ge", "column": 3, "value": {"i64": "1900"}}},
+     "analyst"),
+    ("an analyst may not sort by born", "/api/query",
+     {"table": "authors", "sort": [{"column": 3, "direction": "asc"}]}, "analyst"),
     ("no such table", "/api/query", {"table": "nope"}, "app"),
     ("no such filter operator", "/api/query",
      {"table": "books", "filter": {"op": "approximately", "column": 0}}, "app"),
@@ -805,6 +815,8 @@ EXPECTED_REFUSALS = {
     "a reader may not explain",
     "a reader may not explain a grouping",
     "a stranger may not read",
+    "an analyst may not filter on born",
+    "an analyst may not sort by born",
     "no such table",
     "no such filter operator",
     "no such grouping",

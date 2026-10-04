@@ -482,10 +482,12 @@ single request cannot.
 
 ## Identity
 
-Every request may carry `X-Demo-Identity: app | reader | stranger`. The adapter
-maps it to the head node's three identity headers. This is how the demo shows
-RBAC and row-level security live: the same query, three answers, none of them
-the adapter's doing.
+Every request may carry `X-Demo-Identity: app | reader | stranger | analyst`.
+The adapter maps it to the head node's three identity headers. This is how the
+demo shows RBAC and row-level security live: the same query, different
+answers, none of them the adapter's doing. `analyst` holds a *column* grant —
+`authors` without `born` — so its rows come back with that column null and a
+query that references it is refused.
 
 ### `POST /api/predicate-write`
 

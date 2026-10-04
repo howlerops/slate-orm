@@ -71,12 +71,10 @@ T4 — column-level grants.
     cannot be a privilege boundary, because a caller needs the grant on
     every base table and having it lets them read the columns the view
     omits. "Give the analysts a narrowed view" does not work.
-    Built in the kernel and the daemon: `docs/column-grants.md`, whose
-    "Build order" section says which steps landed. What is left is its
-    step 3's guard — a check that every row-returning path conceals,
-    in the style of `scripts/check_handlers.py` — and step 5, the same
-    restricted identity through the three clients' conformance runner.
-    The sentinel oracle is `crates/slate-kernel/tests/column_grants.rs`;
+    Built, every step: `docs/column-grants.md`. Its guard is
+    `scripts/check_concealment.py`; a new way of reading rows out of
+    storage needs a roster entry there saying why it is concealed. The
+    sentinel oracle is `crates/slate-kernel/tests/column_grants.rs`;
     extend it rather than adding a test per path.
 
 DO NOT DO THESE — they are decided, not forgotten. Each has a `deliberate`

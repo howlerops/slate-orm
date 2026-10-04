@@ -124,6 +124,8 @@ guard-scope|.|python3 scripts/check_guard_scope.py
 guard-scope-guard|.|python3 scripts/test_check_guard_scope.py
 secret-types|.|python3 scripts/check_secret_types.py
 secret-types-guard|.|python3 scripts/test_check_secret_types.py
+concealment|.|python3 scripts/check_concealment.py
+concealment-guard|.|python3 scripts/test_check_concealment.py
 handler-auth|.|python3 scripts/check_handlers.py
 handler-auth-guard|.|python3 scripts/test_check_handlers.py
 conformance-tally|.|python3 examples/explorer/conformance/test_conformance.py

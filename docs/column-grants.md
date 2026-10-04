@@ -298,8 +298,8 @@ unrestricted caller's rows with the hidden columns nulled.
 ## Build order
 
 Each step is refused-by-default until the next lands, so no intermediate state
-fails open. Steps 1, 2 and 4 landed, and the oracle half of step 3; what did
-not is marked.
+fails open. Every step landed except the §7 half of step 4, which was
+withdrawn.
 
 1. **Kernel.** `Grant` gains an optional column set, and `SecurityCatalog` gains
    `readable(context, table)`. Column grants are refused for any action but
@@ -310,19 +310,21 @@ not is marked.
    `_if_unchanged` forms for restricted callers.
 3. **The sentinel oracle** across the kernel suites — *built*, as
    `crates/slate-kernel/tests/column_grants.rs`, over its own battery rather
-   than every existing suite — with the new guard requiring every
-   row-returning path to pass through the narrowing function — **not built**.
-   The concealment sits in `QueryCursor::next`, the one exit every read and
-   join side passes through, plus `get` and the two predicate writes'
-   returned rows; a new row-returning path that bypassed the cursor would not
-   be caught by anything but the oracle.
+   than every existing suite, and `rls_matrix.rs`'s twelve access paths run
+   again as a reader who may not see the policy's own column — *built*. The
+   guard is `scripts/check_concealment.py`, which rosters every call to the
+   five primitives that read a row out of storage, each with the reason its
+   rows are concealed or never reach a caller — *built*. The concealment sits
+   in `QueryCursor::next`, the one exit every read and join side passes
+   through, plus `get` and the two predicate writes' returned rows.
 4. **serverd.** The `columns` key and its load-time refusals — *built*. The
    §7 half was withdrawn.
 5. **The three clients**, through the conformance runner, with the sentinel
-   scan over their responses — **not built**. No client API changed; one
-   end-to-end test over gRPC (`a_column_grant_holds_over_the_wire` in
-   `slate-server/tests/security_probe.rs`) covers `Query`, `Get` and a
-   refused filter.
+   scan over their responses — *built*, as the explorer's `analyst` identity
+   and three conformance cases the Python, Go and TypeScript adapters must
+   agree on. No client API changed. Over gRPC itself, `security_probe.rs`
+   covers `Query`, `Get`, a join, a grouped aggregate, both predicate writes
+   and a role that cannot read its own policy's column.
 
 ## Left open
 

@@ -1,0 +1,53 @@
+{
+  "at": "2026-10-04T16:55:51+00:00",
+  "file": "crates/slate-kernel/src/record.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-server",
+    "--test",
+    "security_probe",
+    "--no-fail-fast"
+  ],
+  "commit": "47c939c",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a predicate write reads concealed rows",
+      "old": "            .reads()\n            .execute_for_write(context, table, &Query::all().filter(predicate))",
+      "new": "            .reads()\n            .execute(context, table, &Query::all().filter(predicate))",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_grant_holds_over_joins_aggregates_and_predicate_writes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "update_where returns hidden columns",
+      "old": "            written.push(crate::read::conceal(next, &concealed));",
+      "new": "            written.push(crate::read::conceal(next, &concealed[..0]));",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_grant_holds_over_joins_aggregates_and_predicate_writes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "delete_where returns hidden columns",
+      "old": "            removed.push(crate::read::conceal(row, &concealed));",
+      "new": "            removed.push(crate::read::conceal(row, &concealed[..0]));",
+      "verdict": "caught",
+      "caught_by": [
+        "a_column_grant_holds_over_joins_aggregates_and_predicate_writes"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

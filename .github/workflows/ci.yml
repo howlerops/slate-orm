@@ -363,6 +363,12 @@ jobs:
       - run: python3 scripts/test_check_guard_scope.py
       - run: python3 scripts/check_secret_types.py
       - run: python3 scripts/test_check_secret_types.py
+      # Every place a row is read out of storage is accounted for by the
+      # column rules: concealed on the way out, or never handed to a caller.
+      # A new path that read rows some other way would skip the concealment
+      # of withheld columns; this is what says so. `docs/column-grants.md`.
+      - run: python3 scripts/check_concealment.py
+      - run: python3 scripts/test_check_concealment.py
       - run: python3 scripts/check_cited_docs.py
       - run: python3 scripts/test_check_cited_docs.py
       # The same failure one level up from check_cited_tests.py, which

@@ -140,6 +140,7 @@ const IDENTITIES: Record<string, Identity> = {
   app: { principal: "u64:1", tenant: "u64:1", roles: ["app"] },
   reader: { principal: "u64:2", tenant: "u64:1", roles: ["reader"] },
   stranger: { principal: "u64:3", tenant: "u64:1", roles: ["stranger"] },
+  analyst: { principal: "u64:4", tenant: "u64:1", roles: ["analyst"] },
 };
 
 const TABLES = ["authors", "books", "sales", "shipments"];

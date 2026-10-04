@@ -87,6 +87,7 @@ IDENTITIES = {
     "app": Identity("u64:1", tenant="u64:1", roles=["app"]),
     "reader": Identity("u64:2", tenant="u64:1", roles=["reader"]),
     "stranger": Identity("u64:3", tenant="u64:1", roles=["stranger"]),
+    "analyst": Identity("u64:4", tenant="u64:1", roles=["analyst"]),
 }
 
 

@@ -285,6 +285,17 @@ role = "stranger"
 tables = ["sales"]
 actions = ["read"]
 
+# `analyst` reads `authors` without `born`: a column grant, which is what a
+# view cannot be here (`docs/views.md` §2, `docs/column-grants.md`). Its
+# default read comes back with `born` null, and a query that so much as
+# filters or sorts on `born` is refused — identically, through all three SDKs,
+# which is what the conformance cases for it check.
+[[security.grants]]
+role = "analyst"
+tables = ["authors"]
+actions = ["read"]
+columns = ["id", "name", "country"]
+
 # Row-level security on `books`.
 #
 # Worth reading carefully, because the first version of this file was wrong in

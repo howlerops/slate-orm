@@ -980,6 +980,22 @@ WITNESS: dict[str, tuple[str | None, str]] = {
      "def never_fires() -> list[str]:",
      "scripts/test_check_toolchain_pins.py",
  ),
+ "concealment-guard": (
+     "ROSTER: dict[tuple[str, str], str]",
+     "scripts/check_concealment.py",
+ ),
+ "analyst-through-three-sdks": (
+     "an analyst may not filter on born",
+     "examples/explorer/conformance/conformance.py",
+ ),
+ "column-grants-over-the-wire": (
+     "fn a_column_grant_holds_over_joins_aggregates_and_predicate_writes",
+     "crates/slate-server/tests/security_probe.rs",
+ ),
+ "rls-battery-narrowed": (
+     "fn every_access_path_withholds_the_policys_column",
+     "crates/slate-kernel/tests/rls_matrix.rs",
+ ),
 }
 
 #: Closures that leave nothing in the tree, with the reason each leaves nothing.
@@ -2806,6 +2822,18 @@ WITNESSED: dict[tuple[str, str], str] = {
     ('2026-09-21-contains-on-the-wire.md',
      'No `CONTAINS` in the SQL front end and no search box in the '):
         'demo-has-a-search-box',
+    ('2026-10-03-column-grants-built.md',
+     'No guard requires a new row-returning path to conceal.'):
+        'concealment-guard',
+    ('2026-10-03-column-grants-built.md',
+     'The three clients were not run against a narrowed identity.'):
+        'analyst-through-three-sdks',
+    ('2026-10-03-column-grants-built.md',
+     'Joins, aggregates and the predicate writes are not covered o'):
+        'column-grants-over-the-wire',
+    ('2026-10-03-column-grants-built.md',
+     'The oracle is one battery, not every existing suite.'):
+        'rls-battery-narrowed',
 }
 
 

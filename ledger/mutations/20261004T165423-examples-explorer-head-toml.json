@@ -1,0 +1,40 @@
+{
+  "at": "2026-10-04T16:54:23+00:00",
+  "file": "examples/explorer/head.toml",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "-c",
+    "cd examples/explorer && ./run.sh --conformance"
+  ],
+  "commit": "47c939c",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the analyst's grant is whole-table",
+      "old": "actions = [\"read\"]\ncolumns = [\"id\", \"name\", \"country\"]\n",
+      "new": "actions = [\"read\"]\n",
+      "verdict": "caught",
+      "caught_by": [
+        "an analyst may not filter on born (analyst): listed as a refusal and all three answered it; the list is stale",
+        "an analyst may not sort by born (analyst): listed as a refusal and all three answered it; the list is stale"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the analyst may read born",
+      "old": "columns = [\"id\", \"name\", \"country\"]\n",
+      "new": "columns = [\"id\", \"name\", \"country\", \"born\"]\n",
+      "verdict": "caught",
+      "caught_by": [
+        "an analyst may not filter on born (analyst): listed as a refusal and all three answered it; the list is stale",
+        "an analyst may not sort by born (analyst): listed as a refusal and all three answered it; the list is stale"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

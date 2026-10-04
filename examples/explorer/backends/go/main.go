@@ -35,6 +35,7 @@ var identities = map[string]slate.Identity{
 	"app":      {Principal: "u64:1", Tenant: "u64:1", Roles: []string{"app"}},
 	"reader":   {Principal: "u64:2", Tenant: "u64:1", Roles: []string{"reader"}},
 	"stranger": {Principal: "u64:3", Tenant: "u64:1", Roles: []string{"stranger"}},
+	"analyst":  {Principal: "u64:4", Tenant: "u64:1", Roles: []string{"analyst"}},
 }
 
 type server struct {

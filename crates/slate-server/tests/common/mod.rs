@@ -254,6 +254,35 @@ pub fn security() -> SecurityCatalog {
             )
             .expect("a valid column grant"),
         )
+        // The same narrowed read, plus table-level writes: the shape that
+        // reaches the predicate writes, which read whole rows and must
+        // conceal only what they return.
+        .grant(
+            Grant::read_columns(
+                "email_blind_editor",
+                &users(),
+                ["tenant_id", "id", "owner"].map(|c| users().ordinal_of(c).expect("column")),
+            )
+            .expect("a valid column grant"),
+        )
+        .grant(Grant::new(
+            "email_blind_editor",
+            USERS,
+            [Action::Update, Action::Delete],
+        ))
+        // Cannot read `owner`, the very column `own_rows` filters on: the
+        // policy has to decode it to decide which rows are theirs, and the
+        // cursor has to withhold it afterwards. The other two roles never
+        // reach that path, because nothing decodes `email` they did not ask
+        // for.
+        .grant(
+            Grant::read_columns(
+                "owner_blind",
+                &users(),
+                ["tenant_id", "id", "email"].map(|c| users().ordinal_of(c).expect("column")),
+            )
+            .expect("a valid column grant"),
+        )
         .policy(Policy::new(
             "own_rows",
             USERS,

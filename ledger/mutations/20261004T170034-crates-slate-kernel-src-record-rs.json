@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-04T17:00:34+00:00",
+  "file": "crates/slate-kernel/src/record.rs",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_concealment.py"
+  ],
+  "commit": "47c939c",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a raw row read moves into an unrostered function",
+      "old": "    async fn read_rows_concurrently(",
+      "new": "    async fn read_rows_concurrently_elsewhere(",
+      "verdict": "caught",
+      "caught_by": [
+        "check_concealment: FAIL  crates/slate-kernel/src/record.rs:1714: `read_rows_concurrently_elsewhere` calls `read_row_unchecked`, which reads a row with every column in it, and is not in ROSTER."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

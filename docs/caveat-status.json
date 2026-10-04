@@ -16064,30 +16064,30 @@
     {
       "entry": "2026-10-03-column-grants-built.md",
       "key": "No guard requires a new row-returning path to conceal.",
-      "verdict": "deliberate",
-      "reviewed": "2026-10-03",
-      "by": "Concealment was placed where a guard is least needed: `QueryCursor::next` is the only method that hands rows out of a cursor, and every read, join side, chain step and probe opens one through `SecuredReads::plan`, which sets the plan's concealed columns. The three exceptions (`get` and the two predicate writes' returned rows) are each covered by the oracle and by a mutation that removes their concealment. A static guard would have to recognise \"returns a Row to a caller\" across crates, which `check_handlers.py` shows is a roster maintained by hand; the oracle catches a leak by its output instead, whatever path produced it, provided the path is in its battery."
+      "verdict": "closed",
+      "reviewed": "2026-10-04",
+      "by": "scripts/check_concealment.py (ROSTER: dict[tuple[str, str], str]); ledger/2026-10-04-the-column-grant-gaps-closed.md"
     },
     {
       "entry": "2026-10-03-column-grants-built.md",
       "key": "The three clients were not run against a narrowed identity.",
-      "verdict": "deliberate",
-      "reviewed": "2026-10-03",
-      "by": "Enforcement is entirely server-side, and the clients carry nothing new: the identity headers a narrowed role sends are the ones every role sends, and a refusal arrives as `PERMISSION_DENIED`, which all three already map. `a_column_grant_holds_over_the_wire` runs the server's real gRPC path. A three-client conformance case would test the same server three more times through three transports, which matters for features with client-side surface, and this one has none."
+      "verdict": "closed",
+      "reviewed": "2026-10-04",
+      "by": "examples/explorer/conformance/conformance.py (an analyst may not filter on born); ledger/2026-10-04-the-column-grant-gaps-closed.md"
     },
     {
       "entry": "2026-10-03-column-grants-built.md",
       "key": "Joins, aggregates and the predicate writes are not covered o",
-      "verdict": "deliberate",
-      "reviewed": "2026-10-03",
-      "by": "The server's Join, Aggregate, DeleteWhere and UpdateWhere handlers call the same kernel functions the kernel suite drives as the narrowed role (`SecuredReads::join`, `aggregate`, `delete_where`, `update_where`), and convert their rows with the same `row_to_proto` the covered `Query` path uses. What the wire adds is conversion, which carries a concealed null exactly as it carries any other. Over-the-wire cases for each would add server boilerplate per handler, not a new place for the rule to fail."
+      "verdict": "closed",
+      "reviewed": "2026-10-04",
+      "by": "crates/slate-server/tests/security_probe.rs (fn a_column_grant_holds_over_joins_aggregates_and_predicate_writes); ledger/2026-10-04-the-column-grant-gaps-closed.md"
     },
     {
       "entry": "2026-10-03-column-grants-built.md",
       "key": "The oracle is one battery, not every existing suite.",
-      "verdict": "deliberate",
-      "reviewed": "2026-10-03",
-      "by": "The battery exercises each category of path in the design's section 4 map at least once: projection, filter, sort with a limit, computed value, window, IN over the key, a hint onto the hidden column's own index, paging, get, aggregates, grouping, all three join algorithms, and the refusals. Re-running every existing suite under a narrowed identity would mean parameterising suites written around specific grants and expected rows. The sentinel scan's strength is that it does not need per-path expectations, so a new path is one line in the battery."
+      "verdict": "closed",
+      "reviewed": "2026-10-04",
+      "by": "crates/slate-kernel/tests/rls_matrix.rs (fn every_access_path_withholds_the_policys_column); ledger/2026-10-04-the-column-grant-gaps-closed.md"
     },
     {
       "entry": "2026-10-03-column-grants-built.md",
@@ -16095,6 +16095,34 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-03",
       "by": "Decided in `docs/column-grants.md` section 6: none of column-level insert or update's open questions (what a partial insert writes, whether blind writes are allowed, the unique-violation oracle) is needed for the use case, a narrowed reader. serverd refuses a column grant carrying any action but `read` at load, so a config written for column-level writes fails visibly instead of granting less than its author meant."
+    },
+    {
+      "entry": "2026-10-04-the-column-grant-gaps-closed.md",
+      "key": "The guard trusts its reasons.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "A roster cannot verify data flow, which is why the oracle exists beside it: the guard makes a new raw read *visible* and forces a written reason at review time, and the sentinel scans in `column_grants.rs`, `rls_matrix.rs` and `security_probe.rs` catch a wrong reason by its output. The same division of labour as `check_handlers.py`, whose rosters carry reasons nothing verifies either."
+    },
+    {
+      "entry": "2026-10-04-the-column-grant-gaps-closed.md",
+      "key": "`RowCursor` remains a raw, unauthorised scan.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "Predates column grants and is not a column-grant gap: a `RowCursor` takes no `SecurityContext`, so it is outside RBAC and RLS as much as outside concealment, and its only caller is the ClickBench loader. Nothing on the wire constructs one, and `check_concealment.py` now names it explicitly, so a new caller has to be added beside a reason that says it is unauthorised."
+    },
+    {
+      "entry": "2026-10-04-the-column-grant-gaps-closed.md",
+      "key": "The analyst's cases cover `authors` only.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "The conformance runner's job is that the three SDKs agree, and the analyst's three cases exercise each client-visible behaviour (a narrowed read rendered identically, two refusals with one error kind). A column grant on a table with a row policy changes server behaviour, not client behaviour, and that combination is covered in the kernel (`rls_matrix.rs`, `column_grants.rs`) and over gRPC (`owner_blind` in `security_probe.rs`)."
+    },
+    {
+      "entry": "2026-10-04-the-column-grant-gaps-closed.md",
+      "key": "Column-level writes still do not exist",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "Decided in `docs/column-grants.md` section 6, and refused at load by serverd, as recorded against `2026-10-03-column-grants-built.md`."
     }
   ]
 }
