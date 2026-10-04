@@ -47,35 +47,64 @@ demo: nothing short of running the real runtime would have shown it.
 
 ## Deploy it to Cloudflare
 
-This is not part of any test. It needs a Cloudflare account, and a head node
-the Worker can reach from the internet.
+Done once, on 2026-10-04, to `slate-explorer-edge.<account>.workers.dev`. It is
+not part of any test. It needs a Cloudflare account and a head node the
+Worker can reach from the internet. The steps that worked:
 
-1. **Expose a head node.** It must run with `listen.grpc_web = true`. It also
-   needs real authentication, not the explorer's `trusted-header` mode, which
-   trusts whatever identity a caller claims. Use `[auth] mode = "token"` and
-   give the Worker a token. A Cloudflare Tunnel in front of a node on your own
-   machine is the quickest way to get a public address:
+1. **Seed a persisted store, then serve it with token authentication.** The
+   explorer seeds through its `trusted-header` identities, and a node
+   reachable from the internet must never run in that mode, because it trusts
+   whatever identity a caller claims. So seed first with
+   `backend = "local"` on loopback, stop the node, and restart it on the same
+   directory with `[auth] mode = "token"`. Give it one `[[auth.tokens]]` per
+   persona, with the same principal, tenant and roles as the explorer's
+   identities, so policies and column grants behave identically. Read each
+   secret from a `secret_file` with mode `600`.
+
+2. **Expose it.** A quick tunnel needs no Cloudflare configuration:
 
    ```sh
-   cloudflared tunnel --url http://127.0.0.1:7421
+   cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<port>
    ```
 
-2. **Point the Worker at it** and deploy:
+   A request through it without a token must get `grpc-status: 16`. Check that
+   before going on.
+
+3. **Deploy, then store the tokens as a secret.** The Worker reads
+   `SLATE_TOKENS`, a JSON object from persona to token, and sends the
+   persona's token as `authorization: Bearer` through the `fetch` option
+   `Client.connectWeb` takes:
 
    ```sh
-   npx wrangler login
-   npx wrangler deploy --var HEAD:https://<your-tunnel>.trycloudflare.com
+   npx wrangler deploy --var HEAD:https://<tunnel>.trycloudflare.com
+   npx wrangler secret put SLATE_TOKENS < tokens.json
    ```
 
-   The adapter sends the demo's identity headers, which a `token`-mode node
-   ignores. A Worker that is meant to be used would hold a token in a Wrangler
-   secret (`wrangler secret put SLATE_TOKEN`) and send it as
-   `authorization: Bearer`. That is a change to `src/worker.ts` this example
-   does not make.
+4. **Compare it.** The conformance runner can point its edge adapter at the
+   deployed URL while the other three run locally (`./run.sh --headless`,
+   then `conformance.py --edge https://…workers.dev`). Two things are worth
+   knowing:
+
+   - Cloudflare's browser-integrity check refuses Python's default
+     `urllib` user agent with error 1010 before the Worker runs, so the
+     runner needs another user agent.
+   - The deployed Worker reads its own database, so a case whose answer
+     includes a timestamp written at seeding time differs by however far
+     apart the two seeds ran.
+
+   On 2026-10-04 that run agreed on 142 of 143 cases, and the 143rd differed
+   only in exactly such a timestamp.
+
+A quick tunnel's URL lasts as long as the `cloudflared` process, and the
+deployment as long as the head node behind it. `npx wrangler delete`
+removes the Worker.
 
 ## What this does not do
 
 - It does not run in a browser. A page that held a head node's identity would
   be a credential in the open; `docs/edge-client.md` says what that would
   need.
-- It does not authenticate. See step 2.
+- It authenticates only with the tokens it is given, and the demo's
+  persona switch (`x-demo-identity`) chooses among them, so anyone who can
+  reach the Worker can act as any persona. That is the explorer's point, and
+  it is not an access-control design.

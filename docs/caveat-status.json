@@ -16158,6 +16158,25 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-04",
       "by": "Argued in `docs/edge-client.md`: a page holding a head node's identity is a credential anyone can read, so a browser client needs session-scoped tokens, CORS, and a decision about which origins may present which identity. The transport would work from a page today; the authentication model would not, and shipping one without the other would be the unsafe half."
+    },
+    {
+      "entry": "2026-10-04-the-worker-deployed.md",
+      "key": "The deployment lasts as long as two processes on the owner's",
+      "verdict": "moment",
+      "reviewed": "2026-10-04"
+    },
+    {
+      "entry": "2026-10-04-the-worker-deployed.md",
+      "key": "Anyone who can reach the Worker can act as any persona",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "The persona switch is what the explorer demonstrates: one query, different answers per identity, enforced by the database rather than the adapter. Gating the Worker itself (Cloudflare Access, a shared secret) would be the access-control design the README says this is not. The exposure is bounded: the head node accepts only the four tokens, the operations are the adapter's fixed endpoints, and the store is demo data in a scratch directory."
+    },
+    {
+      "entry": "2026-10-04-the-worker-deployed.md",
+      "key": "The tokens live in the session's scratch directory and in th",
+      "verdict": "moment",
+      "reviewed": "2026-10-04"
     }
   ]
 }

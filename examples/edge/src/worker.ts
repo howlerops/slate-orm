@@ -21,26 +21,46 @@ import { Adapter, handle } from "../../explorer/backends/node/src/adapter.js";
 
 interface Env {
   HEAD: string;
+  /**
+   * A Wrangler secret (`wrangler secret put SLATE_TOKENS`): a JSON object from
+   * persona to bearer token, `{"app": "…", "reader": "…"}`, for a head node in
+   * `[auth] mode = "token"`. Unset, the Worker sends the demo's identity
+   * headers alone, which only a `trusted-header` node — one on loopback,
+   * under `wrangler dev` — accepts. A node reachable from the internet must
+   * not be in that mode: it trusts whatever identity a caller claims.
+   */
+  SLATE_TOKENS?: string;
 }
 
 let adapter: Adapter | undefined;
 
 /**
- * A `fetch` that reports each call's RPC name before sending it, which is how
- * `/api/round-trips` counts over gRPC-web: the name is the last segment of the
- * path, `/slate.v1.Records/Insert`.
+ * The `fetch` a client for one persona uses: it adds that persona's bearer
+ * token when there is one, and reports each call's RPC name when asked to
+ * count, which is how `/api/round-trips` counts over gRPC-web (the name is the
+ * last segment of the path, `/slate.v1.Records/Insert`).
  */
-function counting(count: (method: string) => void) {
+function sending(token: string | undefined, count: ((method: string) => void) | undefined) {
   return (input: string, init: RequestInit): Promise<Response> => {
-    count(input.split("/").pop() ?? "?");
-    return fetch(input, init);
+    count?.(input.split("/").pop() ?? "?");
+    if (token === undefined) return fetch(input, init);
+    return fetch(input, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${token}` },
+    });
   };
+}
+
+/** The persona an identity stands for: its role, which the adapter sets to the persona's name. */
+function persona(identity: { roles?: readonly string[] }): string {
+  return identity.roles?.[0] ?? "";
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const tokens: Record<string, string> = env.SLATE_TOKENS ? JSON.parse(env.SLATE_TOKENS) : {};
     adapter ??= new Adapter((identity, count) =>
-      Client.connectWeb(env.HEAD, identity, count ? { fetch: counting(count) } : {}),
+      Client.connectWeb(env.HEAD, identity, { fetch: sending(tokens[persona(identity)], count) }),
     );
     const url = new URL(request.url);
     const answer = await handle(adapter, {
