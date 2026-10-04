@@ -1,0 +1,14 @@
+# The explorer's contract as a Worker. `docs/edge-client.md` §4.
+#
+# No `nodejs_compat`: the edge entry of the client needs nothing from Node —
+# `fetch`, `crypto.randomUUID`, `TextDecoder` and `atob` are all Worker
+# globals — and turning the flag on would let a Node dependency slip back in
+# without anything failing. Leaving it off is the check.
+name = "slate-explorer-edge"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+
+[vars]
+# The head node's base URL. It must run with `listen.grpc_web = true`.
+# `run.sh` overrides this with `--var HEAD:...` for the port it chose.
+HEAD = "http://127.0.0.1:7421"

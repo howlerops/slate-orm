@@ -1,0 +1,25 @@
+{
+  "at": "2026-10-04T17:42:24+00:00",
+  "file": "clients/typescript/src/transport.ts",
+  "dialect": "python",
+  "command": [
+    "bash",
+    "-c",
+    "cd examples/explorer && ./run.sh --conformance"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "long is left for protobufjs to find",
+      "old": "protobuf.util.Long = Long;\nprotobuf.configure();\n",
+      "new": "void Long;\n",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

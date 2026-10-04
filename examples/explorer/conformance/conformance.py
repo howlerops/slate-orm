@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Do the three SDKs answer identically?
+"""Do the three SDKs answer identically — and the TypeScript one on the edge?
 
 Until this file, nothing in the repository compared the clients to each other.
 Each client's suite runs against the same server, which catches *a* client being
@@ -7,9 +7,11 @@ wrong and cannot catch three being wrong the same way — and cannot catch two
 clients quietly disagreeing about something the server accepts from both, which
 is the more likely failure.
 
-The three adapters implement one HTTP contract (../CONTRACT.md) over one head
-node. This sends every case below to all three and requires the JSON to match
-exactly, `sdk` excluded.
+The adapters implement one HTTP contract (../CONTRACT.md) over one head node:
+Python, Go and Node, and a fourth, the node adapter's own endpoints as a
+Cloudflare Worker on `workerd` with the TypeScript client over gRPC-web
+(`examples/edge`, `docs/edge-client.md`). This sends every case below to all
+of them and requires the JSON to match exactly, `sdk` excluded.
 
 Start the stack and run this against it, in one command:
 
@@ -42,6 +44,9 @@ DEFAULTS = {
     "go": "http://127.0.0.1:7431",
     "node": "http://127.0.0.1:7432",
     "python": "http://127.0.0.1:7433",
+    # The node adapter's endpoints as a Cloudflare Worker: the TypeScript
+    # client over gRPC-web on `workerd`. `docs/edge-client.md` §4.
+    "edge": "http://127.0.0.1:7434",
 }
 
 
@@ -1349,7 +1354,7 @@ def main() -> int:
         print()
         print(f"{passed} passed, {failed} failed")
         return 1
-    print(f"{len(CASES)} cases: the three SDKs agree on all of them")
+    print(f"{len(CASES)} cases: the {len(adapters)} adapters agree on all of them")
     print()
     print(f"{passed} passed, {failed} failed")
     return 0

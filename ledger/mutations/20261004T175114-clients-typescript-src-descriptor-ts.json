@@ -1,0 +1,30 @@
+{
+  "at": "2026-10-04T17:51:14+00:00",
+  "file": "clients/typescript/src/descriptor.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; SLATE_TRANSPORT=web node --test --test-reporter=tap dist-test/test/*.test.js 2>&1"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the method table drifts from proto/",
+      "old": "    \"slate.v1.LeadershipStatus\",",
+      "new": "    \"slate.v1.LeadershipRequest\",",
+      "verdict": "caught",
+      "caught_by": [
+        "leadership",
+        "the generated codecs match proto/",
+        "a message, then OK in the trailer frame, is the answer",
+        "frames split at every byte boundary reassemble to the same answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

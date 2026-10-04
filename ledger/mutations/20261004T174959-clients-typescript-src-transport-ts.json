@@ -1,0 +1,51 @@
+{
+  "at": "2026-10-04T17:49:59+00:00",
+  "file": "clients/typescript/src/transport.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; SLATE_TRANSPORT=web node --test --test-reporter=tap dist-test/test/*.test.js 2>&1"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "longs decode as numbers",
+      "old": "  longs: String,\n  enums: String,",
+      "new": "  longs: Number,\n  enums: String,",
+      "verdict": "caught",
+      "caught_by": [
+        "a u64 past the double's precision survives"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the web decoder drops defaults",
+      "old": "  return type.toObject(type.decode(bytes), CONVERSION);",
+      "new": "  return type.toObject(type.decode(bytes), { ...CONVERSION, defaults: false });",
+      "verdict": "caught",
+      "caught_by": [
+        "both transports decode the same bytes to the same object"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the web decoder renders enums as numbers",
+      "old": "  return type.toObject(type.decode(bytes), CONVERSION);",
+      "new": "  return type.toObject(type.decode(bytes), { ...CONVERSION, enums: Number });",
+      "verdict": "caught",
+      "caught_by": [
+        "leadership",
+        "both transports decode the same bytes to the same object",
+        "a message, then OK in the trailer frame, is the answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

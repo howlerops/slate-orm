@@ -1,0 +1,19 @@
+{
+  "name": "@slate-orm/edge-example",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "The explorer's HTTP contract as a Cloudflare Worker, using the TypeScript client over gRPC-web.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@slate-orm/client": "file:../../clients/typescript"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261004.1",
+    "typescript": "^5.7.2",
+    "wrangler": "4.147.0"
+  }
+}

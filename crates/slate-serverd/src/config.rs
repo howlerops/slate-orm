@@ -181,6 +181,17 @@ pub(crate) struct Listen {
     /// reports which, which is what a test harness needs and what nothing else
     /// should use.
     pub(crate) address: String,
+    /// Accept gRPC-web, and the HTTP/1.1 it travels over, on the same port.
+    ///
+    /// For clients whose only transport is `fetch` — the TypeScript client on
+    /// Cloudflare Workers, Deno or a browser — which cannot read the HTTP/2
+    /// trailers native gRPC puts every status in. Off unless written: a node
+    /// configured before this existed keeps refusing HTTP/1.1, because a new
+    /// protocol on the port is a change to what the node exposes, and that
+    /// should not happen to a deployment that did not ask for it.
+    /// `docs/edge-client.md` §1.
+    #[serde(default)]
+    pub(crate) grpc_web: bool,
 }
 
 // ── authentication ──────────────────────────────────────────────────────────

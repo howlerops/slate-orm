@@ -16123,6 +16123,41 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-04",
       "by": "Decided in `docs/column-grants.md` section 6, and refused at load by serverd, as recorded against `2026-10-03-column-grants-built.md`."
+    },
+    {
+      "entry": "2026-10-04-the-client-on-workerd.md",
+      "key": "It is not deployed to Cloudflare.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "Deploying needs the owner's Cloudflare account and an internet-reachable head node, neither of which belongs in a test or a session: wrangler login is an interactive credential flow and a public endpoint is an exposure decision. The runtime under test is the one Cloudflare deploys (`workerd`, via `wrangler dev`), which is what found the `new Function` refusal; what deployment adds is Cloudflare's network, not a different runtime. examples/edge/README.md gives the steps."
+    },
+    {
+      "entry": "2026-10-04-the-client-on-workerd.md",
+      "key": "No conformance case decodes a 64-bit integer above 2^53 from",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "The decode path is the same generated codec on every runtime and `test/descriptor.test.ts` pins its output for u64 and i64 past a double's precision against proto-loader; the TypeScript suite round-trips one on Node over both transports. What `workerd` could differ on is protobufjs finding `long`, and protobufjs 7.6 does that with a bundler-resolved `require`. Adding a large-key row to the explorer's seed would shift the answers of cases that count rows, which is a cost to every case for one value."
+    },
+    {
+      "entry": "2026-10-04-the-client-on-workerd.md",
+      "key": "The web layer's position is argued, not tested.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "The order is one `.layer` call above the observer in `serve.rs`, commented with the reason, and the consequence of getting it wrong is a miscounted metric, never a wrong answer or a security effect. A test would start a node, make a failing gRPC-web call and scrape `/metrics`, which `crates/slate-serverd/tests/observing.rs` could host; it is left as the next thing to add there rather than claimed done."
+    },
+    {
+      "entry": "2026-10-04-the-client-on-workerd.md",
+      "key": "The Worker does not authenticate.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "It is an example and a conformance adapter, and the conformance runner selects identities by header, which is the demo's trusted-header mode. examples/edge/README.md says what a deployment needs: token auth on the node, the token in a Wrangler secret, added by the `fetch` option `connectWeb` already takes, so no client change is needed."
+    },
+    {
+      "entry": "2026-10-04-the-client-on-workerd.md",
+      "key": "No browser client.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-04",
+      "by": "Argued in `docs/edge-client.md`: a page holding a head node's identity is a credential anyone can read, so a browser client needs session-scoped tokens, CORS, and a decision about which origins may present which identity. The transport would work from a page today; the authentication model would not, and shipping one without the other would be the unsafe half."
     }
   ]
 }

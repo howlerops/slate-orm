@@ -33,7 +33,7 @@ import { after, test } from "node:test";
 
 import * as grpc from "@grpc/grpc-js";
 
-import { start, type Serving } from "./harness.js";
+import { start, type Observer, type Serving } from "./harness.js";
 import { Client, int, str, uint, type Batch, type Identity, type Value } from "../src/index.js";
 
 /** Matches `ctx()` in the daemon's fixture, as every other test's client does. */
@@ -55,37 +55,30 @@ const APP: Identity = { principal: "u64:1", tenant: "u64:1", roles: ["app"] };
  * be identical either way. `related.test.ts` found exactly that shape in the
  * freshness floor.
  *
- * The count comes from the interceptor being entered; the weight comes from
- * `sendMessage`, because that is where the message is. The two are therefore
- * not redundant: an RPC opened and never sent would count and weigh nothing,
- * which is the honest reading of it.
+ * Both the count and the weight come from the request being *sent*, which is
+ * the one moment both transports can report: grpc-js's `sendMessage`, and the
+ * web transport's `fetch`. It used to count on entering the interceptor and
+ * weigh on `sendMessage`, which distinguished an RPC opened and never sent;
+ * no call here opens without sending, and the web transport has no "opened"
+ * to see, so the two now agree and the distinction is gone.
  */
 class Counting {
   readonly calls = new Map<string, number>();
   readonly bytes = new Map<string, number>();
 
   /**
-   * The grpc-js interceptor, as a bound arrow so it can be handed straight to
-   * `interceptors` without losing `this`.
+   * The harness's {@link Observer}, as a bound arrow so it can be handed
+   * straight to `client()` without losing `this`. Under either transport the
+   * size is the exact serialized request: grpc-js's own serializer natively,
+   * the posted frame's payload over gRPC-web.
+   *
+   * The name is the RPC's (`Insert`, `Query`), not the client method's — a
+   * single insert is `Insert` and a keyset page is `Query`, which is how the
+   * Python version of this failed first.
    */
-  readonly interceptor = (options: grpc.InterceptorOptions, nextCall: grpc.NextCall) => {
-    // The path is `/slate.v1.Records/Insert`, and the last segment is what a
-    // reader of a failure message wants. Worth knowing: the RPC names are not
-    // the client's method names — a single insert is `Insert` and a keyset
-    // page is `Query`, which is how the Python version of this failed first.
-    const method = options.method_definition.path.split("/").pop() ?? "?";
+  readonly observe: Observer = (method, _message, bytes) => {
     this.calls.set(method, (this.calls.get(method) ?? 0) + 1);
-    const weigh = (message: unknown): number =>
-      // The channel's own serializer, not a re-encode of our own: this is the
-      // exact buffer grpc-js is about to put on the stream, so the number
-      // cannot drift from what is sent.
-      options.method_definition.requestSerialize(message).length;
-    return new grpc.InterceptingCall(nextCall(options), {
-      sendMessage: (message, next) => {
-        this.bytes.set(method, (this.bytes.get(method) ?? 0) + weigh(message));
-        next(message);
-      },
-    });
+    this.bytes.set(method, (this.bytes.get(method) ?? 0) + bytes);
   };
 
   count(method: string): number {
@@ -145,7 +138,7 @@ async function counted(): Promise<{ client: Client; counter: Counting }> {
   // every subtest green, which is the most confusing shape a failure has.
   // `client()` grew its options argument today for the freshness interceptor;
   // this is the second caller and the reason it was worth adding.
-  const client = serving.client(APP, { interceptors: [counter.interceptor] });
+  const client = serving.client(APP, counter.observe);
   return { client, counter };
 }
 

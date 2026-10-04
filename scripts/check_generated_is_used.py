@@ -63,7 +63,9 @@ REACHES: dict[str, tuple[str, str] | str] = {
     ),
     "examples/explorer/backends/node/src/schema.ts": (
         r"\.declaring\(",
-        "examples/explorer/backends/node/src/main.ts",
+        # `adapter.ts` since the Node adapter was split so its endpoints could
+        # run as a Cloudflare Worker too; `main.ts` is the Node shell now.
+        "examples/explorer/backends/node/src/adapter.ts",
     ),
     # No `declaring` to look for: this client takes a `Table` per call, so the
     # declaration rides on each request rather than being attached once. The

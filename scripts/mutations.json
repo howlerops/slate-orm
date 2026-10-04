@@ -416,8 +416,8 @@
       "cases": [
         {
           "name": "the package stops shipping its own output",
-          "old": "  \"files\": [\"dist\", \"proto\"],",
-          "new": "  \"files\": [\"proto\"],"
+          "old": "  \"files\": [\n    \"dist\",\n    \"proto\"\n  ],",
+          "new": "  \"files\": [\n    \"proto\"\n  ],"
         }
       ]
     }

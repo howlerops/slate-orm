@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-04T17:31:31+00:00",
+  "file": "clients/typescript/src/web.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; SLATE_TRANSPORT=web node --test --test-reporter=tap dist-test/test/*.test.js 2>&1"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a body with no status is a success",
+      "old": "      throw callFailure(UNKNOWN, `${name}: the response ended without a status`);",
+      "new": "      return;",
+      "verdict": "caught",
+      "caught_by": [
+        "a response that ends with no status is not a success"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

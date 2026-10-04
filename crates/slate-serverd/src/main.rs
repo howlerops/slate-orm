@@ -458,6 +458,7 @@ async fn run(arguments: cli::Cli) -> Started<()> {
             open_streams,
             request_timeout,
             observing,
+            grpc_web: document.listen.grpc_web,
         },
         catalog,
         security,

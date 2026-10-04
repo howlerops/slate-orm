@@ -186,6 +186,30 @@ this client there was nowhere — which is worth knowing as the reason it is a
 plain pass-through rather than a curated set of knobs. Anything grpc-js accepts
 in a `ChannelOptions` works here, and nothing about it is slate's to interpret.
 
+## Cloudflare Workers, Deno and browsers
+
+`connect` speaks native gRPC through `@grpc/grpc-js`, which needs Node's
+`http2`. Runtimes whose only network primitive is `fetch` import the edge
+entry point instead, and connect over gRPC-web:
+
+```ts
+import { Client } from "@slate-orm/client/edge";
+
+const client = Client.connectWeb("https://head.example", { principal: "u64:1" });
+```
+
+The node must run with `listen.grpc_web = true`. Everything else is the same
+client: the same `Session`, queries, errors and kinds. The whole test suite
+runs over both transports (`SLATE_TRANSPORT=web npm test`). `connectWeb` takes
+a `fetch` to use in place of the global one, which is how a Worker routes
+through a service binding or adds an `authorization` header.
+
+The edge entry loads nothing from Node, and the codecs are generated at build
+time rather than compiled at runtime, because Workers refuse `new Function`.
+`examples/edge` is a Worker built on it, and the explorer's conformance runner
+holds that Worker to the same cases as the Python, Go and Node adapters.
+`docs/edge-client.md` has the design.
+
 ## Schema checks
 
 Optional, and worth turning on. Declare a table and every request naming it
@@ -324,3 +348,6 @@ statement of what the server does written by whoever wrote the client, so it
 agrees with the client's own misunderstandings.
 
 Requires a working `cargo` on the path.
+
+`SLATE_TRANSPORT=web npm test` runs the same suite over gRPC-web: the harness
+turns on `listen.grpc_web` and connects with `Client.connectWeb`. CI runs both.

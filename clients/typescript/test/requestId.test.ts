@@ -114,11 +114,12 @@ test("the header is actually sent", async () => {
   servers.push(server);
   const { metadata, requestId } = server.client().sending();
 
-  const sent = metadata.get(REQUEST_ID_KEY);
-  assert.equal(sent.length, 1, `${REQUEST_ID_KEY} appears ${sent.length} times`);
-  assert.equal(sent[0], requestId, "the header and the reported id must agree");
-  assert.match(String(sent[0]), /^[0-9a-f]{32}$/);
+  // A plain record of headers, which both transports send as they are: a key
+  // can appear once, so what is left to check is that it is there and agrees.
+  const sent = metadata[REQUEST_ID_KEY];
+  assert.equal(sent, requestId, "the header and the reported id must agree");
+  assert.match(String(sent), /^[0-9a-f]{32}$/);
 
   // And beside the identity, not instead of it.
-  assert.deepEqual(metadata.get("slate-principal"), ["u64:1"]);
+  assert.equal(metadata["slate-principal"], "u64:1");
 });

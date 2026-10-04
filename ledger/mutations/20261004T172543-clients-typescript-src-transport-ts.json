@@ -1,0 +1,14 @@
+{
+  "at": "2026-10-04T17:25:43+00:00",
+  "file": "clients/typescript/src/transport.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; SLATE_TRANSPORT=web node --test --test-reporter=tap dist-test/test/*.test.js 2>&1"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "baseline-red",
+  "cases": []
+}

@@ -238,6 +238,11 @@ ELSEWHERE_BLOCKS = {
         "runs the image the step above built, in a docker daemon"
     ),
     "The base is still distroless": "runs the image, in a docker daemon",
+    "The whole suite over gRPC-web": (
+        "the TypeScript client's suite a second time with SLATE_TRANSPORT=web, "
+        "which needs npm, node_modules and a built head node, none of which "
+        "check.sh may require"
+    ),
     "The tarball contains what the package promises": (
         "runs `npm pack`, which needs npm and an installed node_modules. Its "
         "rules are covered in check.sh by scripts/test_check_npm_package.py, "

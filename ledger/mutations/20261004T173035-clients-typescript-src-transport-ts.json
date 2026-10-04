@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-04T17:30:35+00:00",
+  "file": "clients/typescript/src/transport.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; SLATE_TRANSPORT=web node --test --test-reporter=tap dist-test/test/*.test.js 2>&1"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "longs decode as numbers",
+      "old": "  longs: String,\n  enums: String,",
+      "new": "  longs: Number,\n  enums: String,",
+      "verdict": "caught",
+      "caught_by": [
+        "a u64 past the double's precision survives"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

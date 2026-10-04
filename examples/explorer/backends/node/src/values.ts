@@ -12,7 +12,7 @@
  *   each have their own shortest-round-trip float formatter and they do not
  *   always agree on the last digit.
  */
-import { type Value } from "@slate-orm/client";
+import { type Value } from "@slate-orm/client/edge";
 
 export function formatFloat(value: number): string {
   if (!Number.isFinite(value)) return "null";
@@ -44,9 +44,9 @@ export function encode(value: Value): Record<string, unknown> {
       // renderers are compared.
       return { decimal: value.value.toString() };
     case "bytes":
-      return { bytes: Buffer.from(value.value).toString("hex") };
+      return { bytes: hex(value.value) };
     case "uuid":
-      return { uuid: Buffer.from(value.value).toString("hex") };
+      return { uuid: hex(value.value) };
     case "vector":
       return { vector: value.value.map(formatFloat) };
     case "array":
@@ -95,4 +95,12 @@ export function decode(tagged: Record<string, unknown>): Value {
   throw new TypeError(
     `a value carried no known kind: ${Object.keys(tagged).join(", ")}`,
   );
+}
+
+/**
+ * Bytes as lowercase hex, without `Buffer`: this module runs in the Worker
+ * too, and `Buffer` is Node's. The same output as `Buffer#toString("hex")`.
+ */
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

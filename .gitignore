@@ -39,6 +39,11 @@ examples/deployed/go/go
 examples/explorer/backends/go/go
 examples/explorer/web/node_modules/
 examples/explorer/web/dist/
+# The edge example: npm's tree, and the local state `wrangler dev` keeps for
+# `workerd` (its cache and the simulated storage it would hand a binding).
+examples/edge/node_modules/
+examples/edge/dist/
+examples/edge/.wrangler/
 examples/explorer/web/dist-test/
 
 # The batch benchmark, same three shapes as the two examples above.

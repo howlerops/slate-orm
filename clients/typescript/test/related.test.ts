@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 
-import { start, type Serving } from "./harness.js";
+import { start, type Observer, type Serving } from "./harness.js";
 import {
   bytes,
   eq,
@@ -275,18 +275,8 @@ test("the grouping key tells an i64 from a u64", () => {
  * needs two, and the Go adapter shipped with only one for a day. `sendMessage`
  * rather than the call itself, because the message is what carries the field.
  */
-function recording(seen: (method: string, message: unknown) => void) {
-  return {
-    interceptors: [
-      (options: grpc.InterceptorOptions, nextCall: grpc.NextCall) =>
-        new grpc.InterceptingCall(nextCall(options), {
-          sendMessage(message: unknown, next: (message: unknown) => void) {
-            seen(options.method_definition.path, message);
-            next(message);
-          },
-        }),
-    ],
-  };
+function recording(seen: (method: string, message: unknown) => void): Observer {
+  return (method, message) => seen(method, message);
 }
 
 test("a session that has written sends a freshness floor, monotonic or not", async () => {
@@ -295,7 +285,7 @@ test("a session that has written sends a freshness floor, monotonic or not", asy
 
   const related: unknown[] = [];
   const client = server.client(undefined, recording((method, message) => {
-    if (method.endsWith("/Related")) related.push(message);
+    if (method === "Related") related.push(message);
   }));
 
   // A write first: the floor is the watermark, and a session that has read and
@@ -351,7 +341,7 @@ test("a read does not advance a non-monotonic session's watermark", async () => 
 
   const related: unknown[] = [];
   const client = server.client(undefined, recording((method, message) => {
-    if (method.endsWith("/Related")) related.push(message);
+    if (method === "Related") related.push(message);
   }));
 
   const loose = client.sessionWithoutMonotonicReads();

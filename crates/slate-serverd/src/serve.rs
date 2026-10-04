@@ -75,6 +75,8 @@ pub(crate) struct Serving {
     pub(crate) request_timeout: Option<Duration>,
     /// What the node says about the requests it serves. See [`crate::observe`].
     pub(crate) observing: crate::observe::Observing,
+    /// Whether gRPC-web is accepted. See `listen.grpc_web` in [`crate::config`].
+    pub(crate) grpc_web: bool,
 }
 
 /// Turn Nagle off on an accepted connection.
@@ -105,6 +107,7 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
         open_streams,
         request_timeout,
         observing,
+        grpc_web,
     } = serving;
     let incoming = tokio_stream::wrappers::TcpListenerStream::new(listener)
         .map(|accepted| accepted.map(without_nagle));
@@ -187,6 +190,17 @@ pub(crate) async fn run<S: KvStore + KvReadStore>(
         // the layer. Adding the layer conditionally would mean two builder
         // types and a branch that has to construct the server twice.
         builder
+            // HTTP/1.1 only when gRPC-web is on: it is the only reason to
+            // accept it, and native gRPC is HTTP/2 either way.
+            .accept_http1(grpc_web)
+            // **Outermost**, so every layer below reads a native gRPC status.
+            // gRPC-web moves the status out of the trailers and into the body;
+            // inside `ObserveLayer` that would make every gRPC-web failure look
+            // like a success, and inside the limits a refusal would go out in
+            // a framing the client could not read. `docs/edge-client.md` §1.
+            .layer(tower::util::option_layer(
+                grpc_web.then(tonic_web::GrpcWebLayer::new),
+            ))
             // **Node-wide, not per connection.** `concurrency_limit_per_connection`
             // is what this used, and its name is exact: a caller who opens a
             // second socket got a second allowance, so the setting bounded

@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-04T17:33:10+00:00",
+  "file": "clients/typescript/src/descriptor.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; node --test --test-reporter=tap dist-test/test/descriptor.test.js 2>&1"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the descriptor drifts from proto/",
+      "old": "\"primaryKey\"",
+      "new": "\"primaryKeys\"",
+      "verdict": "caught",
+      "caught_by": [
+        "the bundled descriptor matches proto/"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

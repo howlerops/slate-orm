@@ -1,0 +1,54 @@
+{
+  "at": "2026-10-04T17:45:41+00:00",
+  "file": "crates/slate-serverd/src/serve.rs",
+  "dialect": "rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "slate-serverd",
+    "--test",
+    "grpc_web",
+    "--no-fail-fast"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "HTTP/1.1 is refused even when gRPC-web is on",
+      "old": "            .accept_http1(grpc_web)",
+      "new": "            .accept_http1(false)",
+      "verdict": "caught",
+      "caught_by": [
+        "a_unary_call_over_grpc_web_answers_with_its_status_in_the_body",
+        "a_refusal_over_grpc_web_is_a_status_a_fetch_can_read"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "HTTP/1.1 is accepted whatever the setting",
+      "old": "            .accept_http1(grpc_web)",
+      "new": "            .accept_http1(true)",
+      "verdict": "caught",
+      "caught_by": [
+        "without_the_setting_http1_is_not_served"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the web layer is never installed",
+      "old": "                grpc_web.then(tonic_web::GrpcWebLayer::new),",
+      "new": "                false.then(tonic_web::GrpcWebLayer::new),",
+      "verdict": "caught",
+      "caught_by": [
+        "a_unary_call_over_grpc_web_answers_with_its_status_in_the_body"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

@@ -215,6 +215,16 @@ jobs:
         working-directory: clients/typescript
         env:
           SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+      # The same suite again, every test, over gRPC-web: the transport an edge
+      # runtime has. A `Client` must behave identically over either, and a
+      # suite written for the web transport alone would test the cases
+      # somebody thought of. `docs/edge-client.md`.
+      - name: The whole suite over gRPC-web
+        run: npm test
+        working-directory: clients/typescript
+        env:
+          SLATE_SERVERD: ${{ github.workspace }}/bin/slate-serverd
+          SLATE_TRANSPORT: web
       # What `npm publish` would actually put in the tarball, on every push
       # rather than on the day somebody publishes. `dist/` is gitignored and
       # nothing in the publish path built it, so the package was five files
@@ -672,6 +682,11 @@ jobs:
         working-directory: clients/typescript
       - run: npm ci
         working-directory: examples/explorer/backends/node
+      # The fourth adapter: the node adapter's endpoints as a Cloudflare Worker
+      # under `wrangler dev`, which is `workerd`. `run.sh` would install this
+      # itself; installing it here keeps the conformance step's time honest.
+      - run: npm ci
+        working-directory: examples/edge
       - run: npm ci
         working-directory: examples/explorer/web
       - run: npx playwright install --with-deps chromium

@@ -1,10 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-import * as grpc from "@grpc/grpc-js";
-import * as protoLoader from "@grpc/proto-loader";
+// Types only: erased at build, so loading this module loads nothing from
+// grpc-js. The runtime half lives in `node.ts`; `docs/edge-client.md` §2.
+import type * as grpc from "@grpc/grpc-js";
 
-import { directoryOf, findUpContaining } from "./paths.js";
+import { type Metadata, type MessageStream, type Transport } from "./transport.js";
+import { GrpcWebTransport, type WebOptions } from "./web.js";
 
 import {
   fromBatchError,
@@ -184,46 +183,22 @@ export interface Leadership {
 }
 
 /**
- * Where the `.proto` files are.
- *
- * Found by looking for the file rather than counting `..` segments: this
- * module runs from `src/` in the repository, `dist/` once built, and a package
- * root once installed, and a fixed depth is correct in exactly one of those.
+ * How `Client.connect` reaches a node: native gRPC, installed by `node.ts`
+ * when the Node entry point loads it. Unset under the web entry point, which
+ * never loads grpc-js, so `connect` there says to use `connectWeb` instead of
+ * failing inside a missing `node:http2`.
  */
-const PROTO_ROOT = path.join(
-  findUpContaining(
-    directoryOf(import.meta.url),
-    [path.join("proto", "slate", "v1", "records.proto")],
-    "bundled proto directory",
-  ),
-  "proto",
-);
+type NodeTransportFactory = (
+  target: string,
+  credentials: grpc.ChannelCredentials | undefined,
+  options: grpc.ChannelOptions | undefined,
+) => Transport;
 
-// `longs: String` rather than Number: a u64 primary key above 2^53 would
-// silently lose precision, and a primary key is where that shows up latest.
-// The client turns them into bigint at the edge.
-const LOADER_OPTIONS: protoLoader.Options = {
-  keepCase: false,
-  longs: String,
-  enums: String,
-  defaults: true,
-  oneofs: true,
-  includeDirs: [PROTO_ROOT],
-};
+let nodeTransport: NodeTransportFactory | undefined;
 
-type RawClient = grpc.Client & Record<string, Function>;
-
-let cachedService: grpc.ServiceClientConstructor | undefined;
-
-function service(): grpc.ServiceClientConstructor {
-  if (!cachedService) {
-    const definition = protoLoader.loadSync("slate/v1/records.proto", LOADER_OPTIONS);
-    const loaded = grpc.loadPackageDefinition(definition) as unknown as {
-      slate: { v1: { Records: grpc.ServiceClientConstructor } };
-    };
-    cachedService = loaded.slate.v1.Records;
-  }
-  return cachedService;
+/** @internal Called by `node.ts` as it loads. */
+export function installNodeTransport(factory: NodeTransportFactory): void {
+  nodeTransport = factory;
 }
 
 /**
@@ -312,18 +287,18 @@ export interface ComputedJoinedRow {
 
 /** A connection to a head node. Safe to share; a [Session] is not. */
 export class Client {
-  readonly #raw: RawClient;
+  readonly #transport: Transport;
   readonly #identity: Identity;
   readonly #timeoutMs: number | undefined;
   #schemas: Schemas | undefined;
 
   private constructor(
-    raw: RawClient,
+    transport: Transport,
     identity: Identity,
     timeoutMs?: number,
     schemas?: Schemas,
   ) {
-    this.#raw = raw;
+    this.#transport = transport;
     this.#identity = identity;
     this.#timeoutMs = timeoutMs;
     this.#schemas = schemas;
@@ -349,7 +324,7 @@ export class Client {
    * number for the connection.
    */
   withTimeout(milliseconds: number | undefined): Client {
-    return new Client(this.#raw, this.#identity, milliseconds, this.#schemas);
+    return new Client(this.#transport, this.#identity, milliseconds, this.#schemas);
   }
 
   /**
@@ -389,25 +364,43 @@ export class Client {
   static connect(
     target: string,
     identity: Identity,
-    credentials: grpc.ChannelCredentials = grpc.credentials.createInsecure(),
+    credentials?: grpc.ChannelCredentials,
     options: grpc.ChannelOptions = {},
   ): Client {
-    const Records = service();
-    const raw = new Records(target, credentials, options) as RawClient;
-    return new Client(raw, identity);
+    if (!nodeTransport) {
+      throw new Error(
+        "slate: Client.connect speaks native gRPC through @grpc/grpc-js, which this entry " +
+          "point does not load. On Cloudflare Workers, Deno or a browser, use " +
+          "Client.connectWeb(url, identity) against a node with listen.grpc_web = true.",
+      );
+    }
+    return new Client(nodeTransport(target, credentials, options), identity);
   }
 
-  /** @internal The call options every RPC carries, deadline included. */
-  #options(): grpc.CallOptions {
-    // An absolute instant, because that is what grpc-js wants: a relative
-    // number here would be read as a Unix timestamp in 1970 and expire every
-    // call immediately.
-    return this.#timeoutMs === undefined ? {} : { deadline: Date.now() + this.#timeoutMs };
+  /**
+   * Connect over gRPC-web, with `fetch` as the only network primitive.
+   *
+   * For runtimes that have no `node:http2`: Cloudflare Workers, Deno, a
+   * browser. The node must run with `listen.grpc_web = true`. `url` is the
+   * node's base URL, `http://host:port`. Everything a `Client` does works the
+   * same over either transport, and the test suite runs over both
+   * (`SLATE_TRANSPORT=web`); `docs/edge-client.md`.
+   *
+   * `options.fetch` replaces the global `fetch`, which is how a Worker routes
+   * through a service binding and how a test inspects what was sent.
+   */
+  static connectWeb(url: string, identity: Identity, options: WebOptions = {}): Client {
+    return new Client(new GrpcWebTransport(url, options), identity);
+  }
+
+  /** @internal The absolute instant a call must finish by, if any. */
+  #deadline(): number | undefined {
+    return this.#timeoutMs === undefined ? undefined : Date.now() + this.#timeoutMs;
   }
 
   /** Release the connection. */
   close(): void {
-    this.#raw.close();
+    this.#transport.close();
   }
 
   /** Start a session. Monotonic reads are on, which is the safe default. */
@@ -455,7 +448,7 @@ export class Client {
   }
 
   /** @internal */
-  metadata(): grpc.Metadata {
+  metadata(): Metadata {
     return this.sending().metadata;
   }
 
@@ -472,38 +465,29 @@ export class Client {
    *
    * @internal
    */
-  sending(): { metadata: grpc.Metadata; requestId: string } {
-    const md = new grpc.Metadata();
-    md.set("slate-principal", this.#identity.principal);
-    if (this.#identity.tenant) md.set("slate-tenant", this.#identity.tenant);
+  sending(): { metadata: Metadata; requestId: string } {
+    const md: Metadata = { "slate-principal": this.#identity.principal };
+    if (this.#identity.tenant) md["slate-tenant"] = this.#identity.tenant;
     if (this.#identity.roles?.length) {
-      md.set("slate-roles", this.#identity.roles.join(","));
+      md["slate-roles"] = this.#identity.roles.join(",");
     }
-    const requestId = randomUUID().replaceAll("-", "");
-    md.set(REQUEST_ID_KEY, requestId);
+    // The global `crypto`, not `node:crypto`: it is the same function on Node
+    // 20+, Workers, Deno and browsers, and importing the Node module would tie
+    // this file to Node for one call.
+    const requestId = globalThis.crypto.randomUUID().replaceAll("-", "");
+    md[REQUEST_ID_KEY] = requestId;
     return { metadata: md, requestId };
   }
 
   /** @internal */
-  call<T>(method: string, request: unknown): Promise<T> {
-    return new Promise((resolve, reject) => {
-      const fn = this.#raw[method];
-      if (!fn) {
-        reject(new Error(`slate: this server has no ${method} method`));
-        return;
-      }
-      const { metadata, requestId } = this.sending();
-      fn.call(
-        this.#raw,
-        request,
-        metadata,
-        this.#options(),
-        (error: grpc.ServiceError | null, response: T) => {
-          if (error) reject(fromServiceError(error, requestId));
-          else resolve(response);
-        },
-      );
-    });
+  async call<T>(method: string, request: unknown): Promise<T> {
+    const { metadata, requestId } = this.sending();
+    try {
+      return (await this.#transport.unary(method, request, metadata, this.#deadline())) as T;
+    } catch (error) {
+      if (isServiceError(error)) throw fromServiceError(error, requestId);
+      throw error;
+    }
   }
 
   /**
@@ -519,17 +503,10 @@ export class Client {
   stream(
     method: string,
     request: unknown,
-  ): { stream: grpc.ClientReadableStream<unknown>; requestId: string } {
-    const fn = this.#raw[method];
-    if (!fn) throw new Error(`slate: this server has no ${method} method`);
+  ): { stream: MessageStream; requestId: string } {
     const { metadata, requestId } = this.sending();
     return {
-      stream: fn.call(
-        this.#raw,
-        request,
-        metadata,
-        this.#options(),
-      ) as grpc.ClientReadableStream<unknown>,
+      stream: this.#transport.stream(method, request, metadata, this.#deadline()),
       requestId,
     };
   }
@@ -1816,7 +1793,7 @@ export class Transaction {
  * abandoned without that keeps the server producing rows nobody will read.
  */
 export class RowStream implements AsyncIterable<Value[]> {
-  readonly #stream: grpc.ClientReadableStream<unknown>;
+  readonly #stream: MessageStream;
   /**
    * The id the call went out under.
    *
@@ -1831,7 +1808,7 @@ export class RowStream implements AsyncIterable<Value[]> {
 
   /** @internal */
   constructor(
-    stream: grpc.ClientReadableStream<unknown>,
+    stream: MessageStream,
     requestId: string,
     onServedBy: (servedBy: unknown) => void,
   ) {
@@ -1936,7 +1913,7 @@ export class RowStream implements AsyncIterable<Value[]> {
  * matched and its columns are null".
  */
 export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
-  readonly #stream: grpc.ClientReadableStream<unknown>;
+  readonly #stream: MessageStream;
   /**
    * The id the call went out under.
    *
@@ -1951,7 +1928,7 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
 
   /** @internal */
   constructor(
-    stream: grpc.ClientReadableStream<unknown>,
+    stream: MessageStream,
     requestId: string,
     onServedBy: (servedBy: unknown) => void,
   ) {
@@ -2035,7 +2012,7 @@ export class JoinStream implements AsyncIterable<(Value[] | undefined)[]> {
 
 /** Groups arriving in batches. */
 export class GroupStream implements AsyncIterable<Group> {
-  readonly #stream: grpc.ClientReadableStream<unknown>;
+  readonly #stream: MessageStream;
   /**
    * The id the call went out under.
    *
@@ -2050,7 +2027,7 @@ export class GroupStream implements AsyncIterable<Group> {
 
   /** @internal */
   constructor(
-    stream: grpc.ClientReadableStream<unknown>,
+    stream: MessageStream,
     requestId: string,
     onServedBy: (servedBy: unknown) => void,
   ) {

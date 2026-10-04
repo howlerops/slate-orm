@@ -109,7 +109,15 @@ ROOT = Path(__file__).resolve().parent.parent
 #: answer does not appear is one whose precision decays as the repository
 #: does, and that is worth more than either number on its own. Still not
 #: tuned, and the reason has not changed: the labelled set has two rows.
-RANKS: list[tuple[int | None, int]] = [(16, 19), (None, 10)]
+#:
+#: **2026-10-04: 16 of 19 → 17 of 20, the first time the rank itself moved,
+#: and it moved the wrong way.** The new candidate, and the new first, is
+#: `ledger/2026-10-04-the-client-on-workerd.md`, which says "playground" (the
+#: WASM build it was asked to improve on) and so outranks the closing entry for
+#: a claim about the playground's ordering. The decay the note above predicted
+#: in the denominator has reached the numerator. Still not tuned, for the same
+#: reason: two labelled rows.
+RANKS: list[tuple[int | None, int]] = [(17, 20), (None, 10)]
 
 
 def bodies() -> dict[str, str]:

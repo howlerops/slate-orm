@@ -48,7 +48,7 @@ free_ports() {
   # `scripts/free_ports.py`, not a heredoc: this was copied into
   # `examples/batchbench/run.sh` and two copies of one behaviour are one edit
   # away from two behaviours. The script's docstring has the whole argument.
-  python3 "$root/scripts/free_ports.py" --count 5
+  python3 "$root/scripts/free_ports.py" --count 6
 }
 
 if [ "$mode" = --conformance ] || [ "$mode" = --e2e ]; then
@@ -56,17 +56,18 @@ if [ "$mode" = --conformance ] || [ "$mode" = --e2e ]; then
   # parameters, which are forwarded to the conformance runner further down --
   # so the five port numbers arrived as command-line arguments and it refused
   # them. Caught on the first run after the change.
-  IFS=' ' read -r HEAD_PORT GO_PORT NODE_PORT PY_PORT WEB <<PICKED
+  IFS=' ' read -r HEAD_PORT GO_PORT NODE_PORT PY_PORT WEB EDGE_PORT <<PICKED
 $(free_ports)
 PICKED
 else
-  HEAD_PORT=7421 GO_PORT=7431 NODE_PORT=7432 PY_PORT=7433 WEB=7440
+  HEAD_PORT=7421 GO_PORT=7431 NODE_PORT=7432 PY_PORT=7433 WEB=7440 EDGE_PORT=7434
 fi
 
 HEAD_ADDR="${SLATE_HEAD_ADDR:-127.0.0.1:$HEAD_PORT}"
 GO_ADDR="${SLATE_GO_ADDR:-127.0.0.1:$GO_PORT}"
 NODE_ADDR="${SLATE_NODE_ADDR:-127.0.0.1:$NODE_PORT}"
 PY_ADDR="${SLATE_PY_ADDR:-127.0.0.1:$PY_PORT}"
+EDGE_ADDR="${SLATE_EDGE_ADDR:-127.0.0.1:$EDGE_PORT}"
 WEB_PORT="${SLATE_WEB_PORT:-$WEB}"
 
 # The frontend reads its three adapter URLs from the environment, defaulting to
@@ -140,9 +141,9 @@ trap cleanup EXIT INT TERM
 # `LISTENING <addr>` once its listener is bound and before it serves, which
 # closes the race where a connection arrives between bind and accept.
 await() {
-  local log="$1" what="$2" limit="${3:-60}"
+  local log="$1" what="$2" limit="${3:-60}" ready="${4:-LISTENING}"
   for _ in $(seq "$limit"); do
-    grep -q "LISTENING" "$log" 2>/dev/null && return 0
+    grep -q "$ready" "$log" 2>/dev/null && return 0
     sleep 1
   done
   echo "$what never said it was listening; its log:" >&2
@@ -198,14 +199,29 @@ echo "starting the python adapter on $PY_ADDR"
 (cd "$here/backends/python" && python3 -m adapter --head "$HEAD_ADDR" --listen "$PY_ADDR") > "$run/python.log" 2>&1 &
 pids+=($!)
 
+# The fourth adapter: the same endpoints as the node adapter (`adapter.ts`),
+# as a Cloudflare Worker on `workerd`, with the client over gRPC-web. Its
+# dependencies are installed here if missing rather than the adapter being
+# skipped: a conformance run that quietly compared three adapters instead of
+# four would report agreement it had not checked. `docs/edge-client.md` §4.
+echo "starting the edge adapter (wrangler dev, workerd) on $EDGE_ADDR"
+(cd "$root/examples/edge" && { [ -d node_modules ] || npm ci --silent --no-audit --no-fund; } \
+  && WRANGLER_SEND_METRICS=false CI=1 npx --no-install wrangler dev \
+       --ip "${EDGE_ADDR%:*}" --port "${EDGE_ADDR##*:}" \
+       --var "HEAD:http://$HEAD_ADDR" --show-interactive-dev-session=false) > "$run/edge.log" 2>&1 &
+pids+=($!)
+
 await "$run/go.log" "the go adapter"
 await "$run/node.log" "the node adapter"
 await "$run/python.log" "the python adapter"
+# wrangler announces itself with `Ready on`, not the handshake the others use.
+await "$run/edge.log" "the edge adapter" 120 "Ready on"
 
 echo
 echo "  go         http://$GO_ADDR"
 echo "  node       http://$NODE_ADDR"
 echo "  python     http://$PY_ADDR"
+echo "  edge       http://$EDGE_ADDR"
 echo "  logs       $run"
 echo
 
@@ -214,6 +230,7 @@ if [ "$mode" = --conformance ]; then
   status=0
   python3 "$here/conformance/conformance.py" \
     --go "http://$GO_ADDR" --node "http://$NODE_ADDR" --python "http://$PY_ADDR" \
+    --edge "http://$EDGE_ADDR" \
     "${@:2}" || status=$?
   exit "$status"
 fi

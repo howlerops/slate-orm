@@ -22,12 +22,32 @@ import readline from "node:readline";
 // depending on it here would install a second copy, and the objects cross
 // the boundary. The re-export exists for exactly this.
 import { Client, grpc, type Identity } from "../src/index.js";
+import { CONVERSION, method } from "../src/transport.js";
 
-type ChannelOptions = grpc.ChannelOptions;
+/**
+ * Which transport the suite runs over: `native` (grpc-js, the default) or
+ * `web` (gRPC-web over `fetch`, the edge client). The **same tests** run over
+ * both — `SLATE_TRANSPORT=web npm test` — because the claim is that a `Client`
+ * behaves identically over either, and a suite written for the web transport
+ * alone would test the cases somebody thought of. `docs/edge-client.md`.
+ */
+export const TRANSPORT = process.env.SLATE_TRANSPORT === "web" ? "web" : "native";
+if (process.env.SLATE_TRANSPORT && !["web", "native"].includes(process.env.SLATE_TRANSPORT)) {
+  throw new Error(`SLATE_TRANSPORT=${process.env.SLATE_TRANSPORT}: want "native" or "web"`);
+}
+
+/**
+ * Sees every request a client sends: the RPC's name (`Insert`, `Query`), the
+ * request message, and its serialized size. Transport-neutral, so a test that
+ * inspects the wire runs over both transports: a grpc-js interceptor under
+ * `native`, a `fetch` wrapper that decodes the outgoing frame under `web`.
+ */
+export type Observer = (method: string, message: unknown, bytes: number) => void;
 
 export const CONFIG = `
 [listen]
 address = "127.0.0.1:0"
+${TRANSPORT === "web" ? "grpc_web = true" : ""}
 
 [auth]
 mode = "trusted-header"
@@ -178,16 +198,17 @@ export interface Serving {
   /**
    * A client on this node.
    *
-   * `options` reaches `Client.connect`'s fourth argument untouched, which is
-   * how a test installs a grpc-js interceptor. It is here because some
+   * `observe` sees every request the client sends. It is here because some
    * properties of a client are properties of the *request* and not of the
    * answer — a dropped freshness floor returns exactly the right rows — so the
    * only place to assert them is the wire. The Go suite has done this since
-   * 2026-09-16; this client had no argument to pass an interceptor through
-   * until `ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`
-   * added one.
+   * 2026-09-16; this client had no way in until
+   * `ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`
+   * added an interceptor argument. It was grpc-js's `ChannelOptions` until the
+   * web transport, which has no interceptors; an {@link Observer} is the same
+   * question asked of either transport.
    */
-  client(identity?: Identity, options?: ChannelOptions): Client;
+  client(identity?: Identity, observe?: Observer): Client;
   stop(): void;
 }
 
@@ -224,8 +245,16 @@ export async function start(extra = ""): Promise<Serving> {
   const clients: Client[] = [];
   return {
     address,
-    client(identity = APP, options: ChannelOptions = {}) {
-      const c = Client.connect(address, identity, grpc.credentials.createInsecure(), options);
+    client(identity = APP, observe?: Observer) {
+      const c =
+        TRANSPORT === "web"
+          ? Client.connectWeb(`http://${address}`, identity, observe ? { fetch: observing(observe) } : {})
+          : Client.connect(
+              address,
+              identity,
+              grpc.credentials.createInsecure(),
+              observe ? { interceptors: [intercepting(observe)] } : {},
+            );
       clients.push(c);
       return c;
     },
@@ -235,3 +264,36 @@ export async function start(extra = ""): Promise<Serving> {
     },
   };
 }
+
+/**
+ * An {@link Observer} as a grpc-js interceptor. The size is the channel's own
+ * serializer's, the exact buffer grpc-js is about to send.
+ */
+function intercepting(observe: Observer) {
+  return (options: grpc.InterceptorOptions, nextCall: grpc.NextCall) => {
+    const name = options.method_definition.path.split("/").pop() ?? "?";
+    return new grpc.InterceptingCall(nextCall(options), {
+      sendMessage(message: unknown, next: (message: unknown) => void) {
+        observe(name, message, options.method_definition.requestSerialize(message).length);
+        next(message);
+      },
+    });
+  };
+}
+
+/**
+ * An {@link Observer} as a `fetch` wrapper: the RPC's name from the URL, and
+ * the request decoded out of the frame the web transport is about to post.
+ * The size is the frame's payload, the same bytes `requestSerialize` weighs.
+ */
+function observing(observe: Observer) {
+  return (input: string, init: RequestInit): Promise<Response> => {
+    const name = input.split("/").pop() ?? "?";
+    const body = init.body as Uint8Array;
+    const payload = body.subarray(5);
+    const type = method(name).request;
+    observe(name, type.toObject(type.decode(payload), CONVERSION), payload.length);
+    return globalThis.fetch(input, init);
+  };
+}
+

@@ -1,0 +1,74 @@
+{
+  "at": "2026-10-04T17:47:52+00:00",
+  "file": "clients/typescript/src/web.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd clients/typescript && npx tsc -p tsconfig.json >/dev/null 2>&1; SLATE_TRANSPORT=web node --test --test-reporter=tap dist-test/test/*.test.js 2>&1"
+  ],
+  "commit": "ae7ba64",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "a status in the headers is ignored",
+      "old": "        if (code !== 0) throw failureFrom(code, response.headers, undefined);",
+      "new": "        if (code !== 0 && false) throw failureFrom(code, response.headers, undefined);",
+      "verdict": "caught",
+      "caught_by": [
+        "an element of the wrong type is refused",
+        "the schema claim rides on a batched write",
+        "insert refuses a duplicate key",
+        "explain needs the explain grant",
+        "an unknown table is not-found",
+        "a null in a non-nullable column is refused",
+        "a row already gone is refused rather than counted as absent",
+        "neither keys nor aggregates is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a failure in the trailer frame reads as success",
+      "old": "          if (code !== 0) throw failureFrom(code, response.headers, trailers);",
+      "new": "          if (code !== 0 && false) throw failureFrom(code, response.headers, trailers);",
+      "verdict": "caught",
+      "caught_by": [
+        "a failure in the trailer frame is a failure, even after a message"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "grpc-message is not percent-decoded",
+      "old": "    return decodeURIComponent(message);",
+      "new": "    return message;",
+      "verdict": "caught",
+      "caught_by": [
+        "an element of the wrong type is refused",
+        "neither keys nor aggregates is refused",
+        "a right outer join refuses a cursor, on its first page",
+        "an offset beside a cursor is refused",
+        "a page with no size is refused",
+        "a failure in the trailer frame is a failure, even after a message",
+        "a status in the headers, with no body, is read from the headers",
+        "a filter naming a window is refused"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "a partial frame is yielded before it is complete",
+      "old": "        if (buffered.length < 5 + length) break;",
+      "new": "        if (buffered.length < 5) break;",
+      "verdict": "caught",
+      "caught_by": [
+        "frames split at every byte boundary reassemble to the same answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

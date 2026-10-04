@@ -47,6 +47,9 @@ tokio-stream = { version = "0.1", features = ["net"] }
 # depend on a transitive version tonic could change under it, which is the
 # usual way a build breaks on a patch release of something nobody declared.
 tower = "0.5"
+# gRPC-web, for clients whose only transport is `fetch` — an edge runtime
+# such as Cloudflare Workers. Opt-in per node; `docs/edge-client.md`.
+tonic-web = "0.14"
 http = "1"
 tonic = "0.14"
 # `http-body` for the response-body wrapper that reads a streamed call's

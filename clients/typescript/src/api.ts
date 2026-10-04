@@ -1,0 +1,214 @@
+/**
+ * Everything the client exports, on every runtime. The two entry points add to
+ * this: `index.ts` installs the native gRPC transport and re-exports grpc-js,
+ * and `edge.ts` adds nothing, so loading it loads nothing from Node.
+ * `docs/edge-client.md` §2.
+ */
+export {
+  Client,
+  Session,
+  Transaction,
+  RowStream,
+  JoinStream,
+  GroupStream,
+  type JoinExplanation,
+  type JoinInputPlan,
+  type Identity,
+  type ReadToken,
+  type ServedBy,
+  type BatchOutcome,
+  type BatchResult,
+  type RowDelete,
+  type RowUpdate,
+  type WriteResult,
+  type Explanation,
+  type Leadership,
+  type ComputedRow,
+  type ComputedJoinedRow,
+  type RelatedNode,
+  type Relation,
+  type Step,
+  type Way,
+  type JoinPage,
+  type Page,
+} from "./client.js";
+export {
+  SlateError,
+  isKind,
+  LEADER_KEY,
+  REQUEST_ID_KEY,
+  type Kind,
+} from "./errors.js";
+export {
+  type Scalar,
+  type TimeUnit,
+  type CalendarPart,
+  type CalendarUnit,
+  type CaseBranch,
+  type Metric,
+  col,
+  ref,
+  lit,
+  add,
+  sub,
+  mul,
+  div,
+  length,
+  lower,
+  upper,
+  round,
+  concat,
+  coalesce,
+  extract,
+  dateTrunc,
+  calendarPart,
+  calendarTrunc,
+  monthStart,
+  yearStart,
+  inZone,
+  year,
+  month,
+  dayOfMonth,
+  dayOfWeek,
+  caseWhen,
+  distance,
+  regexpReplace,
+} from "./scalar.js";
+export {
+  type Value,
+  nullValue,
+  bool,
+  bytes,
+  str,
+  int,
+  uint,
+  float,
+  units,
+  unitsToString,
+  uuid,
+  vector,
+  array,
+  valuesEqual,
+  valueKey,
+  formatUuid,
+} from "./value.js";
+export {
+  type Ordinal,
+  type Expr,
+  type Query,
+  type SortKey,
+  type Direction,
+  alwaysTrue,
+  alwaysFalse,
+  eq,
+  ne,
+  lt,
+  le,
+  gt,
+  ge,
+  isNull,
+  isNotNull,
+  isIn,
+  like,
+  ilike,
+  notLike,
+  contains,
+  usingIndex,
+  usingTableScan,
+  type AccessHint,
+  and,
+  or,
+  not,
+  compare,
+  isNullAt,
+  isNotNullAt,
+  type Operator,
+  type Assignment,
+  type Atomicity,
+  type Batch,
+  type BatchOperation,
+  type DeleteWhere,
+  type UpdateWhere,
+} from "./query.js";
+export {
+  JoinBuilder,
+  newJoin,
+  at,
+  key0,
+  windowed,
+  type Window,
+  type WindowFunction,
+  rowNumber,
+  rank,
+  denseRank,
+  lag,
+  lead,
+  aggregateOver,
+  over,
+  computedAt,
+  computed0,
+  joinComputed,
+  count,
+  countOf,
+  countDistinctOf,
+  minOf,
+  maxOf,
+  sumOf,
+  avgOf,
+  groupKey,
+  agg,
+  groupEq,
+  groupNe,
+  groupLt,
+  groupLe,
+  groupGt,
+  groupGe,
+  type Column,
+  type On,
+  type JoinInput,
+  type JoinQuery,
+  type JoinType,
+  type Algorithm,
+  type Aggregate,
+  type AggregateFunction,
+  type GroupRef,
+  type GroupSortKey,
+  type Grouping,
+  type Group,
+} from "./join.js";
+export {
+  answers,
+  asView,
+  fingerprint,
+  ordinalOf,
+  type CheckRule,
+  type ColumnDef,
+  type ForeignKey,
+  type ColumnType,
+  type Schemas,
+  type TableDef,
+} from "./schema.js";
+
+/**
+ * The grpc-js this client is built against, re-exported.
+ *
+ * `Client.connect`'s third and fourth arguments are `grpc.ChannelCredentials`
+ * and `grpc.ChannelOptions`, so a caller who wants TLS, a keepalive or an
+ * interceptor needs grpc-js — and needs *this* copy of it. Depending on
+ * `@grpc/grpc-js` from the calling package installs a second one, and two
+ * instances of a library whose objects cross the boundary is a class of bug
+ * nobody wants to debug from a demo adapter.
+ *
+ * Found by needing it: the explorer's Node adapter counts its own round trips
+ * with an interceptor, and had no supported way to obtain one. The same shape
+ * as the `options` argument itself, which
+ * `ledger/2026-09-28-the-third-client-counts-and-the-go-instrument-was-half-blind.md`
+ * records adding for the same reason — a door the other two clients already
+ * had. Python's `Client` takes `channel=` and the caller brings their own
+ * `grpc`, which is the same package either way because there is one Python
+ * environment; Go's `Dial` takes `...grpc.DialOption` and the module graph
+ * keeps one `google.golang.org/grpc`. Only npm makes this a hazard, so only
+ * this client needs the re-export.
+ */
+
+export { type Fetch, type WebOptions } from "./web.js";

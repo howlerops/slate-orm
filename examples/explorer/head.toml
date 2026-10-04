@@ -6,6 +6,9 @@
 
 [listen]
 address = "127.0.0.1:7421"
+# gRPC-web as well as gRPC, for the fourth adapter: the Worker in
+# `examples/edge`, whose only transport is `fetch`. `docs/edge-client.md`.
+grpc_web = true
 
 [auth]
 mode = "trusted-header"

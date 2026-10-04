@@ -1,4 +1,35 @@
-import { status as GrpcStatus, type ServiceError } from "@grpc/grpc-js";
+import { type CallFailure } from "./transport.js";
+
+/**
+ * gRPC's status codes, by number — the same numbers as grpc-js's `status`
+ * enum, which this used to import. A runtime import from grpc-js loads
+ * `node:http2`, which made this module, and so every error a client raises,
+ * unloadable on an edge runtime. The numbers are gRPC's, fixed by the
+ * protocol; `docs/edge-client.md` §2.
+ */
+export const GrpcStatus = {
+  OK: 0,
+  CANCELLED: 1,
+  UNKNOWN: 2,
+  INVALID_ARGUMENT: 3,
+  DEADLINE_EXCEEDED: 4,
+  NOT_FOUND: 5,
+  ALREADY_EXISTS: 6,
+  PERMISSION_DENIED: 7,
+  RESOURCE_EXHAUSTED: 8,
+  FAILED_PRECONDITION: 9,
+  ABORTED: 10,
+  OUT_OF_RANGE: 11,
+  UNIMPLEMENTED: 12,
+  INTERNAL: 13,
+  UNAVAILABLE: 14,
+  DATA_LOSS: 15,
+  UNAUTHENTICATED: 16,
+} as const;
+export type GrpcStatus = (typeof GrpcStatus)[keyof typeof GrpcStatus];
+
+/** A failed call from either transport; grpc-js's `ServiceError` is one. */
+type ServiceError = CallFailure;
 
 import {
   type CheckFailure,
@@ -242,7 +273,9 @@ export function fromServiceError(error: ServiceError, requestId = ""): SlateErro
     if (typeof value === "string") trailers[key] = value;
   }
 
-  let kind = BY_CODE[error.code] ?? "internal";
+  // A number from the wire; one gRPC does not define reads as `internal`.
+  const code = error.code as GrpcStatus;
+  let kind = BY_CODE[code] ?? "internal";
   let leader: string | undefined;
   // Left as a trailer check rather than moved onto the reason token below,
   // though NOT_LEADER is one: `slate-leader` predates the details blob, a
@@ -255,7 +288,7 @@ export function fromServiceError(error: ServiceError, requestId = ""): SlateErro
   return new SlateError(
     kind,
     error.details || error.message,
-    error.code,
+    code,
     trailers,
     leader,
     reasonFromMetadata(error),
