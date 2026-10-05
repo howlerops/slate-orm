@@ -1,0 +1,14 @@
+{
+  "at": "2026-10-05T22:23:16+00:00",
+  "file": "clients/typescript/package.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "check_versions"
+  ],
+  "commit": "a31a815",
+  "python": "3.12.2",
+  "outcome": "baseline-reported-nothing",
+  "cases": []
+}

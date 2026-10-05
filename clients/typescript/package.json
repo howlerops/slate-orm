@@ -1,6 +1,6 @@
 {
   "name": "@slate-orm/client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A TypeScript client for a slate head node",
   "license": "Apache-2.0",
   "repository": {

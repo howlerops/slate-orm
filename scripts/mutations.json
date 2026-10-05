@@ -356,8 +356,8 @@
       "cases": [
         {
           "name": "the npm package's version drifts from the workspace",
-          "old": "\"version\": \"0.1.0\",",
-          "new": "\"version\": \"0.1.1\","
+          "old": "\"version\": \"0.2.0\",",
+          "new": "\"version\": \"0.2.1\","
         }
       ]
     },

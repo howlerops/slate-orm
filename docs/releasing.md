@@ -89,6 +89,9 @@ python3 scripts/check_versions.py v0.2.0   # refuses until the tree agrees
 #                                        `path = ..., version = ...` requirements
 #                                        beside it (cargo refuses a path whose
 #                                        version does not satisfy them)
+#    crates/slate-serverd/Cargo.toml     its own `slate-server` requirement,
+#                                        the one member that pins a path
+#                                        dependency outside the workspace table
 #    clients/typescript/package.json     version, and package-lock.json's two
 #    clients/python/pyproject.toml       version
 #    Cargo.lock                          `cargo metadata` rewrites it

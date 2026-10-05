@@ -19,7 +19,7 @@ name = "slate-serverd"
 path = "src/main.rs"
 
 [dependencies]
-slate-server = { path = "../slate-server", version = "0.1.0" }
+slate-server = { path = "../slate-server", version = "0.2.0" }
 slate-sql.workspace = true
 slate-slatedb.workspace = true
 slate-kernel.workspace = true

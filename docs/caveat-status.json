@@ -16245,6 +16245,18 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-05",
       "by": "The second node is what shows a follower; one node cannot. Both sleep after ten idle minutes (`sleepAfter` in `examples/edge/src/worker.ts`), and `b` starts only when something asks for it."
+    },
+    {
+      "entry": "2026-10-05-version-0-2-0.md",
+      "key": "Nothing is published by this commit.",
+      "verdict": "moment",
+      "reviewed": "2026-10-05"
+    },
+    {
+      "entry": "2026-10-05-version-0-2-0.md",
+      "key": "`docs/releasing.md`'s table of what shipped still describes ",
+      "verdict": "moment",
+      "reviewed": "2026-10-05"
     }
   ]
 }
