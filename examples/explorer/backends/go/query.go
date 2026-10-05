@@ -100,16 +100,33 @@ type querySpec struct {
 	IncludeDeleted bool `json:"includeDeleted"`
 }
 
-// tables the demo serves.
+// tables the demo serves, in the order `/api/meta` lists them.
 //
 // This client needs no catalog, so it could pass an unknown name straight to
 // the server and let it answer `not-found`. It does not, because the other two
 // clients hold a schema and *cannot* build a request without one — so the
 // server never sees their bad name. One of the three refusing differently is a
 // contract divergence, and the conformance runner found exactly that.
-var known = map[string]bool{
-	"authors": true, "books": true, "sales": true, "shipments": true,
-}
+//
+// `posts` is here because it is how arrays reach the contract: it is the one
+// table with array columns, and a read of it is the only place the three
+// adapters' `{"array": [...]}` encodings are compared.
+//
+// A slice in the contract's order rather than a map sorted on the way out.
+// The list used to be sorted, which agreed with the contract only while the
+// newest table happened to sort last; `posts` sorts before `sales`, and the
+// contract lists it after `shipments` — the catalog's table-id order. A fixed
+// order is as deterministic as a sorted one, which was the sort's only job.
+var tableNames = []string{"authors", "books", "sales", "shipments", "posts"}
+
+// known is `tableNames` as a set, for the check every query makes.
+var known = func() map[string]bool {
+	out := make(map[string]bool, len(tableNames))
+	for _, name := range tableNames {
+		out[name] = true
+	}
+	return out
+}()
 
 // views the demo serves, held apart from `known` rather than added to it.
 //
@@ -124,7 +141,12 @@ var known = map[string]bool{
 // only a plain query can read through one".
 var views = map[string]bool{"classics": true}
 
-// viewNames is `views` sorted, for `/api/meta`, for the reason knownTables is.
+// viewNames is `views` sorted, for `/api/meta`.
+//
+// Sorted because a map's iteration order is deliberately random in Go, and
+// the conformance runner compares the three adapters' answers as JSON: an
+// unsorted list would disagree with itself between two runs of the same
+// binary, which is a far more confusing failure than a missing view.
 func viewNames() []string {
 	out := make([]string, 0, len(views))
 	for name := range views {
@@ -134,19 +156,9 @@ func viewNames() []string {
 	return out
 }
 
-// knownTables is `known` as a sorted slice, for `/api/meta`.
-//
-// Sorted because a map's iteration order is deliberately random in Go, and
-// the conformance runner compares the three adapters' answers as JSON: an
-// unsorted list would disagree with itself between two runs of the same
-// binary, which is a far more confusing failure than a missing table.
+// knownTables is `tableNames`, copied so a caller cannot reorder the original.
 func knownTables() []string {
-	out := make([]string, 0, len(known))
-	for name := range known {
-		out = append(out, name)
-	}
-	sort.Strings(out)
-	return out
+	return append([]string(nil), tableNames...)
 }
 
 func (q *querySpec) build() (slate.Query, error) {

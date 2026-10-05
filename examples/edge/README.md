@@ -49,10 +49,11 @@ demo: nothing short of running the real runtime would have shown it.
 
 `deploy.sh` puts the whole thing on Cloudflare:
 
-- this Worker;
-- the head node as a **Cloudflare Container** running `slate-serverd` from the
-  repository's own image;
-- its database in an **R2** bucket, through the S3 API.
+- this Worker, which also serves the explorer's web UI at `/`;
+- **two head nodes**, `a` and `b`, as Cloudflare Containers running
+  `slate-serverd` from the repository's own image, each with two in-process
+  read replicas;
+- their database in one **R2** bucket, through the S3 API.
 
 Nothing runs on your machine afterwards. It was done on 2026-10-05.
 
@@ -87,11 +88,27 @@ R2_ENV=~/.config/slate/r2.env TOKENS=tokens.json CLOUDFLARE_ACCOUNT_ID=<id> sh d
    never echoed: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and
    `SLATE_TOKENS`. The Worker passes them into the container as environment
    variables.
-3. Deploys with `wrangler.cloudflare.jsonc`: one container instance, because
-   the node holds a writer lease in the bucket, sleeping after ten idle
-   minutes. The Worker reaches it through a Durable Object binding rather
-   than a URL. `wrangler.toml` remains the Worker-alone shape that `wrangler
-   dev` and the conformance runner use.
+3. Builds the explorer's UI with `VITE_HOSTED=edge`, which drops the SDK
+   switch (there is one adapter here) and adds a node switch, and sends every
+   call to the page's own origin.
+4. Deploys with `wrangler.cloudflare.jsonc`: the UI as static assets, with
+   only `/api/*` running the Worker, and up to two container instances.
+   `wrangler.toml` remains the Worker-alone shape that `wrangler dev` and the
+   conformance runner use.
+
+**Two nodes, one writer.** Each node campaigns for a writer lease in the
+bucket when it starts; the first wins and writes, and the other comes up as
+a read-only follower. A follower serves reads from its replicas and refuses
+writes, naming the leader. The Worker starts `a` before it ever forwards to
+`b`, so `a` leads whenever both start cold. A request picks its node with
+`x-demo-node: a | b` (default `a`), and the answer names it in `x-slate-node`.
+
+**Replicas, and what they cost on R2.** Each node also runs two read replicas,
+`reader-1` and `reader-2`: separate readers of the same bucket, polling its
+manifest. `/api/served-by` names which one answered. The default catch-up
+budget would poll every 50 ms, which on R2 is a billed request each time, so
+`container/derive.py` sets `[routing] catch_up = "5s"`, one poll a second per
+replica while a node is awake.
 
 **Seeding.** The node starts on whatever the bucket holds. The bucket was
 seeded once by running `slate-serverd` locally against it in `trusted-header`
@@ -102,7 +119,23 @@ fail on R2:
 - it resigned on `SIGTERM`;
 - a restart took the lease at generation 2 and read back every seeded row.
 
-**What was checked live,** with the tunnel and every local process stopped:
+**What was checked live on 2026-10-05, after the second deploy** (two nodes,
+replicas, the UI):
+- `/` serves the explorer's page, and its panels answer from the Worker; a
+  browser walked the rows, topology and nearest tabs with no console errors;
+- node `a` reports `leader: true` and `b` `leader: false`;
+- on both, four reads in a row named `reader-1`, `reader-2`, `reader-1`,
+  `reader-2`;
+- on `a`, a duplicate author name is refused `already-exists` /
+  `UNIQUE_VIOLATION`; on `b`, every write is refused `not-leader`, naming
+  `a`'s lease holder.
+
+The same two-node shape was run first from this machine against the same
+bucket, which is also where the new unique index was built: 5 entries in
+668 ms, by the node that took the lease.
+
+**What was checked live after the first deploy,** with the tunnel and every
+local process stopped:
 - `/api/meta` reports the node leader on the first request;
 - the 11 seeded books come back from R2, and the reader sees 9 under its
   policy;

@@ -140,7 +140,9 @@ const IDENTITIES: Record<string, Identity> = {
   analyst: { principal: "u64:4", tenant: "u64:1", roles: ["analyst"] },
 };
 
-const TABLES = ["authors", "books", "sales", "shipments"];
+// `posts` last, and present at all because it is the table with array
+// columns: without it in this list no endpoint could read one.
+const TABLES = ["authors", "books", "sales", "shipments", "posts"];
 
 /**
  * The demo's one view, held apart from `TABLES` rather than added to it.
@@ -1743,6 +1745,45 @@ export class Adapter {
     const left = (await session.get("books", key)) !== undefined;
     return { refused, affected: Number(affected), left };
   }
+
+  /**
+   * An insert the unique index `by_name` refuses, or does not. See CONTRACT.md.
+   *
+   * `insert` and not `upsert`: an upsert at a fresh key would still collide on
+   * the index, but an upsert is also how a caller says "replace", and the
+   * refusal is clearer from the write that only ever adds.
+   */
+  async unique(session: Session, body: { collide?: boolean }): Promise<unknown> {
+    const id = 9400n;
+    // Cleared first, so the key is free and only the index can refuse: a run
+    // that died between the insert and the delete below would otherwise turn
+    // every later clean insert into a duplicate-*key* refusal.
+    await session.delete("authors", [uint(id)]);
+    const name = body.collide === true ? "Ursula K. Le Guin" : "Nobody Yet 9400";
+    let refused = "";
+    let reason = "";
+    try {
+      await session.insert("authors", [uint(id), str(name), str("US"), { kind: "int", value: 2000n }]);
+    } catch (error) {
+      if (!(error instanceof SlateError)) throw error;
+      refused = kindName(error);
+      reason = error.reason;
+    }
+    const landed = (await session.get("authors", [uint(id)])) !== undefined;
+    // Removed so the next case, and the next adapter, find authors as seeded.
+    if (landed) await session.delete("authors", [uint(id)]);
+    // And reported, because nothing else could see it: the next adapter
+    // clears the key before inserting, so a row left here changes no answer.
+    const left = (await session.get("authors", [uint(id)])) !== undefined;
+    return { refused, reason, landed, left };
+  }
+
+  /** Which view of the database answered a read. See CONTRACT.md. */
+  async servedBy(session: Session): Promise<unknown> {
+    const stream = session.query({ table: "books" });
+    const rows = await stream.collect();
+    return { servedBy: stream.servedBy?.replica ?? "", rows: rows.length };
+  }
 }
 
 /** The contract's spelling of an error kind. */
@@ -1812,6 +1853,8 @@ function routesFor(adapter: Adapter): Record<string, (s: Session, b: never) => P
     "/api/transaction": (s, b) => adapter.transaction(s, b),
     "/api/round-trips": (s, b) => adapter.roundTrips(s, b),
     "/api/render-decimals": () => adapter.renderDecimals(),
+    "/api/unique": (s, b) => adapter.unique(s, b),
+    "/api/served-by": (s) => adapter.servedBy(s),
   };
 }
 

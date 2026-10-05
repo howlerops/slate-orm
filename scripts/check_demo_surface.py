@@ -86,26 +86,11 @@ POLICY = re.compile(r'using = "year >= (\d{4})"')
 #: get a panel?" has been no every time. A seventh should be no for a reason
 #: somebody writes down rather than by default.
 NOT_IN_THE_UI = {
-    "/api/window": (
-        "a window function's value is a column like any other, and a panel "
-        "showing one would demonstrate the UI rather than the feature"
-    ),
-    "/api/chain": "an n-way chain renders as a wide table; the plan panel shows the shape",
-    "/api/nearest": (
-        "a nearest-neighbour search over eight embeddings is a list in an "
-        "order nobody can check by eye"
-    ),
     "/api/related": "one relationship loaded for many parents; the join panel already shows two tables",
-    "/api/page": "keyset pagination needs a cursor to be visible to mean anything",
     "/api/purge": "erasing retired rows answers with a count and shows nothing",
     "/api/bad-status": "a deliberate check violation, for the conformance corpus's error shapes",
     "/api/typed": "reads two rows through the *generated* decoders; the UI decodes its own",
     "/api/bad-batch": "two rows a batch refuses for different reasons, as data rather than a trailer",
-    "/api/render-decimals": (
-        "twelve decimal strings a client formats without asking the server; "
-        "the UI shows a rendered price in the conditional-write panel, which "
-        "is the same renderer on a value somebody chose"
-    ),
     "/api/round-trips": (
         "how many gRPC calls a fixed workload cost, which is a number about "
         "the client and not about the data; a panel would show four integers "

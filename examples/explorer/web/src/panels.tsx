@@ -1,4 +1,4 @@
-/** The demo's eight panels. Each is one thing the database does. */
+/** The demo's panels. Each is one thing the database does. */
 import { createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { createQuery } from "@tanstack/solid-query";
 
@@ -14,6 +14,8 @@ import {
   type BatchOutcome,
   type Sdk,
   type Tagged,
+  type WindowSpec,
+  SDKS,
 } from "./api";
 import { Bars, Result, Segmented, ValueTable } from "./parts";
 
@@ -554,9 +556,9 @@ export function Agreement(props: Context): JSX.Element {
               </Show>
               <div class="note">
                 For the thorough version, run{" "}
-                <code>python3 conformance/conformance.py</code> — 31 cases,
-                including every join type, group orderings with ties, and five
-                refusals.
+                <code>python3 conformance/conformance.py</code>, which runs
+                every endpoint through all three — every join type, group
+                orderings with ties, and the refusals.
               </div>
             </>
           );
@@ -1288,6 +1290,599 @@ export function ConditionalWrites(props: Context): JSX.Element {
             )}
           </Result>
         </Show>
+      </Show>
+    </div>
+  );
+}
+
+/**
+ * Three tables in one read: authors, their books, and those books' sales.
+ *
+ * The answer is the join panel's with a third side, and a reader cannot tell
+ * from the row count alone whether the third table was attached to the right
+ * one: attached to `authors` instead of `books`, it would still return rows.
+ * The `sales` column naming the same book as the `books` column is the check.
+ */
+export function Chains(props: Context): JSX.Element {
+  const [kind, setKind] = createSignal("inner");
+  const chained = createQuery(() => ({
+    queryKey: ["chain", props.sdk(), props.persona(), kind()],
+    queryFn: () => api.chain(props.sdk(), props.persona(), { type: kind(), limit: 30 }),
+  }));
+  const cell = (row: Tagged[] | null, column: number) => (
+    <td class={row ? "" : "absent"}>{row ? render(row[column]) : "—"}</td>
+  );
+
+  return (
+    <div class="panel">
+      <h2>Chains</h2>
+      <p class="why">
+        Authors, their books, and each book's sales, as one request. It is not a
+        separate kind of query: a join with a third input, which the server
+        plans as a chain. The third table attaches to the <i>second</i>, so the
+        <code>book</code> column under sales always names the book beside it — a
+        client that attached it to authors would still return rows, and they
+        would be wrong.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>type</span>
+          <select
+            value={kind()}
+            onChange={(event) => setKind(event.currentTarget.value)}
+            data-test="chain-type"
+          >
+            <For each={["inner", "left"]}>{(name) => <option>{name}</option>}</For>
+          </select>
+        </label>
+      </div>
+      <Result answer={chained.data} pending={chained.isPending}>
+        {(value) => (
+          <div class="scroll">
+            <table data-test="chain-rows">
+              <thead>
+                <tr>
+                  <For each={["author", "title", "sale", "book", "units"]}>
+                    {(name) => <th>{name}</th>}
+                  </For>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={value.rows}>
+                  {(row) => (
+                    <tr>
+                      {cell(row.authors, 1)}
+                      {cell(row.books, 2)}
+                      {cell(row.sales, 0)}
+                      {cell(row.sales, 1)}
+                      {cell(row.sales, 2)}
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Result>
+    </div>
+  );
+}
+
+/** Window functions: a value per row, computed over the rows around it. */
+export function Windows(props: Context): JSX.Element {
+  const [fn, setFn] = createSignal<WindowSpec["function"]>("rank");
+  const [partition, setPartition] = createSignal(true);
+  const [running, setRunning] = createSignal(false);
+  const spec = (): WindowSpec => ({
+    function: fn(),
+    partition: partition(),
+    running: running(),
+    limit: 20,
+  });
+  const windowed = createQuery(() => ({
+    queryKey: ["window", props.sdk(), props.persona(), spec()],
+    queryFn: () => api.window(props.sdk(), props.persona(), spec()),
+  }));
+  const aggregate = () => fn() === "sum" || fn() === "count";
+
+  return (
+    <div class="panel">
+      <h2>Windows</h2>
+      <p class="why">
+        A window function keeps every row and adds a value computed over its
+        neighbours — the rank of a book among its author's, the year of the
+        book before it. Grouping would collapse the rows; this does not. The
+        window is ordered by year.
+      </p>
+      <p class="why">
+        <b>Turn on "running" for sum or count</b> and the same function means
+        something else: with an order, the frame is the rows <i>up to</i> this
+        one, so the total grows down the column instead of repeating.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>function</span>
+          <select
+            value={fn()}
+            onChange={(event) => setFn(event.currentTarget.value as WindowSpec["function"])}
+            data-test="window-function"
+          >
+            <For each={["rowNumber", "rank", "denseRank", "lag", "lead", "sum", "count"]}>
+              {(name) => <option>{name}</option>}
+            </For>
+          </select>
+        </label>
+        <label class="field">
+          <span>per author</span>
+          <input
+            type="checkbox"
+            checked={partition()}
+            onChange={(event) => setPartition(event.currentTarget.checked)}
+          />
+        </label>
+        <label class="field">
+          <span>running</span>
+          <input
+            type="checkbox"
+            checked={running()}
+            disabled={!aggregate()}
+            onChange={(event) => setRunning(event.currentTarget.checked)}
+          />
+        </label>
+      </div>
+      <Result answer={windowed.data} pending={windowed.isPending}>
+        {(value) => (
+          <ValueTable
+            columns={["id", "author_id", "title", "year", fn()]}
+            rows={value.rows.map((one) => [...one.row.slice(0, 4), one.windowed[0]])}
+          />
+        )}
+      </Result>
+    </div>
+  );
+}
+
+/** The fixed vector `/api/nearest` measures from, as CONTRACT.md gives it. */
+const NEAREST_TO = [0.1, 0.2, 0.3, 0.4];
+
+/** Cosine distance, computed here only so the order can be checked by eye. */
+function cosineDistance(a: number[], b: number[]): number {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  a.forEach((x, i) => {
+    const y = b[i] ?? 0;
+    dot += x * y;
+    na += x * x;
+    nb += y * y;
+  });
+  return 1 - dot / Math.sqrt(na * nb);
+}
+
+/** Nearest-neighbour search over the books' embeddings. */
+export function Nearest(props: Context): JSX.Element {
+  const [limit, setLimit] = createSignal(5);
+  const ranked = createQuery(() => ({
+    queryKey: ["nearest", props.sdk(), props.persona(), limit()],
+    queryFn: () => api.nearest(props.sdk(), props.persona(), limit()),
+  }));
+  // Every book's embedding, read separately, so the page can show the
+  // distance beside each title. The server sends titles only — distances are
+  // floats and the three clients print floats differently — which left the
+  // order impossible to check by eye. Computing them here is for the reader,
+  // not part of the answer.
+  const embeddings = createQuery(() => ({
+    queryKey: ["embeddings", props.sdk(), props.persona()],
+    queryFn: () =>
+      api.query(props.sdk(), props.persona(), { table: "books", columns: [2, 6], limit: 100 }),
+  }));
+  const distance = (title: Tagged): string => {
+    const all = embeddings.data;
+    if (!all?.ok) return "";
+    // A projected row keeps every column's ordinal, nulls where it was not
+    // asked for, so the title is still at 2 and the embedding at 6.
+    const match = all.value.rows.find((row) => render(row[2]) === render(title));
+    const vector = match?.[6];
+    if (!vector || !("vector" in vector)) return "";
+    return cosineDistance(NEAREST_TO, vector.vector.map(Number)).toFixed(4);
+  };
+
+  return (
+    <div class="panel">
+      <h2>Nearest neighbours</h2>
+      <p class="why">
+        Books ranked by cosine distance from the vector{" "}
+        <code>[{NEAREST_TO.join(", ")}]</code>, against each book's four-number
+        embedding. The ranking is the server's; the distance column is worked
+        out in this page from the stored embeddings so you can check it.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>how many</span>
+          <select
+            value={String(limit())}
+            onChange={(event) => setLimit(Number(event.currentTarget.value))}
+          >
+            <For each={[3, 5, 10]}>{(n) => <option value={String(n)}>{n}</option>}</For>
+          </select>
+        </label>
+      </div>
+      <Result answer={ranked.data} pending={ranked.isPending}>
+        {(value) => (
+          <div class="scroll">
+            <table data-test="nearest-titles">
+              <thead>
+                <tr>
+                  <For each={["rank", "title", "distance"]}>{(name) => <th>{name}</th>}</For>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={value.titles}>
+                  {(title, index) => (
+                    <tr>
+                      <td>{index() + 1}</td>
+                      <td>{render(title)}</td>
+                      <td>{distance(title)}</td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Result>
+    </div>
+  );
+}
+
+/** Keyset pages: the cursor is a key, so the next page starts where this ended. */
+export function Pages(props: Context): JSX.Element {
+  const [limit, setLimit] = createSignal(4);
+  // Every cursor followed so far. The first page has none; going back pops.
+  const [trail, setTrail] = createSignal<Tagged[][]>([]);
+  const after = () => trail().at(-1);
+  const page = createQuery(() => ({
+    queryKey: ["page", props.sdk(), props.persona(), limit(), after()],
+    queryFn: () => {
+      const cursor = after();
+      return api.page(props.sdk(), props.persona(), {
+        limit: limit(),
+        ...(cursor ? { after: cursor } : {}),
+      });
+    },
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Pages</h2>
+      <p class="why">
+        Each page hands back a <b>cursor</b>: the key of its last row. The next
+        page asks for rows after that key, which the server finds by seeking
+        the index rather than counting past an offset — so page fifty costs
+        what page one does, and a row inserted meanwhile cannot push one you
+        have not seen onto the page you already read.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>page size</span>
+          <select
+            value={String(limit())}
+            onChange={(event) => {
+              setLimit(Number(event.currentTarget.value));
+              setTrail([]);
+            }}
+          >
+            <For each={[2, 4, 8]}>{(n) => <option value={String(n)}>{n}</option>}</For>
+          </select>
+        </label>
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          disabled={trail().length === 0}
+          onClick={() => setTrail(trail().slice(0, -1))}
+        >
+          back
+        </button>
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          disabled={!(page.data?.ok && page.data.value.cursor)}
+          onClick={() => {
+            const answer = page.data;
+            if (answer?.ok && answer.value.cursor) setTrail([...trail(), answer.value.cursor]);
+          }}
+          data-test="page-next"
+        >
+          next page
+        </button>
+      </div>
+      <Result answer={page.data} pending={page.isPending}>
+        {(value) => (
+          <>
+            <div class="badges">
+              <span class="badge">
+                page <b>{trail().length + 1}</b>
+              </span>
+              <span class="badge" data-tone={value.cursor ? "good" : "warn"}>
+                cursor{" "}
+                <b data-test="page-cursor">
+                  {value.cursor ? value.cursor.map(render).join(", ") : "none — that was the end"}
+                </b>
+              </span>
+            </div>
+            <ValueTable
+              columns={TABLES["books"] ?? []}
+              rows={value.rows}
+              empty="nothing after the last cursor"
+            />
+          </>
+        )}
+      </Result>
+    </div>
+  );
+}
+
+/** Decimals: a count of the smallest unit, rendered against the column's scale. */
+export function Decimals(props: Context): JSX.Element {
+  const rendered = createQuery(() => ({
+    queryKey: ["render-decimals", props.sdk(), props.persona()],
+    queryFn: () => api.renderDecimals(props.sdk(), props.persona()),
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Money</h2>
+      <p class="why">
+        A decimal is stored as an integer count of its smallest unit — cents,
+        for <code>books.price</code> — and the scale belongs to the column, so it
+        never travels. Each client renders the number against the scale it
+        declares. These are the hard cases, rendered by the{" "}
+        <b>{props.sdk()}</b> client: values under one whole unit, negative ones,
+        scale 0, and both ends of a 64-bit integer.
+      </p>
+      <Result answer={rendered.data} pending={rendered.isPending}>
+        {(value) => (
+          <div class="scroll">
+            <table data-test="decimal-rows">
+              <thead>
+                <tr>
+                  <For each={["stored units", "scale", "rendered"]}>{(name) => <th>{name}</th>}</For>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={value.rendered}>
+                  {(row) => (
+                    <tr>
+                      <td>{row.units}</td>
+                      <td>{row.scale}</td>
+                      <td>
+                        <b>{row.text}</b>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Result>
+    </div>
+  );
+}
+
+/** A unique index refusing a duplicate, and admitting a fresh value. */
+export function Unique(props: Context): JSX.Element {
+  const [collide, setCollide] = createSignal(true);
+  const [ran, setRan] = createSignal(0);
+  const outcome = createQuery(() => ({
+    queryKey: ["unique", props.sdk(), props.persona(), collide(), ran()],
+    queryFn: () => api.unique(props.sdk(), props.persona(), collide()),
+    enabled: ran() > 0,
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Unique</h2>
+      <p class="why">
+        <code>authors.name</code> carries a unique index. This inserts a new
+        author at a key nobody holds — once under a name that is already taken,
+        once under a fresh one — then removes it again if it landed.
+      </p>
+      <p class="why">
+        The refusal's <b>reason</b> is the part worth reading. A duplicate
+        primary key and a duplicate in a unique index are both{" "}
+        <code>already-exists</code>; only the reason says which rule fired, and
+        here the key is free, so it can only be the index.
+      </p>
+      <div class="controls">
+        <label class="field">
+          <span>name</span>
+          <select
+            value={collide() ? "taken" : "fresh"}
+            onChange={(event) => setCollide(event.currentTarget.value === "taken")}
+            data-test="unique-name"
+          >
+            <option value="taken">Ursula K. Le Guin (taken)</option>
+            <option value="fresh">Nobody Yet 9400 (fresh)</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          onClick={() => setRan(ran() + 1)}
+          data-test="unique-run"
+        >
+          insert it
+        </button>
+      </div>
+      <Show when={ran() > 0} fallback={<div class="note">not run yet</div>}>
+        <Result answer={outcome.data} pending={outcome.isPending}>
+          {(value) => (
+            <div class="badges" data-test="unique-summary">
+              <span class="badge" data-tone={value.refused ? "warn" : "good"}>
+                {value.refused ? "refused" : "inserted"}{" "}
+                <b>{value.refused || "the new author"}</b>
+              </span>
+              <Show when={value.reason}>
+                <span class="badge">
+                  reason <b>{value.reason}</b>
+                </span>
+              </Show>
+              <span class="badge" data-tone={value.landed ? "good" : "warn"}>
+                row <b>{value.landed ? "landed, then removed" : "never written"}</b>
+              </span>
+            </div>
+          )}
+        </Result>
+      </Show>
+    </div>
+  );
+}
+
+/** How many reads the topology panel sends to each node to tally who served them. */
+const SAMPLES = 8;
+
+/**
+ * Which node leads, and which view of the database answers a read.
+ *
+ * Asks each node directly, whatever the header switch says, because the
+ * comparison between them is the point. Locally there is one node and the
+ * Worker is not involved, so `b` answers "no such node" and the panel says so.
+ */
+export function Topology(props: Context): JSX.Element {
+  const [ran, setRan] = createSignal(0);
+  // Two only where there are two: the hosted Worker. A local adapter has one
+  // node and ignores the header, so asking it twice would draw the same node
+  // as if it were two.
+  const hosted = SDKS.includes("edge");
+  const nodes: (string | undefined)[] = hosted ? ["a", "b"] : [undefined];
+  const survey = createQuery(() => ({
+    queryKey: ["topology", props.sdk(), props.persona(), ran()],
+    queryFn: async () =>
+      Promise.all(
+        nodes.map(async (node) => {
+          const meta = await api.meta(props.sdk(), "app", node);
+          const reads: Answer<{ servedBy: string; rows: number }>[] = [];
+          // One after another rather than all at once: a burst lands on one
+          // replica as easily as spread across them, and the tally is meant
+          // to show the spread.
+          for (let n = 0; n < SAMPLES; n++) {
+            reads.push(await api.servedBy(props.sdk(), props.persona(), node));
+          }
+          const tally: Record<string, number> = {};
+          for (const read of reads) {
+            const name = read.ok ? read.value.servedBy : `refused: ${read.error.kind}`;
+            tally[name] = (tally[name] ?? 0) + 1;
+          }
+          return { node: node ?? "this one", asked: node, meta, tally };
+        }),
+      ),
+  }));
+  const [wrote, setWrote] = createSignal<
+    { node: string; asked: string | undefined; count: number } | undefined
+  >();
+  const write = createQuery(() => ({
+    queryKey: ["topology-write", props.sdk(), props.persona(), wrote()],
+    queryFn: () => api.unique(props.sdk(), props.persona(), false, wrote()?.asked),
+    enabled: wrote() !== undefined,
+  }));
+
+  return (
+    <div class="panel">
+      <h2>Topology</h2>
+      <p class="why">
+        One writer, many readers. Each node holds a writer <i>or</i> follows:
+        whichever started first took a lease in the bucket and writes; the
+        other serves reads and refuses writes, naming the leader. Inside each,
+        reads are spread over read replicas — separate readers of the same
+        object storage — and the tally shows which one answered each of{" "}
+        {SAMPLES} reads.
+      </p>
+      <div class="controls">
+        <button
+          type="button"
+          class="seg"
+          style={{ padding: "6px 14px", cursor: "pointer" }}
+          onClick={() => setRan(ran() + 1)}
+        >
+          ask again
+        </button>
+      </div>
+      <Show when={survey.data} fallback={<div class="spinner">asking both nodes…</div>}>
+        {(rows) => (
+          <div class="scroll">
+            <table data-test="topology-nodes">
+              <thead>
+                <tr>
+                  <For each={["node", "role", "reads served by", "write here"]}>
+                    {(name) => <th>{name}</th>}
+                  </For>
+                </tr>
+              </thead>
+              <tbody>
+                <For each={rows()}>
+                  {(row) => (
+                    <tr>
+                      <td>
+                        <b>{row.node}</b>
+                      </td>
+                      <td>
+                        {row.meta.ok
+                          ? row.meta.value.leader
+                            ? "leader (writes)"
+                            : "follower (reads only)"
+                          : row.meta.error.message}
+                      </td>
+                      <td>
+                        {Object.entries(row.tally)
+                          .map(([name, count]) => `${name} ×${count}`)
+                          .join(", ")}
+                      </td>
+                      <td>
+                        <Show when={row.meta.ok}>
+                          <button
+                            type="button"
+                            class="seg"
+                            style={{ cursor: "pointer" }}
+                            onClick={() =>
+                              setWrote({
+                                node: row.node,
+                                asked: row.asked,
+                                count: (wrote()?.count ?? 0) + 1,
+                              })
+                            }
+                          >
+                            insert a row
+                          </button>
+                        </Show>
+                      </td>
+                    </tr>
+                  )}
+                </For>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Show>
+      <Show when={wrote()}>
+        {(asked) => (
+          <Result answer={write.data} pending={write.isPending}>
+            {(value) => (
+              <div class="badges" data-test="topology-write">
+                <span class="badge">
+                  on node <b>{asked().node}</b>
+                </span>
+                <span class="badge" data-tone={value.refused ? "warn" : "good"}>
+                  {value.refused ? "refused" : "written"}{" "}
+                  <b>{value.refused || "and removed again"}</b>
+                </span>
+              </div>
+            )}
+          </Result>
+        )}
       </Show>
     </div>
   );

@@ -1,0 +1,36 @@
+{
+  "at": "2026-10-05T21:53:57+00:00",
+  "file": "examples/explorer/backends/node/src/adapter.ts",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer && PATH=/tmp/ci-env/bin:$PATH SLATE_SERVERD=$PWD/../../target/debug/slate-serverd ./run.sh --conformance 2>&1 | tail -40"
+  ],
+  "commit": "5e0fa9a",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "node: landed is taken from the insert, not the table",
+      "old": "    const landed = (await session.get(\"authors\", [uint(id)])) !== undefined;",
+      "new": "    const landed = refused === \"\";",
+      "verdict": "survived-as-recorded",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": "against a correct server the insert's answer and the table agree; the read-back defends against a server that refuses and writes anyway, which no conformance case can stage"
+    },
+    {
+      "name": "node: served-by names a constant",
+      "old": "    return { servedBy: stream.servedBy?.replica ?? \"\", rows: rows.length };",
+      "new": "    return { servedBy: \"writer\", rows: rows.length };",
+      "verdict": "caught",
+      "caught_by": [
+        "which view served a read (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

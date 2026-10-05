@@ -27,6 +27,22 @@ columns = [
 ]
 primary_key = ["id"]
 
+# The demo's one unique index, so a duplicate can be refused somewhere the UI
+# and the conformance runner can see it. `/api/unique` inserts a second author
+# under a name the seed already holds and reports the refusal.
+#
+# On `name` rather than on a column of `books`, because every seeded author has
+# a different name and no endpoint writes an author, so the constraint rejects
+# nothing the demo already does. A unique index on a column the write endpoints
+# touch would turn some of their answers into this one.
+[[tables.indexes]]
+name = "by_name"
+# 2, not 1: an index id is global, not per table, because an index entry's key
+# carries the index id and not the table's. `by_title_text` holds 1.
+id = 2
+columns = ["name"]
+unique = true
+
 [[tables]]
 name = "books"
 id = 2

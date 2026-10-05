@@ -150,7 +150,11 @@ def build_filter(query, table, spec: dict[str, Any] | None):
 #: two lists and drifted the moment a table was added: the query path learned
 #: `shipments` and the meta handler did not, so the two endpoints described
 #: different databases. The conformance `meta` case is what reported it.
-QUERYABLE = ("authors", "books", "sales", "shipments")
+#:
+#: `posts` is last, and listed at all, because it is the one table with array
+#: columns: a read of it is the only way an `{"array": ...}` tag reaches the
+#: contract. `encode` already had the branch; nothing ever sent it a row.
+QUERYABLE = ("authors", "books", "sales", "shipments", "posts")
 
 #: The views this adapter serves, generated from the catalog like the tables.
 #:
@@ -1349,6 +1353,70 @@ class Adapter:
         left = session.get(BOOKS, (u64(id_),)) is not None
         return {"refused": refused, "affected": affected, "left": left}
 
+    #: The author id the unique-index handler owns.
+    #:
+    #: The same number as `ROUND_TRIP_FIRST`, and harmless: that range is in
+    #: `books`, this is in `authors`, and neither handler reads the other table.
+    UNIQUE_ID = 9400
+
+    def unique(self, session, body):
+        """Insert an author whose name `by_name` may already hold.
+
+        A plain insert, as the contract names it, so the refusal is the one a
+        caller creating a row actually meets. `reason` is the point of the
+        answer: `UNIQUE_VIOLATION` and `DUPLICATE_PRIMARY_KEY` share the
+        `already-exists` kind and differ only there.
+        """
+        id_ = self.UNIQUE_ID
+        # Cleared first, so the key really is free and only the index can
+        # refuse. A run that died between the insert and the delete below
+        # would otherwise make every later unflagged call a duplicate-key
+        # refusal, which reads as the index misbehaving. A plain delete of an
+        # absent key is `affected: 0`, not an error.
+        session.delete(AUTHORS, [(u64(id_),)])
+
+        # Author 1's name, which the seed gives `by_name` before anything here
+        # runs.
+        name = "Ursula K. Le Guin" if body.get("collide") else "Nobody Yet 9400"
+        refused = ""
+        reason = ""
+        try:
+            session.insert(AUTHORS, [Authors(id=id_, name=name, country="US", born=2000).to_row()])
+        except SlateError as error:
+            # Fields rather than an adapter error, for the reason `/api/batch`
+            # gives: both answers are ordinary cases the corpus compares.
+            refused = kind_name(error)
+            reason = error.reason
+
+        # Read back rather than inferred from the insert's answer, so a refusal
+        # that wrote the row anyway shows up instead of agreeing across three
+        # clients on a claim none of them checked.
+        landed = session.get(AUTHORS, (u64(id_),)) is not None
+        if landed:
+            session.delete(AUTHORS, [(u64(id_),)])
+        # Reported, because nothing else could see it: the next adapter clears
+        # the key before inserting, so a row left here changes no answer.
+        left = session.get(AUTHORS, (u64(id_),)) is not None
+        return {"refused": refused, "reason": reason, "landed": landed, "left": left}
+
+    def served_by(self, session, _body):
+        """Which view of the database answered a read of every book.
+
+        Its own endpoint because it is the one answer `/api/query` must not
+        carry: on a node with replicas it varies between two runs of the same
+        read, and every read case would stop being comparable.
+        """
+        stream = session.query(Query(BOOKS))
+        # Read before the rows are drained, because the stream has it from its
+        # first message — the server sends one even for an empty result.
+        served = stream.served_by
+        if served is None:
+            # The client fills this in before `query` returns, so `None` is a
+            # client bug. Raised rather than reported as `""`, which would
+            # compare equal across three clients that had all lost it.
+            raise RuntimeError("a query came back without served_by")
+        return {"servedBy": served.replica, "rows": len(list(stream))}
+
     @staticmethod
     def _book(id_: int, title: str) -> list:
         """A whole `books` row, every column in ordinal order."""
@@ -1581,6 +1649,8 @@ ROUTES = {
     "/api/predicate-write": "predicate_write",
     "/api/conditional-update": "conditional_update",
     "/api/conditional-delete": "conditional_delete",
+    "/api/unique": "unique",
+    "/api/served-by": "served_by",
     "/api/purge": "purge",
     "/api/restore": "restore",
     "/api/restore-unchanged": "restore_unchanged",

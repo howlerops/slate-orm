@@ -16211,6 +16211,40 @@
       "key": "The credentials live outside the repository.",
       "verdict": "moment",
       "reviewed": "2026-10-05"
+    },
+    {
+      "entry": "2026-10-05-the-explorer-shows-everything-live.md",
+      "key": "The Worker's start-`a`-first rule is untested.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "Containers exist only on Cloudflare; `wrangler dev` runs the Worker with `HEAD` and one node. Getting the rule wrong costs which node the panel calls the leader, never a second writer: the lease, which is tested against object storage in CI, decides who writes. The panel reads each node's role from the node rather than assuming it."
+    },
+    {
+      "entry": "2026-10-05-the-explorer-shows-everything-live.md",
+      "key": "The live database carries rows from earlier conformance runs",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "The write endpoints seed fixed ids and some leave rows behind by design, in the local demo too; the live bucket is demo data. Clearing it would be a reset of a shared deployment, which is the owner's call, and the rows show what the write panels did."
+    },
+    {
+      "entry": "2026-10-05-the-explorer-shows-everything-live.md",
+      "key": "CTEs are not in the live app.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "A CTE is a `slate-sql` construct and the wire protocol carries query specs, not SQL; showing one against a head node means adding SQL to the protocol, which is a product decision for the owner. The workbench runs the SQL front end in the browser and now carries a CTE example that `crates/slate-wasm/tests/examples.rs` executes."
+    },
+    {
+      "entry": "2026-10-05-the-explorer-shows-everything-live.md",
+      "key": "The browser e2e (`./run.sh --e2e`) was not run locally.",
+      "verdict": "moment",
+      "reviewed": "2026-10-05"
+    },
+    {
+      "entry": "2026-10-05-the-explorer-shows-everything-live.md",
+      "key": "Two nodes double the containers awake,",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "The second node is what shows a follower; one node cannot. Both sleep after ten idle minutes (`sleepAfter` in `examples/edge/src/worker.ts`), and `b` starts only when something asks for it."
     }
   ]
 }

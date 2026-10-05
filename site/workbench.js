@@ -251,6 +251,15 @@ const EXAMPLES = [
   ],
   ["Long, expensive rides", "SELECT * FROM trips WHERE distance > 20 AND total > 100 LIMIT 50"],
   [
+    "A CTE, inlined",
+    "-- A WITH read once is the query it names, folded into this one before\n" +
+      "-- planning: the plan below has one table and one filter, not two steps.\n" +
+      "-- Refer to long_rides twice, or add RECURSIVE, and it is refused with\n" +
+      "-- the reason (docs/ctes.md).\n" +
+      "WITH long_rides AS (SELECT * FROM trips WHERE distance > 20)\n" +
+      "SELECT pickup_zone, total FROM long_rides WHERE total > 100 LIMIT 20",
+  ],
+  [
     "One zone, every column",
     "SELECT * FROM trips WHERE pickup_zone = 132 LIMIT 50",
   ],

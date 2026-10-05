@@ -1,0 +1,48 @@
+{
+  "at": "2026-10-05T21:50:08+00:00",
+  "file": "examples/explorer/web/src/api.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer/web && rm -rf dist-test && npx tsc -p tsconfig.test.json && node --test --test-reporter=tap dist-test/test/*.test.js"
+  ],
+  "commit": "5e0fa9a",
+  "python": "3.12.2",
+  "outcome": "interrupted",
+  "cases": [
+    {
+      "name": "hosted keeps the default edge URL instead of the page's origin",
+      "old": "{ ...adaptersFrom(env), edge: \"\" }",
+      "new": "adaptersFrom(env)",
+      "verdict": "caught",
+      "caught_by": [
+        "hosted, the Worker is the one adapter, at the page's own origin"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "hosted mode is never selected",
+      "old": "env[\"VITE_HOSTED\"]?.trim() === \"edge\"",
+      "new": "env[\"VITE_HOSTED\"]?.trim() === \"never\"",
+      "verdict": "caught",
+      "caught_by": [
+        "hosted, the Worker is the one adapter, at the page's own origin"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "the node header is sent even when no node was chosen",
+      "old": "if (node !== undefined) headers[\"X-Demo-Node\"] = node;",
+      "new": "headers[\"X-Demo-Node\"] = node ?? \"a\";",
+      "verdict": "caught",
+      "caught_by": [
+        "a node is named only when one is chosen, and the panel's choice wins"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ]
+}

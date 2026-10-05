@@ -23,6 +23,12 @@ python3 "$here/container/derive.py"
 echo "building slate-serverd for linux/amd64"
 (cd "$root" && docker buildx build --platform linux/amd64 -t slate-serverd:cloudflare --load .)
 
+# The explorer's UI, for this one origin: `VITE_HOSTED=edge` drops the SDK
+# switch (there is one adapter here, this Worker) and sends every call to the
+# page's own origin. `wrangler.cloudflare.jsonc` serves the result.
+echo "building the explorer's web UI"
+(cd "$root/examples/explorer/web" && npm ci && VITE_HOSTED=edge npm run build)
+
 cd "$here"
 value() { sed -n "s/^$1=//p" "$R2_ENV"; }
 echo "setting secrets"

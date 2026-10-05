@@ -37,7 +37,8 @@ repository that compares the clients to each other.
 ### `GET /api/meta`
 
 ```json
-{"sdk": "go", "leader": true, "tables": ["authors", "books", "sales"],
+{"sdk": "go", "leader": true,
+ "tables": ["authors", "books", "sales", "shipments", "posts"],
  "views": ["classics"]}
 ```
 
@@ -62,7 +63,15 @@ as something it cannot be.
 }
 ```
 
-→ `{"rows": [[{"u64":"10"}, ...], ...], "servedBy": "writer"}`
+→ `{"rows": [[{"u64":"10"}, ...], ...]}`
+
+Which node answered is not part of this answer. It varies between two runs
+of one query on a node with replicas, so it would make every read case
+uncomparable. `/api/served-by` reports it on its own.
+
+`posts` is the table with array columns (`tags` is `str`, `sizes` is
+`i64`). A read of it is how arrays reach the contract: each element arrives
+tagged, as `{"array": [{"str": "rust"}, ...]}`.
 
 `table` may name a view as well as a table. `/api/query` is the only endpoint
 that accepts one — that is not an adapter convention but the server's: exactly
@@ -598,3 +607,51 @@ atomicities as ordinary cases the corpus compares, instead of one being a
 refusal case and one not. `reason` is the server's stable token, which reaches
 the client through the message body rather than through trailers — a batched
 failure is data, not an exception.
+
+### `POST /api/unique`
+
+```json
+{ "collide": true }
+```
+
+Inserts one `authors` row at 9400 and reports what happened. With `collide`
+set, the row uses the name of author 1, which the unique index `by_name`
+already holds. Without it, the row uses a name nobody has. Either way the
+endpoint then removes the row if it landed, so authors stay as seeded.
+
+```json
+{ "refused": "already-exists", "reason": "UNIQUE_VIOLATION", "landed": false, "left": false }
+```
+
+Unflagged, it is `{"refused": "", "reason": "", "landed": true, "left": false}`.
+
+`left` is whether the row is still there after the clean-up, and is always
+false. It is in the answer because nothing else could notice it being true:
+each adapter clears the key before inserting, so a row one adapter forgot to
+remove is gone before the next one looks. A mutation that skipped the clean-up
+survived every case until this field existed.
+
+`reason` is what tells this refusal from a duplicate *primary key*. The two
+share the `already-exists` kind, and `/api/batch` already shows the other one
+(`DUPLICATE_PRIMARY_KEY`). Here the key 9400 is free, so only the index can
+have refused it. `landed` is read back from the table rather than taken from
+the insert's answer, for the reason `/api/predicate-write` gives.
+
+### `POST /api/served-by`
+
+```json
+{}
+```
+
+Reads every `books` row and reports which view of the database served it.
+
+```json
+{ "servedBy": "memory", "rows": 11 }
+```
+
+`servedBy` is the name the head node gave the view that answered: the writer
+store's own name, or a `[[replicas]]` name. On the explorer's own `head.toml`
+the writer is the in-memory store, which calls itself `memory`, and there are
+no replicas, so every read says `memory` and the conformance runner can
+compare it. On a node with replicas two calls may name different ones, and
+that is what the endpoint is for.

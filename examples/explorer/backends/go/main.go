@@ -132,6 +132,8 @@ func main() {
 	mux.HandleFunc("/api/predicate-write", s.handle(s.predicateWrite))
 	mux.HandleFunc("/api/conditional-update", s.handle(s.conditionalUpdate))
 	mux.HandleFunc("/api/conditional-delete", s.handle(s.conditionalDelete))
+	mux.HandleFunc("/api/unique", s.handle(s.unique))
+	mux.HandleFunc("/api/served-by", s.handle(s.servedBy))
 	mux.HandleFunc("/api/purge", s.handle(s.purge))
 	mux.HandleFunc("/api/restore", s.handle(s.restore))
 	mux.HandleFunc("/api/restore-unchanged", s.handle(s.restoreUnchanged))

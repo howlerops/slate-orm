@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-05T21:50:24+00:00",
+  "file": "examples/explorer/web/src/api.ts",
+  "dialect": "node",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer/web && rm -rf dist-test && npx tsc -p tsconfig.test.json && node --test --test-reporter=tap dist-test/test/*.test.js"
+  ],
+  "commit": "5e0fa9a",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "served-by ignores the node the panel names",
+      "old": "      \"/api/served-by\",\n      {},\n      persona,\n      node ?? headNode,",
+      "new": "      \"/api/served-by\",\n      {},\n      persona,\n      headNode,",
+      "verdict": "caught",
+      "caught_by": [
+        "a node is named only when one is chosen, and the panel's choice wins"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

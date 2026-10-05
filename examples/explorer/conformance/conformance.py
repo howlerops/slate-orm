@@ -659,6 +659,28 @@ CASES: list[tuple[str, str, Any, str]] = [
     # anything lands.
     ("a reader may not batch", "/api/batch", {"atomicity": "independent"}, "reader"),
 
+    # Arrays, read back. `posts` is the one table with array columns, two of
+    # them with different element types, and until it joined the adapters'
+    # allowlists no case could read one: the generated decoders existed and
+    # nothing compared what three clients make of them.
+    ("a read of the table with array columns", "/api/query",
+     {"table": "posts", "sort": [{"column": 0, "direction": "asc"}]}, "app"),
+
+    # A unique index refusing a duplicate. The pair matters for the reason the
+    # conditional writes give: an adapter that never sent the insert would
+    # report `landed: false` for the collision too, and only the clean insert
+    # landing tells the two apart. The reason token is what separates this
+    # from a duplicate primary key, which shares the `already-exists` kind.
+    ("a duplicate name, refused by a unique index", "/api/unique",
+     {"collide": True}, "app"),
+    ("a fresh name, admitted by the same index", "/api/unique",
+     {"collide": False}, "app"),
+
+    # Which view of the database served a read. On this `head.toml`, with no
+    # replicas, always the writer, so three clients can agree on it; on a node
+    # with replicas it is the field that names one.
+    ("which view served a read", "/api/served-by", {}, "app"),
+
     ("a committed transaction", "/api/transaction", {"commit": True}, "app"),
     ("a rolled-back transaction", "/api/transaction", {"commit": False}, "app"),
 
@@ -923,6 +945,8 @@ EXPECTED_ACCESS: dict[str, str | None] = {
 #: which needs two cases and a comparison between them, and this is where that
 #: comparison lives.
 MUST_DIFFER: list[tuple[str, str, str]] = [
+    ("a duplicate name, refused by a unique index", "a fresh name, admitted by the same index",
+     "landed"),
     ("a read that cannot see a retired row", "a read that asks for retired rows too", "rows"),
     # A view has the same shape as `includeDeleted` and it is the shape that
     # matters most: "the view returned eight rows" proves nothing about the

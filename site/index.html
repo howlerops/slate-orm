@@ -50,6 +50,7 @@
       <div class="hero-cta">
         <a class="btn primary" href="workbench.html">Open the workbench →</a>
         <a class="btn ghost" href="docs/index.html">Read the docs</a>
+        <a class="btn ghost" href="https://slate-explorer-edge.jacobbeck-dev.workers.dev">See it live →</a>
       </div>
 
       <ul class="chips">
@@ -79,6 +80,13 @@
           structure the three clients send over gRPC.
         </p>
         <a class="btn primary" href="workbench.html">Open the workbench →</a>
+        <p class="lede">
+          <strong>Or the real thing.</strong> The <a href="https://slate-explorer-edge.jacobbeck-dev.workers.dev">live explorer</a> is a
+          head node on Cloudflare: two nodes in containers, the database in R2, and a
+          Worker asking them over gRPC-web with the TypeScript client. Switch identities to
+          watch row policies and column grants answer, or the node to watch a follower
+          refuse a write.
+        </p>
       </div>
       <pre class="band-code"><code>SELECT pickup_zone, count(*) FROM trips
   GROUP BY pickup_zone

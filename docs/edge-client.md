@@ -128,9 +128,11 @@ that checked small ids, and fail the conformance case that checks
 
 **Deploying to Cloudflare is not part of the test.** It needs an account, and
 so does not belong in CI. It has been done, entirely on Cloudflare:
-- the head node runs as a Container from the repository's image;
-- its database is in R2, through the S3 API;
-- the Worker reaches it through a Durable Object binding.
+- two head nodes run as Containers from the repository's image, one leading
+  and one following, each with two read replicas;
+- their database is in R2, through the S3 API;
+- the Worker reaches them through a Durable Object binding, and serves the
+  explorer's web UI beside its API.
 
 The conformance runner against the deployed URL agreed on 142 of 143 cases,
 the 143rd differing only in a seeding timestamp. `examples/edge/README.md`

@@ -55,20 +55,35 @@ None of those would have been caught by any client's own tests.
 one answer. If they ever differ, the demo is broken and the conformance runner
 says so first.
 
-**The identity switcher** is the more interesting one. `app`, `reader` and
-`stranger` differ only in what the *database* grants them:
+**The identity switcher** is the more interesting one. `app`, `reader`,
+`analyst` and `stranger` differ only in what the *database* grants them:
 
 - `reader` sees 9 of 11 books — a row policy hides everything published before
   1960, and no adapter is involved in that.
 - `reader` cannot `EXPLAIN`, because `EXPLAIN` is its own action rather than a
   weaker `read`: a plan is costed against statistics describing rows the policy
   hides.
+- `analyst` holds a column grant: it reads `authors` with `born` null, and a
+  filter or sort on `born` is refused.
 - `stranger` is refused outright, and the UI shows the refusal rather than an
   empty table — "nothing matched" and "you may not ask" are different answers.
 
-**Everything else** — filters, sorting, projections, the four join types, a
-grouped join behind the chart, the plan, and a transaction whose write is
-visible only to itself until it commits.
+**Everything else**, one tab each:
+- reading: filters, sorting and projections over every table, including
+  `posts` with its array columns; full-text search; nearest-neighbour search;
+  the four join types; a three-table chain; a grouped join behind the chart;
+  window functions; keyset pages with their cursor; relationships; the plan;
+- writing: predicate writes, conditional writes, a unique index refusing a
+  duplicate, soft delete with undo, batches under both atomicities, and a
+  transaction whose write is visible only to itself until it commits;
+- money: the decimal renderer's hard cases;
+- topology: which node leads and which replica answered each read.
+
+**Hosted, on Cloudflare** (`examples/edge`, `deploy.sh`), the same UI is
+built with `VITE_HOSTED=edge` and served by the Worker. There is one adapter
+there, so the SDK switch and the agreement tab are gone. A **node** switch
+takes their place, choosing between two head nodes on one R2 bucket: one
+leads, and the other serves reads and refuses writes.
 
 ## Running the conformance check
 

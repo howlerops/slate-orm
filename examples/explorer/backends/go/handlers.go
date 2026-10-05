@@ -1882,3 +1882,98 @@ func (s *server) badBatch(ctx context.Context, session *slate.Session, _ json.Ra
 	}
 	return map[string]any{"outcomes": outcomes}, nil
 }
+
+// The author key the unique handler owns, clear of the seeded authors.
+const uniqueID = 9400
+
+// unique inserts an author under a name `by_name` may already hold, and
+// reports whether the index refused it.
+//
+// The key is free, so the only thing that can refuse the insert is the index.
+// That is the point: `/api/batch` already shows `already-exists` for a
+// duplicate primary key, and the two differ only in `reason`, which is the
+// half a client could decode wrongly and still report the right kind.
+//
+// A plain insert, not an upsert: an upsert of a free key never collides on the
+// key, but it is also not the write an application checks for a duplicate
+// with, and the contract asks what *insert* reports.
+func (s *server) unique(ctx context.Context, session *slate.Session, body json.RawMessage) (any, error) {
+	var spec struct {
+		Collide bool `json:"collide"`
+	}
+	if err := json.Unmarshal(body, &spec); err != nil {
+		return nil, fmt.Errorf("decoding the request: %w", err)
+	}
+
+	key := []slate.Value{slate.Uint(uniqueID)}
+	// Clean slate, for the reason `batchWrite` gives. Without it, a run that
+	// died between landing the row and removing it would leave 9400 behind,
+	// and every later unflagged call would be refused for the primary key —
+	// the very refusal this endpoint exists to tell apart from the index's.
+	if _, err := session.Delete(ctx, "authors", key); err != nil {
+		return nil, err
+	}
+
+	// Author 1's name, which the seed gives `by_name` already.
+	name := "Nobody Yet 9400"
+	if spec.Collide {
+		name = "Ursula K. Le Guin"
+	}
+	refused, reason := "", ""
+	_, err := session.Insert(ctx, "authors", []slate.Value{
+		slate.Uint(uniqueID), slate.String(name), slate.String("US"), slate.Int(2000),
+	})
+	if err != nil {
+		var e *slate.Error
+		if !errors.As(err, &e) {
+			return nil, err
+		}
+		refused, reason = kindName(e.Kind), e.Reason
+	}
+
+	// Read back rather than inferred from the insert's answer, for the reason
+	// `conditionalDelete` gives `left`.
+	_, landed, err := session.Get(ctx, "authors", key)
+	if err != nil {
+		return nil, err
+	}
+	if landed {
+		// Authors stay as seeded, so the next call — and every case that
+		// reads `authors` — sees the same table whichever adapter ran first.
+		if _, err := session.Delete(ctx, "authors", key); err != nil {
+			return nil, err
+		}
+	}
+	// Reported, because nothing else could see it: the next adapter clears
+	// the key before inserting, so a row left here changes no answer.
+	_, left, err := session.Get(ctx, "authors", key)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"refused": refused, "reason": reason, "landed": landed, "left": left}, nil
+}
+
+// servedBy reads every book and reports which store answered.
+//
+// Its own endpoint rather than a field on `/api/query`, because on a node with
+// replicas two runs of one query may be answered by different ones, and a
+// field that varies would make every read case uncomparable. Here it is the
+// only thing reported, beside a row count that shows the read did happen.
+func (s *server) servedBy(ctx context.Context, session *slate.Session, _ json.RawMessage) (any, error) {
+	stream, err := session.Query(ctx, slate.Query{Table: "books"})
+	if err != nil {
+		return nil, err
+	}
+	rows, err := stream.Collect()
+	if err != nil {
+		return nil, err
+	}
+	// The name exactly as the head node gave it. Nil only when no message
+	// arrived at all, which a successful read of a non-empty table cannot be,
+	// so it is an error here rather than a guessed name.
+	by := stream.ServedBy()
+	if by == nil {
+		return nil, fmt.Errorf("the read reported no store")
+	}
+	return map[string]any{"servedBy": by.Replica, "rows": len(rows)}, nil
+}

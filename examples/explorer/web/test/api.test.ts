@@ -13,6 +13,8 @@ import test from "node:test";
 import {
   adaptersFrom,
   api,
+  hostedFrom,
+  setHeadNode,
   DEFAULT_ADAPTERS,
   kindOf,
   render,
@@ -237,4 +239,39 @@ test("a view the UI hides is hidden by the same roster its table is", () => {
       `view ${name} is shown iff NOT_IN_THE_UI does not name it`,
     );
   }
+});
+
+// --- the hosted build -------------------------------------------------------
+
+test("locally, the switch offers the three SDK adapters and not the Worker", () => {
+  const local = hostedFrom({});
+  assert.deepEqual(local.sdks, ["go", "node", "python"]);
+  assert.equal(local.adapters.go, DEFAULT_ADAPTERS.go);
+});
+
+test("hosted, the Worker is the one adapter, at the page's own origin", () => {
+  const hosted = hostedFrom({ VITE_HOSTED: "edge" });
+  assert.deepEqual(hosted.sdks, ["edge"]);
+  // "" and not the default port: the page and the API are one origin, and a
+  // path resolved against the page is the only base that is right wherever
+  // the Worker is deployed.
+  assert.equal(hosted.adapters.edge, "");
+});
+
+test("a node is named only when one is chosen, and the panel's choice wins", async () => {
+  await withFetch({ rows: [] }, async (calls) => {
+    await api.query("go", "app", { table: "books" });
+    // A local adapter's CORS preflight does not admit the header, so a call
+    // that sent it unasked would fail in the browser and pass here.
+    assert.equal(calls[0]!.headers.get("X-Demo-Node"), null);
+    setHeadNode("b");
+    try {
+      await api.query("go", "app", { table: "books" });
+      await api.servedBy("go", "app", "a");
+    } finally {
+      setHeadNode(undefined);
+    }
+    assert.equal(calls[1]!.headers.get("X-Demo-Node"), "b");
+    assert.equal(calls[2]!.headers.get("X-Demo-Node"), "a");
+  });
 });

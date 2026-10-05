@@ -11,9 +11,13 @@
  * same cases is a client that works on the edge, not one that was tested for
  * it. `docs/edge-client.md` §4.
  *
- * One `Adapter` per isolate, built on the first request: it holds a client
- * per identity, and a Worker isolate is reused across requests. `HEAD` is the
- * head node's base URL.
+ * One `Adapter` per head node per isolate, built on the first request: it
+ * holds a client per identity, and a Worker isolate is reused across
+ * requests. `HEAD` is the head node's base URL.
+ *
+ * The page at `/` is the explorer's own web UI, built for one origin and
+ * served as static assets (`wrangler.cloudflare.jsonc`). Only `/api/*` reaches
+ * this code.
  */
 import { Container, getContainer } from "@cloudflare/containers";
 import { Client } from "@slate-orm/client/edge";
@@ -21,13 +25,18 @@ import { Client } from "@slate-orm/client/edge";
 import { Adapter, handle } from "../../explorer/backends/node/src/adapter.js";
 
 /**
- * The head node, as a Cloudflare Container: `slate-serverd` from the
+ * A head node, as a Cloudflare Container: `slate-serverd` from the
  * repository's image, its database in R2 (`container/`, `deploy.sh`).
  *
- * One instance, by name, because a database has one writer: the node takes a
- * lease in the bucket and a second instance would be fenced. It sleeps after
- * ten idle minutes, and the next request starts it again on the same bucket.
- * Its secrets reach it as environment variables, from the Worker's.
+ * Two instances, by name, `a` and `b`, running the same image and config.
+ * They are not two writers: each campaigns for a lease in the bucket at
+ * startup, the first to start wins, and the other comes up as a read-only
+ * follower serving from replicas of the same bucket. `nodeFor` starts `a`
+ * before `b` is ever asked, so `a` is the one that leads.
+ *
+ * Each sleeps after ten idle minutes, and the next request starts it again on
+ * the same bucket. Its secrets reach it as environment variables, from the
+ * Worker's.
  */
 export class HeadNode extends Container<Env> {
   defaultPort = 7421;
@@ -72,7 +81,11 @@ interface Env {
   SLATE_TOKENS?: string;
 }
 
-let adapter: Adapter | undefined;
+/** The adapters, one per head node, built on first use. */
+const adapters: Record<string, Adapter> = {};
+
+/** The nodes a caller may name with `x-demo-node`, `a` first and by default. */
+const NODES = ["a", "b"] as const;
 
 /**
  * The `fetch` a client for one persona uses: it adds that persona's bearer
@@ -100,19 +113,62 @@ function persona(identity: { roles?: readonly string[] }): string {
   return identity.roles?.[0] ?? "";
 }
 
+/**
+ * How to reach the node a request names, or `undefined` when there is no such
+ * node here.
+ *
+ * Into a container when there are containers, over the network when there are
+ * not. The client cannot tell: either way it posts gRPC-web to a URL. A
+ * Worker pointed at one node by `HEAD` has only `a`.
+ *
+ * **`b` starts only after `a` is up.** Leadership is whoever campaigns first,
+ * so if `b` could wake while `a` slept, `b` would take the lease and the node
+ * the UI calls the follower would be the writer. Waiting for `a`'s port
+ * before forwarding to `b` makes `a` the leader whenever both are cold. It
+ * does not survive `a` dying while `b` runs; `b` then stays a follower, since
+ * a follower never campaigns, and writes are refused until the next request
+ * restarts `a`. That is the head node's design (`docs/topology.md`,
+ * "Promotion is a restart"), not this Worker's.
+ */
+async function nodeFor(
+  env: Env,
+  name: string,
+): Promise<((input: string, init: RequestInit) => Promise<Response>) | undefined> {
+  const containers = env.HEAD_NODE;
+  if (!containers) {
+    return name === "a" ? (input, init) => fetch(input, init) : undefined;
+  }
+  if (!(NODES as readonly string[]).includes(name)) return undefined;
+  if (name !== "a") await getContainer(containers, "a").startAndWaitForPorts();
+  // A stub per call rather than one held here: the function outlives this
+  // request inside the adapter, and a Worker may not do I/O through an object
+  // another request created.
+  return (input, init) => getContainer(containers, name).fetch(new Request(input, init));
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const tokens: Record<string, string> = env.SLATE_TOKENS ? JSON.parse(env.SLATE_TOKENS) : {};
-    // Into the container when there is one, over the network when there is
-    // not. The client cannot tell: either way it posts gRPC-web to a URL.
-    const node = env.HEAD_NODE;
-    const send = node
-      ? (input: string, init: RequestInit) => getContainer(node, "head").fetch(new Request(input, init))
-      : (input: string, init: RequestInit) => fetch(input, init);
-    const base = node ? "http://head-node" : env.HEAD;
-    adapter ??= new Adapter((identity, count) =>
+    const name = request.headers.get("x-demo-node") || "a";
+    const headers = {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "access-control-allow-headers": "content-type, x-demo-identity, x-demo-node",
+      "access-control-expose-headers": "x-slate-node",
+      "x-slate-node": name,
+    };
+    const send = await nodeFor(env, name);
+    if (!send) {
+      const message = `no head node named ${JSON.stringify(name)} here`;
+      return new Response(JSON.stringify({ error: { kind: "not-found", message } }), {
+        status: 404,
+        headers,
+      });
+    }
+    const base = env.HEAD_NODE ? `http://head-node-${name}` : env.HEAD;
+    const adapter = (adapters[name] ??= new Adapter((identity, count) =>
       Client.connectWeb(base, identity, { fetch: sending(tokens[persona(identity)], count, send) }),
-    );
+    ));
     const url = new URL(request.url);
     const answer = await handle(adapter, {
       method: request.method,
@@ -120,13 +176,6 @@ export default {
       persona: request.headers.get("x-demo-identity") ?? undefined,
       body: request.method === "OPTIONS" ? "" : await request.text(),
     });
-    return new Response(JSON.stringify(answer.body), {
-      status: answer.status,
-      headers: {
-        "content-type": "application/json",
-        "access-control-allow-origin": "*",
-        "access-control-allow-headers": "content-type, x-demo-identity",
-      },
-    });
+    return new Response(JSON.stringify(answer.body), { status: answer.status, headers });
   },
 };

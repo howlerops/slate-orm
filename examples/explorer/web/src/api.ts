@@ -9,7 +9,7 @@
 
 import { CATALOG_TABLES, CATALOG_VIEWS } from "./catalog.js";
 
-export type Sdk = "go" | "node" | "python";
+export type Sdk = "go" | "node" | "python" | "edge";
 
 /** Where each adapter is, when nobody says otherwise: the ports `run.sh` uses
  * for its interactive modes, so opening the UI needs no configuration. */
@@ -17,6 +17,9 @@ export const DEFAULT_ADAPTERS: Record<Sdk, string> = {
   go: "http://127.0.0.1:7431",
   node: "http://127.0.0.1:7432",
   python: "http://127.0.0.1:7433",
+  // The Worker under `wrangler dev`, which `run.sh` does not start for the UI.
+  // Only `hostedFrom` ever selects it, and then at the page's own origin.
+  edge: "http://127.0.0.1:8787",
 };
 
 /**
@@ -37,18 +40,63 @@ export function adaptersFrom(env: Record<string, string | undefined>): Record<Sd
     go: env["VITE_GO_URL"],
     node: env["VITE_NODE_URL"],
     python: env["VITE_PYTHON_URL"],
+    edge: env["VITE_EDGE_URL"],
   };
   return {
     go: named.go?.trim() || DEFAULT_ADAPTERS.go,
     node: named.node?.trim() || DEFAULT_ADAPTERS.node,
     python: named.python?.trim() || DEFAULT_ADAPTERS.python,
+    edge: named.edge?.trim() || DEFAULT_ADAPTERS.edge,
   };
 }
 
-export const ADAPTERS: Record<Sdk, string> = adaptersFrom(
+/**
+ * Which adapters this build of the page can reach, and where.
+ *
+ * Two shapes. **Local**, the default: the three SDK adapters on the ports
+ * `run.sh` uses, with the switch between them that the demo exists to show.
+ * **Hosted** (`VITE_HOSTED=edge`): the page is served by the Cloudflare Worker
+ * (`examples/edge`), which is the one adapter there is, at the page's own
+ * origin. There is nothing to switch between, so the switch is not drawn.
+ *
+ * The hosted base is `""` on purpose — a path resolved against the page — and
+ * is the one place an empty base is meant. `adaptersFrom` refuses a blank URL
+ * because nobody *setting* one means that; here it is not set, it is chosen.
+ */
+export function hostedFrom(env: Record<string, string | undefined>): {
+  sdks: readonly Sdk[];
+  adapters: Record<Sdk, string>;
+} {
+  if (env["VITE_HOSTED"]?.trim() === "edge") {
+    return { sdks: ["edge"], adapters: { ...adaptersFrom(env), edge: "" } };
+  }
+  return { sdks: ["go", "node", "python"], adapters: adaptersFrom(env) };
+}
+
+const HOSTING = hostedFrom(
   (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {},
 );
-export type Persona = "app" | "reader" | "stranger";
+
+export const ADAPTERS: Record<Sdk, string> = HOSTING.adapters;
+
+/** The SDKs the switch offers: three locally, the Worker alone when hosted. */
+export const SDKS: readonly Sdk[] = HOSTING.sdks;
+
+export type Persona = "app" | "reader" | "stranger" | "analyst";
+
+/**
+ * Which head node the hosted Worker forwards to, sent as `x-demo-node`.
+ *
+ * Module state rather than an argument to every call, because it is not part
+ * of any question the panels ask: it is where the question goes. The switch
+ * that sets it clears the query cache, since no panel's query key names it.
+ * Locally there is one node and the header is never sent.
+ */
+let headNode: string | undefined;
+
+export function setHeadNode(name: string | undefined): void {
+  headNode = name;
+}
 
 /**
  * A value as the contract carries it: tagged, with 64-bit integers as strings.
@@ -248,15 +296,63 @@ export interface PathAnswer {
   through: Tagged[][][];
 }
 
+/** One row of a three-table chain: a `null` side is an outer join's gap. */
+export interface ChainedRow {
+  authors: Tagged[] | null;
+  books: Tagged[] | null;
+  sales: Tagged[] | null;
+}
+
+export interface WindowSpec {
+  function: "rowNumber" | "rank" | "denseRank" | "lag" | "lead" | "sum" | "count";
+  partition: boolean;
+  running: boolean;
+  limit?: number;
+}
+
+/** A row and its window value, kept apart as the wire keeps them. */
+export interface WindowedRow {
+  row: Tagged[];
+  windowed: Tagged[];
+}
+
+/** One keyset page: the cursor is the last row's key, `null` when provably done. */
+export interface PageAnswer {
+  rows: Tagged[][];
+  cursor: Tagged[] | null;
+  isLast: boolean;
+}
+
+export interface RenderedDecimal {
+  units: string;
+  scale: number;
+  text: string;
+}
+
+/** What `/api/unique` reports: the refusal, its reason, and what the table says. */
+export interface UniqueOutcome {
+  refused: string;
+  reason: string;
+  landed: boolean;
+  /** Whether the row survived the clean-up. Always false; see CONTRACT.md. */
+  left: boolean;
+}
+
 async function call<T>(
   sdk: Sdk,
   path: string,
   body: unknown,
   persona: Persona,
+  node: string | undefined = headNode,
 ): Promise<Answer<T>> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Demo-Identity": persona,
+  };
+  if (node !== undefined) headers["X-Demo-Node"] = node;
   const response = await fetch(`${ADAPTERS[sdk]}${path}`, {
     method: body === undefined ? "GET" : "POST",
-    headers: { "Content-Type": "application/json", "X-Demo-Identity": persona },
+    headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const parsed = (await response.json()) as Record<string, unknown>;
@@ -267,8 +363,16 @@ async function call<T>(
 }
 
 export const api = {
-  meta: (sdk: Sdk, persona: Persona) =>
-    call<{ sdk: string; leader: boolean; tables: string[] }>(sdk, "/api/meta", undefined, persona),
+  // `node` names a head node outright, for the one panel that compares them;
+  // every other call goes wherever the switch says.
+  meta: (sdk: Sdk, persona: Persona, node?: string) =>
+    call<{ sdk: string; leader: boolean; tables: string[] }>(
+      sdk,
+      "/api/meta",
+      undefined,
+      persona,
+      node ?? headNode,
+    ),
 
   query: (sdk: Sdk, persona: Persona, spec: QuerySpec) =>
     call<{ rows: Tagged[][] }>(sdk, "/api/query", spec, persona),
@@ -336,6 +440,33 @@ export const api = {
     persona: Persona,
     spec: { stale: boolean; gone: boolean },
   ) => call<ConditionalDelete>(sdk, "/api/conditional-delete", spec, persona),
+
+  chain: (sdk: Sdk, persona: Persona, spec: { type: string; limit?: number }) =>
+    call<{ rows: ChainedRow[] }>(sdk, "/api/chain", spec, persona),
+
+  window: (sdk: Sdk, persona: Persona, spec: WindowSpec) =>
+    call<{ rows: WindowedRow[] }>(sdk, "/api/window", spec, persona),
+
+  nearest: (sdk: Sdk, persona: Persona, limit: number) =>
+    call<{ titles: Tagged[] }>(sdk, "/api/nearest", { limit }, persona),
+
+  page: (sdk: Sdk, persona: Persona, spec: { limit: number; after?: Tagged[] }) =>
+    call<PageAnswer>(sdk, "/api/page", spec, persona),
+
+  renderDecimals: (sdk: Sdk, persona: Persona) =>
+    call<{ rendered: RenderedDecimal[] }>(sdk, "/api/render-decimals", {}, persona),
+
+  unique: (sdk: Sdk, persona: Persona, collide: boolean, node?: string) =>
+    call<UniqueOutcome>(sdk, "/api/unique", { collide }, persona, node ?? headNode),
+
+  servedBy: (sdk: Sdk, persona: Persona, node?: string) =>
+    call<{ servedBy: string; rows: number }>(
+      sdk,
+      "/api/served-by",
+      {},
+      persona,
+      node ?? headNode,
+    ),
 
   transaction: (sdk: Sdk, persona: Persona, commit: boolean) =>
     call<{ visibleInside: boolean; visibleAfter: boolean }>(

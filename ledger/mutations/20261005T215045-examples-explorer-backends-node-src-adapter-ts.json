@@ -1,0 +1,60 @@
+{
+  "at": "2026-10-05T21:50:45+00:00",
+  "file": "examples/explorer/backends/node/src/adapter.ts",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer && PATH=/tmp/ci-env/bin:$PATH SLATE_SERVERD=$PWD/../../target/debug/slate-serverd ./run.sh --conformance 2>&1 | tail -40"
+  ],
+  "commit": "5e0fa9a",
+  "python": "3.12.2",
+  "outcome": "problems",
+  "cases": [
+    {
+      "name": "node: the refusal's reason is dropped",
+      "old": "      reason = error.reason;\n",
+      "new": "      reason = \"\";\n",
+      "verdict": "caught",
+      "caught_by": [
+        "a duplicate name, refused by a unique index (app): the adapters disagree",
+        "the must-differ pair ('a duplicate name, refused by a unique index', 'a fresh name, admitted by the same index') is not comparable: 'a duplicate name, refused by a unique index' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "node: posts is not readable",
+      "old": "const TABLES = [\"authors\", \"books\", \"sales\", \"shipments\", \"posts\"];",
+      "new": "const TABLES = [\"authors\", \"books\", \"sales\", \"shipments\"];",
+      "verdict": "caught",
+      "caught_by": [
+        "meta (app): the adapters disagree",
+        "a read of the table with array columns (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "node: landed is taken from the insert, not the table",
+      "old": "    const landed = (await session.get(\"authors\", [uint(id)])) !== undefined;",
+      "new": "    const landed = refused === \"\";",
+      "verdict": "survived",
+      "caught_by": [],
+      "suites_reported": 1,
+      "expect_survivor": null
+    },
+    {
+      "name": "node: served-by names a constant",
+      "old": "    return { servedBy: stream.servedBy?.replica ?? \"\", rows: rows.length };",
+      "new": "    return { servedBy: \"writer\", rows: rows.length };",
+      "verdict": "caught-but-expected-to-survive",
+      "caught_by": [
+        "which view served a read (app): the adapters disagree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": "the explorer's head.toml declares no replicas, so every read is the writer's and a hard-coded name agrees; the R2 two-node run is what tells them apart"
+    }
+  ],
+  "restored_clean": true
+}

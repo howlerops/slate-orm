@@ -19,12 +19,21 @@
       "class_name": "HeadNode",
       "image": "./container/Dockerfile",
       "image_build_context": "./container",
-      // One writer: the node takes a lease in the bucket, and a second
-      // instance would be fenced rather than serve.
-      "max_instances": 1,
+      // Two nodes, `a` and `b`, and still one writer: each campaigns for a
+      // lease in the bucket at startup and the loser serves reads as a
+      // follower. `src/worker.ts` starts `a` first so that it is the leader.
+      "max_instances": 2,
       "instance_type": "basic"
     }
   ],
+  // The explorer's web UI, built by `deploy.sh` for one origin. Only `/api/*`
+  // runs the Worker; every other path is a file, and an unknown one is the
+  // page, which is what a single-page app wants.
+  "assets": {
+    "directory": "../explorer/web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
   "durable_objects": {
     "bindings": [{ "name": "HEAD_NODE", "class_name": "HeadNode" }]
   },

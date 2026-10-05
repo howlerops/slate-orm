@@ -1,0 +1,28 @@
+{
+  "at": "2026-10-05T21:53:33+00:00",
+  "file": "examples/explorer/backends/go/handlers.go",
+  "dialect": "python",
+  "command": [
+    "sh",
+    "-c",
+    "cd examples/explorer && PATH=/tmp/ci-env/bin:$PATH SLATE_SERVERD=$PWD/../../target/debug/slate-serverd ./run.sh --conformance 2>&1 | tail -40"
+  ],
+  "commit": "5e0fa9a",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "go: the landed row is never removed",
+      "old": "\tif landed {\n\t\t// Authors stay as seeded",
+      "new": "\tif false {\n\t\t// Authors stay as seeded",
+      "verdict": "caught",
+      "caught_by": [
+        "a fresh name, admitted by the same index (app): the adapters disagree",
+        "the must-differ pair ('a duplicate name, refused by a unique index', 'a fresh name, admitted by the same index') is not comparable: 'a fresh name, admitted by the same index' produced no agreed answer"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}
