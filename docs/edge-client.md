@@ -126,10 +126,15 @@ rendered a `u64` through a JavaScript number would pass a hand-written test
 that checked small ids, and fail the conformance case that checks
 `9007199254740993`.
 
-**Deploying to Cloudflare is not part of the test.** It needs an account and a
-head node reachable from the internet (a Cloudflare Tunnel in front of one
-would do), and neither belongs in CI. It is documented in `examples/edge`'s
-README as a manual step.
+**Deploying to Cloudflare is not part of the test.** It needs an account, and
+so does not belong in CI. It has been done, entirely on Cloudflare:
+- the head node runs as a Container from the repository's image;
+- its database is in R2, through the S3 API;
+- the Worker reaches it through a Durable Object binding.
+
+The conformance runner against the deployed URL agreed on 142 of 143 cases,
+the 143rd differing only in a seeding timestamp. `examples/edge/README.md`
+and `deploy.sh` have the steps.
 
 ## What this note does not do
 

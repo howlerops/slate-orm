@@ -1,0 +1,32 @@
+// The all-Cloudflare deployment: this Worker, and the head node it reads as
+// a Cloudflare Container with its database in R2. `deploy.sh` runs it.
+//
+// `wrangler.toml` beside this is the other shape — the Worker alone, pointed
+// at a head node by URL — which is what `wrangler dev` and the conformance
+// runner use. Both deploy the same Worker; this one adds the container.
+{
+  "name": "slate-explorer-edge",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "vars": {
+    // The container is reached through its binding, not by URL; the client
+    // needs a base URL to build request paths from, and this is it.
+    "HEAD": "http://head-node",
+    "R2_BUCKET": "slate-explorer"
+  },
+  "containers": [
+    {
+      "class_name": "HeadNode",
+      "image": "./container/Dockerfile",
+      "image_build_context": "./container",
+      // One writer: the node takes a lease in the bucket, and a second
+      // instance would be fenced rather than serve.
+      "max_instances": 1,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "HEAD_NODE", "class_name": "HeadNode" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HeadNode"] }]
+}

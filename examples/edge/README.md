@@ -45,59 +45,88 @@ codecs generated at build time (`clients/typescript/scripts/generate-codecs.mjs`
 That failure is why this example exists as a conformance adapter and not as a
 demo: nothing short of running the real runtime would have shown it.
 
-## Deploy it to Cloudflare
+## Deploy it to Cloudflare, head node included
 
-Done once, on 2026-10-04, to `slate-explorer-edge.<account>.workers.dev`. It is
-not part of any test. It needs a Cloudflare account and a head node the
-Worker can reach from the internet. The steps that worked:
+`deploy.sh` puts the whole thing on Cloudflare:
 
-1. **Seed a persisted store, then serve it with token authentication.** The
-   explorer seeds through its `trusted-header` identities, and a node
-   reachable from the internet must never run in that mode, because it trusts
-   whatever identity a caller claims. So seed first with
-   `backend = "local"` on loopback, stop the node, and restart it on the same
-   directory with `[auth] mode = "token"`. Give it one `[[auth.tokens]]` per
-   persona, with the same principal, tenant and roles as the explorer's
-   identities, so policies and column grants behave identically. Read each
-   secret from a `secret_file` with mode `600`.
+- this Worker;
+- the head node as a **Cloudflare Container** running `slate-serverd` from the
+  repository's own image;
+- its database in an **R2** bucket, through the S3 API.
 
-2. **Expose it.** A quick tunnel needs no Cloudflare configuration:
+Nothing runs on your machine afterwards. It was done on 2026-10-05.
 
-   ```sh
-   cloudflared tunnel --no-autoupdate --url http://127.0.0.1:<port>
-   ```
+```sh
+npx wrangler r2 bucket create slate-explorer
+R2_ENV=~/.config/slate/r2.env TOKENS=tokens.json CLOUDFLARE_ACCOUNT_ID=<id> sh deploy.sh
+```
 
-   A request through it without a token must get `grpc-status: 16`. Check that
-   before going on.
+**What it needs:**
 
-3. **Deploy, then store the tokens as a secret.** The Worker reads
-   `SLATE_TOKENS`, a JSON object from persona to token, and sends the
-   persona's token as `authorization: Bearer` through the `fetch` option
-   `Client.connectWeb` takes:
+- **Docker.** It builds the image for `linux/amd64`, which is what Containers
+  run, on any host. The root `Dockerfile` cross-compiles from arm64 for this.
+- **An R2 API token scoped to the bucket.** Wrangler's login cannot create
+  one: the API answers error 9109 to its OAuth session. Create the token in
+  the dashboard under *R2 → Manage R2 API Tokens*, with Object Read & Write on
+  the bucket, and put its two values in a file as `ACCESS_KEY_ID=` and
+  `SECRET_ACCESS_KEY=`, mode `600`.
+- **A JSON file of bearer tokens,** one per persona: `{"app": "…", …}`.
 
-   ```sh
-   npx wrangler deploy --var HEAD:https://<tunnel>.trycloudflare.com
-   npx wrangler secret put SLATE_TOKENS < tokens.json
-   ```
+**What it does:**
 
-4. **Compare it.** The conformance runner can point its edge adapter at the
-   deployed URL while the other three run locally (`./run.sh --headless`,
-   then `conformance.py --edge https://…workers.dev`). Two things are worth
-   knowing:
+1. Derives `container/head.toml` from `../explorer/head.toml`
+   (`container/derive.py`). The tables, grants, policies and views are the
+   ones the conformance runner exercises. It changes three sections:
+   - `[listen]` binds every interface;
+   - `[auth]` is `token`, with `transport = "tls-terminated-upstream"`, because
+     the Worker terminates TLS and reaches the container over Cloudflare's
+     internal network;
+   - `[storage]` is S3 with `from_env = true`, so the image holds nothing
+     account-specific.
+2. Builds the image and sets three Worker secrets from the files, on stdin,
+   never echoed: `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and
+   `SLATE_TOKENS`. The Worker passes them into the container as environment
+   variables.
+3. Deploys with `wrangler.cloudflare.jsonc`: one container instance, because
+   the node holds a writer lease in the bucket, sleeping after ten idle
+   minutes. The Worker reaches it through a Durable Object binding rather
+   than a URL. `wrangler.toml` remains the Worker-alone shape that `wrangler
+   dev` and the conformance runner use.
 
-   - Cloudflare's browser-integrity check refuses Python's default
-     `urllib` user agent with error 1010 before the Worker runs, so the
-     runner needs another user agent.
-   - The deployed Worker reads its own database, so a case whose answer
-     includes a timestamp written at seeding time differs by however far
-     apart the two seeds ran.
+**Seeding.** The node starts on whatever the bucket holds. The bucket was
+seeded once by running `slate-serverd` locally against it in `trusted-header`
+mode on loopback (`backend = "s3"` with R2's endpoint, region `auto`) and
+running the explorer's seeder. That run also tested the parts most likely to
+fail on R2:
+- the node took leadership through a lease in the bucket;
+- it resigned on `SIGTERM`;
+- a restart took the lease at generation 2 and read back every seeded row.
 
-   On 2026-10-04 that run agreed on 142 of 143 cases, and the 143rd differed
-   only in exactly such a timestamp.
+**What was checked live,** with the tunnel and every local process stopped:
+- `/api/meta` reports the node leader on the first request;
+- the 11 seeded books come back from R2, and the reader sees 9 under its
+  policy;
+- the analyst gets `born` as null and is refused a filter on it;
+- the stranger is denied.
 
-A quick tunnel's URL lasts as long as the `cloudflared` process, and the
-deployment as long as the head node behind it. `npx wrangler delete`
-removes the Worker.
+The conformance runner against the live URL, with the other three adapters
+local, agreed on 142 of 143 cases. The 143rd differs in one cell: the
+soft-delete timestamp of a row retired during seeding, which records when
+each database was seeded. Cloudflare's browser-integrity check refuses
+Python's default `urllib` user agent (error 1010), so the runner needs
+another user agent.
+
+### Or: a head node elsewhere, through a tunnel
+
+The first deployment, on 2026-10-04, kept the head node on a workstation.
+It ran in token mode behind a quick tunnel
+(`cloudflared tunnel --url http://127.0.0.1:<port>`), with the Worker
+deployed by `wrangler deploy --var HEAD:<tunnel URL>`. It lasts only as long
+as the two local processes. `deploy.sh` replaced it under the same Worker
+name.
+
+`npx wrangler delete -c wrangler.cloudflare.jsonc` removes the Worker and its
+container. The R2 bucket is left for `wrangler r2 bucket delete`.
 
 ## What this does not do
 

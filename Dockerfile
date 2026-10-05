@@ -92,10 +92,25 @@ COPY examples/helpdesk examples/helpdesk
 # `target/<triple>/release/`, so the final stage can no longer name a fixed
 # path. It is copied to `/out/` here and the runtime stage reads that, which
 # also means the runtime stage does not have to know the triple.
+# **And the other direction, on an arm64 host.** CI's runners are amd64, so
+# building for amd64 was always native and needed no cross tools. A build on
+# an arm64 workstation for an amd64 target — Cloudflare Containers run amd64,
+# and `examples/edge/deploy.sh` builds this image on whatever machine deploys
+# — has the same problem the arm64 branch solves, mirrored: the host linker
+# cannot link x86-64, and fails only at the end. So when the build stage is
+# itself aarch64, the amd64 branch installs the x86-64 cross toolchain the
+# same way. On an amd64 host nothing changes.
 RUN set -eux; \
     case "$TARGETARCH" in \
       amd64) \
-        triple=x86_64-unknown-linux-gnu; prefix= ;; \
+        triple=x86_64-unknown-linux-gnu; prefix=; \
+        if [ "$(uname -m)" = aarch64 ]; then \
+          prefix=x86_64-linux-gnu-; \
+          apt-get update; \
+          apt-get install -y --no-install-recommends \
+            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu cmake; \
+          rm -rf /var/lib/apt/lists/*; \
+        fi ;; \
       arm64) \
         triple=aarch64-unknown-linux-gnu; prefix=aarch64-linux-gnu-; \
         apt-get update; \

@@ -16177,6 +16177,40 @@
       "key": "The tokens live in the session's scratch directory and in th",
       "verdict": "moment",
       "reviewed": "2026-10-04"
+    },
+    {
+      "entry": "2026-10-05-the-head-node-on-cloudflare.md",
+      "key": "The container sleeps after ten idle minutes.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "Sleeping keeps an idle demo from running a container around the clock; `sleepAfter` in `examples/edge/src/worker.ts` is the one setting. A cold start costs latency on the first request, never a wrong answer, because the node takes the lease before it serves."
+    },
+    {
+      "entry": "2026-10-05-the-head-node-on-cloudflare.md",
+      "key": "Anyone who can reach the Worker can act as any persona",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "Same decision as recorded against `2026-10-04-the-worker-deployed.md`: the persona switch is the demo. The node accepts only the four tokens, the operations are the adapter's fixed endpoints, and the store is a bucket holding nothing but demo data."
+    },
+    {
+      "entry": "2026-10-05-the-head-node-on-cloudflare.md",
+      "key": "Nothing tests the deployment.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "A deploy needs the owner's Cloudflare account and spends money, neither of which belongs in CI. The parts that can be tested without the account are tested there: `workerd` via `wrangler dev` in the conformance runner, and the image in the container job. What the deploy adds is Cloudflare's network and R2, and both were checked by hand on 2026-10-05, as the entry records."
+    },
+    {
+      "entry": "2026-10-05-the-head-node-on-cloudflare.md",
+      "key": "A failover between two containers is not exercised.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-05",
+      "by": "`max_instances = 1` means Cloudflare runs at most one node, so the only handover is sleep and wake, which goes through the same lease acquisition as the local restart that took generation 2 against R2. The lease protocol itself is tested against MinIO in CI's object-storage jobs."
+    },
+    {
+      "entry": "2026-10-05-the-head-node-on-cloudflare.md",
+      "key": "The credentials live outside the repository.",
+      "verdict": "moment",
+      "reviewed": "2026-10-05"
     }
   ]
 }

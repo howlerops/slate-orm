@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@cloudflare/containers": "0.3.7",
     "@slate-orm/client": "file:../../clients/typescript"
   },
   "devDependencies": {

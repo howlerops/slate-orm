@@ -44,6 +44,8 @@ examples/explorer/web/dist/
 examples/edge/node_modules/
 examples/edge/dist/
 examples/edge/.wrangler/
+# Derived from the explorer's head.toml by container/derive.py at deploy time.
+examples/edge/container/head.toml
 examples/explorer/web/dist-test/
 
 # The batch benchmark, same three shapes as the two examples above.
