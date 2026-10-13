@@ -16257,6 +16257,20 @@
       "key": "`docs/releasing.md`'s table of what shipped still describes ",
       "verdict": "moment",
       "reviewed": "2026-10-05"
+    },
+    {
+      "entry": "2026-10-13-v0-2-0-shipped-all-five.md",
+      "key": "No installed package was run against a head node.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "The published artefacts are built from the tree the client suites test against a real head node in CI (Python, Go, and TypeScript over both transports); `scripts/check_npm_package.py` checks the npm tarball holds every declared entry point. What an install adds is the registry round trip, which the imports exercise."
+    },
+    {
+      "entry": "2026-10-13-v0-2-0-shipped-all-five.md",
+      "key": "The npm token expires.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "A token that lapses fails the next release loudly rather than skipping it \u2014 the three-state variable in `docs/releasing.md` exists for exactly this. Replacing it is an owner account action."
     }
   ]
 }

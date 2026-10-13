@@ -3,7 +3,8 @@
 Five things ship from this repository. This is what publishes each of them,
 what it costs, and what has to be decided before it can happen.
 
-**Two releases have been cut, and the second one exercised all of this.**
+**Three releases have been cut. The second exercised every job; the third is
+the first that published all five artefacts.**
 
 `v0.0.1`, on 2026-09-14, attached two `slate-serverd` binaries to a GitHub
 prerelease and did nothing else — the image, the Go module tag and the two
@@ -26,6 +27,27 @@ shipped, verified by asking the registries rather than by reading the run:
 The index carries `linux/amd64` and `linux/arm64` plus two attestation
 manifests, which are the `provenance: true` and `sbom: true` below. An
 anonymous `GET` against `ghcr.io` resolves it, so the package is public.
+
+`v0.2.0`, on 2026-10-13, is the first with npm and PyPI turned on. Again
+verified against the registries, and the two client packages also installed
+from them into empty directories and imported:
+
+<!-- not a measurement -->
+
+| artefact | result |
+| --- | --- |
+| binaries | attached — x86_64 24.3 MB, aarch64 22.4 MB |
+| `ghcr.io/howlerops/slate-serverd` | `0.2.0` and `latest`, both `sha256:ac6ba82a…`, `linux/amd64` and `linux/arm64` plus two attestations; `0.1.0` still `sha256:52e2cd8e…` |
+| the Go module | `clients/go/v0.2.0`, listed by `proxy.golang.org` |
+| npm | `@slate-orm/client@0.2.0`, `latest`, with a provenance statement in the Sigstore log; not served until some minutes after the job reported success |
+| PyPI | `slate-client` 0.2.0, a wheel and an sdist, through the Trusted Publisher |
+
+The npm job's success and the package being installable are two moments, not
+one: `npm view` answered 404 at 17:29:49, 22 seconds after the job logged
+`+ @slate-orm/client@0.2.0` and "may take a few minutes to become available".
+It was serving the package within a few minutes after that; when exactly was
+not timed. A check run straight after the job would have reported a release
+that had in fact shipped as missing.
 
 This page said "nothing here has been published yet" for three days after that
 was false, which is worth more than an apology: it was written *about* the
@@ -111,11 +133,12 @@ success is the failure this is all arranged around.
 
 ## Turning npm and PyPI on
 
-Both are off, and off *explicitly* rather than by omission. `vars.PUBLISH_NPM`
-and `vars.PUBLISH_PYPI` are repository variables, and the workflow reads three
-states from each:
+Both have been **on since 2026-10-13**, and before that were off *explicitly*
+rather than by omission. `vars.PUBLISH_NPM` and `vars.PUBLISH_PYPI` are
+repository variables, and the workflow reads three states from each:
 
-- **unset** — the job says so in the run summary and succeeds. This is today.
+- **unset** — the job says so in the run summary and succeeds. This was every
+  release before `v0.2.0`.
 - **`true`, no credential** — the job **fails**. That is the point of the
   variable: a workflow that merely skips when a token is missing cannot tell
   "we have not decided to publish this" from "we decided to and the token
@@ -163,9 +186,10 @@ the whole credential.
 
 **Then cut a tag.** Both publish jobs are gated on `startsWith(github.ref,
 'refs/tags/v')`, so a `workflow_dispatch` run builds and checks and publishes
-nothing. `0.1.0` has already been released without them, and a version number
-cannot be reused on either registry — so the first run that ships to npm and
-PyPI is whatever tag comes next.
+nothing. `0.1.0` was released without them, and a version number cannot be
+reused on either registry, so the first run to ship to npm and PyPI was the
+next tag, `v0.2.0`. The owner's account steps for both, done that day, are the
+ones written above.
 
 **What the package actually contains is checked before it is sent.**
 `scripts/check_npm_package.py` asks npm what the tarball holds and refuses if
@@ -211,7 +235,8 @@ target. The `Dockerfile` cross-compiles now — `--platform=$BUILDPLATFORM` on
 the builder, the C toolchain for the target, `strip` from the cross binutils
 — and CI run 556 measured the arm64 build at **4m31s**, cold-cached. Seventeen
 times faster, and the two legs run in parallel, so a release's image step is
-about five minutes rather than an hour and a quarter.
+about five minutes rather than an hour and a quarter. `v0.2.0` confirmed it on
+a real release: the image job ran **6m48s**, from 17:27:01 to 17:33:49.
 
 `ledger/2026-10-03-the-image-stops-emulating-and-starts-being-run.md` has the
 measurement and the four environment variables it turns on.

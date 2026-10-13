@@ -1145,9 +1145,12 @@ Built and tested:
       the binaries, `ghcr.io/howlerops/slate-serverd:0.1.0` and `:latest` as a
       two-architecture index with provenance and an SBOM, and
       `github.com/howlerops/slate-orm/clients/go@v0.1.0` resolving through
-      `proxy.golang.org`. npm and PyPI are off by an explicit repository
+      `proxy.golang.org`. npm and PyPI were off by an explicit repository
       variable rather than by omission, so both reported *not published* and
-      succeeded — see [`docs/releasing.md`](docs/releasing.md). Both releases
+      succeeded. **`v0.2.0` turned them on and shipped all five**:
+      `@slate-orm/client` on npm with provenance, `slate-client` on PyPI
+      through a Trusted Publisher, and the three above — see
+      [`docs/releasing.md`](docs/releasing.md). All three releases
       are marked prerelease, deliberately: the status banner above says what
       this is. The image took **77 minutes**, because the arm64 half is
       emulated; that number and what to do about it are in

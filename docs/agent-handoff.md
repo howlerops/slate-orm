@@ -82,10 +82,10 @@ verdict with an argument in `docs/caveat-status.json`:
 
 - Cross-compiling was just done; the image build is 4m31s, not 77 minutes.
 - Do not add `linux/arm64` to anything beyond CI's image matrix.
-- Do not publish to npm or PyPI. Both are off behind repository variables
-  on purpose, the names are unclaimed, and a published version number can
-  never be reused.
-- Do not tag a release. `0.1.0` is out; the next tag is a human's decision.
+- Do not publish to npm or PyPI by hand. Both publish from `release.yml` on
+  a `v*` tag (on since `v0.2.0`), the names are claimed, and a published
+  version number can never be reused.
+- Do not tag a release. `0.2.0` is out; the next tag is a human's decision.
 
 ONLY THE OWNER CAN DO THESE — if your work needs one, stop and say so:
 
