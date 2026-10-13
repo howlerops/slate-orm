@@ -357,13 +357,9 @@
     {
       "entry": "2026-09-13-typescript-client.md",
       "key": "The package is not published anywhere and its version is `0.",
-      "verdict": "deliberate",
-      "by": "this entry: unpublished at 0.0.1 is a release decision rather than a defect, and the version is honest about what the package is. The half that was a defect \u2014 `npm test` needing cargo \u2014 is closed by SLATE_SERVERD.",
-      "recheck": {
-        "url": "https://registry.npmjs.org/@slate-orm/client",
-        "expect_status": 404
-      },
-      "reviewed": "2026-10-01"
+      "verdict": "closed",
+      "by": "`v0.2.0`, on 2026-10-13, published `@slate-orm/client` to npm and `slate-client` to PyPI, each verified against its registry and installed into an empty directory; recorded in `docs/releasing.md` and `ledger/2026-10-13-v0-2-0-shipped-all-five.md`.",
+      "reviewed": "2026-10-13"
     },
     {
       "entry": "2026-09-13-typescript-client.md",
@@ -15783,14 +15779,9 @@
     {
       "entry": "2026-10-02-the-release-that-shipped-five-things.md",
       "key": "npm and PyPI remain unexercised.",
-      "verdict": "deliberate",
-      "reviewed": "2026-10-02",
-      "by": "They are off by an explicit repository variable, which is a decision recorded in `docs/releasing.md` and not an accident \u2014 the names are unclaimed and the API changes weekly. A first publish being a first run is inherent to a registry that refuses a reused version; what the design does about it is refuse to *skip* silently, so a configured-but-credential-less state fails the release instead of quietly shipping four artefacts and reporting five. Exercising them for real means claiming the names, which is the decision this verdict is waiting on and not a task.",
-      "recheck": {
-        "url": "https://pypi.org/pypi/slate-client/json",
-        "expect_status": 404,
-        "why": "PyPI answering anything but 404 means the name was claimed and the job turned on, so the claim is read again. npm's half is the same shape and is already watched by 2026-09-13-typescript-client.md's row against registry.npmjs.org; both were 404 when this was written."
-      }
+      "verdict": "closed",
+      "reviewed": "2026-10-13",
+      "by": "`v0.2.0`, on 2026-10-13, published `@slate-orm/client` to npm and `slate-client` to PyPI, each verified against its registry and installed into an empty directory; recorded in `docs/releasing.md` and `ledger/2026-10-13-v0-2-0-shipped-all-five.md`."
     },
     {
       "entry": "2026-10-02-the-release-that-shipped-five-things.md",

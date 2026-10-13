@@ -70,6 +70,12 @@ ROOT = Path(__file__).resolve().parent.parent
 #: `name -> (needle, path)`. A `needle` of `None` means the path must merely
 #: exist. `path` is a `git grep` pathspec, so a directory covers its tree.
 WITNESS: dict[str, tuple[str | None, str]] = {
+    # The release that turned npm and PyPI on. The needle is the sentence in
+    # the release record that a reverted claim would have to remove.
+    "published-to-registries": (
+        "is the first with npm and PyPI turned on",
+        "docs/releasing.md",
+    ),
 
  # --- the 2026-09-13/14 backlog, triaged 2026-09-28 --------------------------
  #
@@ -1237,6 +1243,14 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    (
+        "2026-09-13-typescript-client.md",
+        "The package is not published anywhere and its version is `0.",
+    ): "published-to-registries",
+    (
+        "2026-10-02-the-release-that-shipped-five-things.md",
+        "npm and PyPI remain unexercised.",
+    ): "published-to-registries",
     (
         "2026-09-30-the-image-that-copies-part-of-the-tree.md",
         "It does not read `.dockerignore`.",

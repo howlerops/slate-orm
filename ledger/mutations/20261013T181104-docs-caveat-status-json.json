@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-13T18:11:04+00:00",
+  "file": "docs/caveat-status.json",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_outside_premises.py"
+  ],
+  "commit": "9c5b3a7",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the npm token caveat loses its recheck, the state every one of them was in",
+      "old": ",\n      \"recheck\": {\n        \"manual\": \"On npmjs.com, Access Tokens: confirm the `slate-orm release` token's expiry is after the next planned release; if not, generate a new one and run `gh secret set NPM_TOKEN`.\"\n      }\n",
+      "new": "\n",
+      "verdict": "caught",
+      "caught_by": [
+        "check_outside_premises: 2026-10-13-v0-2-0-shipped-all-five.md: `The npm token expires.` is about a package registry and is still deliberate, with no `recheck`."
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

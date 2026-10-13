@@ -76,6 +76,24 @@ would. The verdict now carries a manual recheck. I had not run
 `scripts/check.sh` before that commit, which is exactly what it exists to
 catch.
 
+**And the release overtook two older claims, which CI then reported.**
+`2026-09-13-typescript-client.md`'s "not published anywhere" and
+`2026-10-02-the-release-that-shipped-five-things.md`'s "npm and PyPI remain
+unexercised" both carried rechecks expecting npm and PyPI to answer 404. Both
+answered 200, and `check_outside_premises.py --run` failed the run. Both are
+now `closed`, witnessed by the v0.2.0 record in `docs/releasing.md`
+(`published-to-registries` in `scripts/check_closed_caveats.py`). I first
+flipped their rechecks to expect 200, then removed them: the guard fetches
+rechecks only for live verdicts, so on a closed row the recheck would have
+claimed a watch that nothing runs.
+
+Closing the npm caveat also broke a roster mutation in `scripts/mutations.json`
+that removed exactly that recheck, the one live outside-the-tree example it
+had. It is re-anchored on the token-expiry caveat's manual recheck, and run
+through `mutate_guard.py`, `check_outside_premises.py` refuses the result:
+"`The npm token expires.` is about a package registry and is still
+deliberate, with no `recheck`."
+
 ## What this does not do
 
 - **No installed package was run against a head node.** The checks import
