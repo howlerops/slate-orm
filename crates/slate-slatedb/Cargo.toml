@@ -18,7 +18,7 @@ publish = false
 slate-kernel.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
-slatedb = { version = "0.16", default-features = false }
+slatedb = { version = "0.17", default-features = false }
 # For replica catch-up waits; SlateDB already requires a tokio runtime.
 tokio = { workspace = true, features = ["time"] }
 uuid.workspace = true

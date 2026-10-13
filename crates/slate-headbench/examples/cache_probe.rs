@@ -261,8 +261,11 @@ async fn reopen(
         Cache::Off => (builder.with_db_cache_disabled(), None),
         Cache::On => {
             let probe = Arc::new(ProbeCache::default());
+            // SlateDB 0.17 scopes entries by a caller-chosen id so one cache
+            // can serve several databases. Each arm gets a fresh cache over
+            // one database, so there is nothing to keep apart: any constant.
             (
-                builder.with_db_cache(Arc::clone(&probe) as Arc<dyn DbCache>),
+                builder.with_db_cache(Arc::clone(&probe) as Arc<dyn DbCache>, 0),
                 Some(probe),
             )
         }

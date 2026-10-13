@@ -16265,6 +16265,25 @@
       "recheck": {
         "manual": "On npmjs.com, Access Tokens: confirm the `slate-orm release` token's expiry is after the next planned release; if not, generate a new one and run `gh secret set NPM_TOKEN`."
       }
+    },
+    {
+      "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
+      "key": "v0.2.0 still ships SlateDB 0.16, and so does the live explor",
+      "verdict": "open",
+      "reviewed": "2026-10-13"
+    },
+    {
+      "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
+      "key": "`rust-version = \"1.91\"` is declared, not tested.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "No toolchain anywhere this repository builds on is older than current stable \u2014 CI's dtolnay/rust-toolchain@stable, the Dockerfile's rust:1-bookworm \u2014 so an MSRV job would test a toolchain nobody uses, at a toolchain install per push. The number exists for cargo's resolver, which is what it is right for."
+    },
+    {
+      "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
+      "key": "The rest of 0.17 is unmeasured here.",
+      "verdict": "open",
+      "reviewed": "2026-10-13"
     }
   ]
 }
