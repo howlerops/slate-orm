@@ -16270,7 +16270,10 @@
       "key": "The npm token expires.",
       "verdict": "deliberate",
       "reviewed": "2026-10-13",
-      "by": "A token that lapses fails the next release loudly rather than skipping it \u2014 the three-state variable in `docs/releasing.md` exists for exactly this. Replacing it is an owner account action."
+      "by": "A token that lapses fails the next release loudly rather than skipping it \u2014 the three-state variable in `docs/releasing.md` exists for exactly this. Replacing it is an owner account action.",
+      "recheck": {
+        "manual": "On npmjs.com, Access Tokens: confirm the `slate-orm release` token's expiry is after the next planned release; if not, generate a new one and run `gh secret set NPM_TOKEN`."
+      }
     }
   ]
 }

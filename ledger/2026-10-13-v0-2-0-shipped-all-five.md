@@ -68,6 +68,14 @@ Release run 38438705962: all 10 jobs `success`.
   `Client.connectWeb`). `pip install slate-client==0.2.0` in a fresh
   virtualenv imports `slate` and reports version 0.2.0.
 
+**CI caught one thing in this entry that I did not run first.**
+`scripts/check_outside_premises.py` refused the token-expiry caveat: it is a
+fact about a registry, recorded as deliberate, with no way given to recheck
+it. Nothing in the repository can falsify it, so without a recheck nobody
+would. The verdict now carries a manual recheck. I had not run
+`scripts/check.sh` before that commit, which is exactly what it exists to
+catch.
+
 ## What this does not do
 
 - **No installed package was run against a head node.** The checks import
