@@ -1149,11 +1149,12 @@ Built and tested:
       variable rather than by omission, so both reported *not published* and
       succeeded. **`v0.2.0` turned them on and shipped all five**:
       `@slate-orm/client` on npm with provenance, `slate-client` on PyPI
-      through a Trusted Publisher, and the three above — see
-      [`docs/releasing.md`](docs/releasing.md). All three releases
+      through a Trusted Publisher, and the three above. **`v0.2.1` moved all
+      five onto SlateDB 0.17**, for a descending-scan fix — see
+      [`docs/releasing.md`](docs/releasing.md). All four releases
       are marked prerelease, deliberately: the status banner above says what
-      this is. The image took **77 minutes**, because the arm64 half is
-      emulated; that number and what to do about it are in
+      this is. `v0.1.0`'s image took **77 minutes**, because the arm64 half
+      was emulated; it cross-compiles now, and that number is in
       [`ledger/2026-10-02-the-release-that-shipped-five-things.md`](ledger/2026-10-02-the-release-that-shipped-five-things.md)
 - [x] `EXPLAIN` for a grouped read — `ExplainAggregate`, and
       `explain_grouped`/`explain_grouped_join`/`explain_grouped_chain` in the

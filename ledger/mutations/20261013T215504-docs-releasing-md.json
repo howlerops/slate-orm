@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-13T21:55:04+00:00",
+  "file": "docs/releasing.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "db0d21d",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the v0.2.1 release record is removed",
+      "old": "exists to move every artefact onto SlateDB 0.17,",
+      "new": "was cut on 2026-10-13,",
+      "verdict": "caught",
+      "caught_by": [
+        "check_closed_caveats: FAIL  every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

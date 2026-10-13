@@ -16269,9 +16269,9 @@
     {
       "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
       "key": "v0.2.0 still ships SlateDB 0.16, and so does the live explor",
-      "verdict": "moment",
+      "verdict": "closed",
       "reviewed": "2026-10-13",
-      "by": "A statement about what was published on the day the upgrade landed. v0.2.1, cut from the tree that carries SlateDB 0.17, is the release that answers it; docs/releasing.md records what it shipped."
+      "by": "v0.2.1 shipped all five artefacts on SlateDB 0.17, verified at each registry (docs/releasing.md), and the live explorer was redeployed on a 0.17 image over the bucket 0.16 wrote (ledger/2026-10-13-v0-2-1-shipped-on-slatedb-0-17.md)."
     },
     {
       "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
@@ -16306,6 +16306,27 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-13",
       "by": "The format is what crosses versions and a local directory holds the same objects a bucket does; the lease, the one part that leans on the store's conditional writes, is slate-server's own lease.rs over object_store, whose only change in this upgrade is 0.14.1 to 0.14.2."
+    },
+    {
+      "entry": "2026-10-13-v0-2-1-shipped-on-slatedb-0-17.md",
+      "key": "The live explorer's deploy reused the Worker's existing secr",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "The secrets were already set on the Worker and redeploying does not need them re-entered; the tokens never belonged in the repository, so the next full deploy.sh run supplying a fresh file is the design, not a gap."
+    },
+    {
+      "entry": "2026-10-13-v0-2-1-shipped-on-slatedb-0-17.md",
+      "key": "No installed package was run against a head node.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "The published artefacts are built from the tree whose client suites run each client against a real head node in CI; the registry checks above confirm the packages are the ones that tree builds."
+    },
+    {
+      "entry": "2026-10-13-v0-2-1-shipped-on-slatedb-0-17.md",
+      "key": "The live data still has never been shown to be compacted.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "The live deployment is a demonstration, not the test of the fix; crates/slate-slatedb/tests/descending.rs builds the compacted shape on purpose and fails on 0.16."
     }
   ]
 }

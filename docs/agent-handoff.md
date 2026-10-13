@@ -85,7 +85,7 @@ verdict with an argument in `docs/caveat-status.json`:
 - Do not publish to npm or PyPI by hand. Both publish from `release.yml` on
   a `v*` tag (on since `v0.2.0`), the names are claimed, and a published
   version number can never be reused.
-- Do not tag a release. `0.2.0` is out; the next tag is a human's decision.
+- Do not tag a release. `0.2.1` is out; the next tag is a human's decision.
 
 ONLY THE OWNER CAN DO THESE — if your work needs one, stop and say so:
 

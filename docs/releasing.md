@@ -3,8 +3,9 @@
 Five things ship from this repository. This is what publishes each of them,
 what it costs, and what has to be decided before it can happen.
 
-**Three releases have been cut. The second exercised every job; the third is
-the first that published all five artefacts.**
+**Four releases have been cut. The second exercised every job; the third is
+the first that published all five artefacts; the fourth moved them onto
+SlateDB 0.17.**
 
 `v0.0.1`, on 2026-09-14, attached two `slate-serverd` binaries to a GitHub
 prerelease and did nothing else — the image, the Go module tag and the two
@@ -48,6 +49,26 @@ one: `npm view` answered 404 at 17:29:49, 22 seconds after the job logged
 It was serving the package within a few minutes after that; when exactly was
 not timed. A check run straight after the job would have reported a release
 that had in fact shipped as missing.
+
+`v0.2.1`, also on 2026-10-13, exists to move every artefact onto SlateDB 0.17,
+whose descending-scan fix is in
+`ledger/2026-10-13-slatedb-0-17-and-the-descending-scan.md`. Verified the same
+way, including the two client packages installed into empty directories and
+imported:
+
+<!-- not a measurement -->
+
+| artefact | result |
+| --- | --- |
+| binaries | attached — x86_64 24.5 MB, aarch64 22.6 MB |
+| `ghcr.io/howlerops/slate-serverd` | `0.2.1` and `latest`, both `sha256:1b1137c9…`, `linux/amd64` and `linux/arm64` plus two attestations; `0.2.0` still `sha256:ac6ba82a…`. The amd64 binary inside names `slatedb-0.17.0` and no other version |
+| the Go module | `clients/go/v0.2.1`, listed by `proxy.golang.org` |
+| npm | `@slate-orm/client@0.2.1`, `latest`, with provenance |
+| PyPI | `slate-client` 0.2.1, a wheel and an sdist |
+
+The whole run took 8m17s, from 21:44:37 to 21:52:54; the image job was
+7m57s of it. The npm package was already being served when this table was
+checked, a few minutes after its job ended.
 
 This page said "nothing here has been published yet" for three days after that
 was false, which is worth more than an apology: it was written *about* the
@@ -223,7 +244,7 @@ is
 
 ```sh
 docker run --rm -v "$PWD/head.toml:/etc/slate/head.toml:ro" \
-  ghcr.io/<owner>/slate-serverd:0.2.0 --config /etc/slate/head.toml
+  ghcr.io/<owner>/slate-serverd:0.2.1 --config /etc/slate/head.toml
 ```
 
 The release pushes `linux/amd64` and `linux/arm64`, matching the binaries.
