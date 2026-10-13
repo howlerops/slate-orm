@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-13T21:12:00+00:00",
+  "file": "docs/performance.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "24794b9",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the 0.17 measurement section is removed",
+      "old": "### 8f. SlateDB 0.16 \u2192 0.17: the same requests",
+      "new": "### 8f. Dependency notes: the same requests",
+      "verdict": "caught",
+      "caught_by": [
+        "check_closed_caveats: FAIL  every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

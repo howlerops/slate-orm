@@ -70,6 +70,12 @@ ROOT = Path(__file__).resolve().parent.parent
 #: `name -> (needle, path)`. A `needle` of `None` means the path must merely
 #: exist. `path` is a `git grep` pathspec, so a directory covers its tree.
 WITNESS: dict[str, tuple[str | None, str]] = {
+    # The 0.16 -> 0.17 comparison. The needle is the section's heading, which
+    # a reverted measurement would have to take with it.
+    "slatedb-0-17-measured": (
+        "### 8f. SlateDB 0.16 \u2192 0.17",
+        "docs/performance.md",
+    ),
     # The release that turned npm and PyPI on. The needle is the sentence in
     # the release record that a reverted claim would have to remove.
     "published-to-registries": (
@@ -1243,6 +1249,10 @@ EXEMPT_BECAUSE: dict[tuple[str, str], str] = {
 #: same reason it orphans its verdict, and is read again rather than silently
 #: keeping a witness chosen for a different claim.
 WITNESSED: dict[tuple[str, str], str] = {
+    (
+        "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
+        "The rest of 0.17 is unmeasured here.",
+    ): "slatedb-0-17-measured",
     (
         "2026-09-13-typescript-client.md",
         "The package is not published anywhere and its version is `0.",

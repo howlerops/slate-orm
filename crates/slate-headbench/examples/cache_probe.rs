@@ -12,7 +12,7 @@
 //! `default_block_cache()` / `default_meta_cache()`, and **both are `None`
 //! unless the `foyer` or `moka` feature is enabled**. `foyer` is in SlateDB's
 //! `default` feature set — and every crate in this workspace declares
-//! `slatedb = { version = "0.16", default-features = false }`, re-enabling
+//! `slatedb = { version = "0.17", default-features = false }`, re-enabling
 //! only `aws`.
 //!
 //! So the cache object exists, every `get_block` / `get_index` / `get_filter`

@@ -2424,6 +2424,62 @@ some machine, and this is evidence about this one.
 It is also one fixture, ~110 bytes a row serialised, against a loopback `s3s`
 on a container with 16 GB of memory. Row counts here are properties of that.
 
+### 8f. SlateDB 0.16 → 0.17: the same requests, and a scan about 7% slower on the CPU
+
+The move to 0.17 (`ledger/2026-10-13-slatedb-0-17-and-the-descending-scan.md`)
+was for a correctness fix. Its release notes also touch the paths every
+section above measured: point lookups probe sources concurrently, range scans
+evaluate filters, the cached object store was rewritten, and L0 flushes
+stream. So the three examples behind §8–§8e were run on both versions,
+back to back on one Mac. The 0.16 build came from a worktree of the commit
+before the upgrade. Every other variable was held still.
+
+build: slate-slatedb 0.2.0 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | aarch64-apple-darwin | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+
+build: slate-slatedb 0.2.0 | features aws, cache | off dhat-heap | release (opt-level 3, debug false) | aarch64-apple-darwin | slatedb 0.17.0, foyer 0.22.6, object_store 0.14.2, tokio 1.53.1
+
+**Requests did not move, in any row.** `cache_probe`'s cold GETs, warm
+GETs/op and cache hit counts are identical across all four arms and three
+phases. `cost_calibration`'s GETs per query shape are 22 / 38 / 1 / 6 / 19 on
+both. `loader_cliff`'s PUTs are 2 a chunk on both. The cost model and the
+request counts §8–§8c rest on carry over unchanged.
+
+**Loading did not move either:** about 48,800 rows a second per 10,000-row
+chunk on both, and 120,000 rows on disk at 236 → 235 bytes a row.
+
+**A full scan got slower,** and it is the one clock difference that survived
+being looked at twice. `cache_probe`'s full scan of 20,000 rows, 21 runs each,
+`median [min – max]`:
+
+| run | order | 0.16 | 0.17 |
+|---|---|---:|---:|
+| 1 | 0.16 first | 20.89 ms [20.62 – 21.56] | 22.14 ms [21.69 – 22.66] |
+| 2 | 0.17 first | 21.05 ms [20.69 – 21.54] | 22.51 ms [22.23 – 23.34] |
+| 3 | 0.17 first | 20.83 ms [20.57 – 21.32] | 22.40 ms [21.92 – 23.12] |
+
+The ranges never overlap, and the gap follows the version when the order is
+reversed, so it is not warm-up. It is about **7%**, roughly 1.5 ms per 20,000
+rows. The object store is in memory, so that is CPU. A guess, not tested: the
+read path's new tracing spans, or filter evaluation now running on range
+scans. `cost_calibration`'s per-GET column moved the same way (13.0–13.4 →
+13.5–13.7 ms for its full scan) over a loopback S3, but by less than its own
+spread.
+
+Point reads did not separate: medians of 16–23 µs on both, with spreads of
+±20–260%. That is noise on this machine, and the cache probe's own comparison
+lines say "inside run-to-run noise" for every cache-on arm on both versions.
+
+**What this weighs against.** On 0.16 a descending scan over compacted data
+returned rows out of order. 7% of a scan's CPU, against a network round trip
+of several milliseconds per GET in a real bucket, does not argue for staying.
+It is recorded so that the next measurement of a scan is not mistaken for a
+regression of its own.
+
+**Where this stops.** The machine was not quiet: load average 6.5–16 across
+the runs, from work outside this measurement. That is why the GET counts lead
+and the clock follows. One machine, one fixture, aarch64 rather than the
+x86_64 container §8b–§8e ran on, and no profile of where the 7% goes.
+
 ## Paging by key, and loading relations in one read
 
 Two measurements from the record layer rather than the storage engine. Both are

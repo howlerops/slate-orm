@@ -16269,8 +16269,9 @@
     {
       "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
       "key": "v0.2.0 still ships SlateDB 0.16, and so does the live explor",
-      "verdict": "open",
-      "reviewed": "2026-10-13"
+      "verdict": "moment",
+      "reviewed": "2026-10-13",
+      "by": "A statement about what was published on the day the upgrade landed. v0.2.1, cut from the tree that carries SlateDB 0.17, is the release that answers it; docs/releasing.md records what it shipped."
     },
     {
       "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
@@ -16282,8 +16283,29 @@
     {
       "entry": "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
       "key": "The rest of 0.17 is unmeasured here.",
-      "verdict": "open",
+      "verdict": "closed",
+      "reviewed": "2026-10-13",
+      "by": "docs/performance.md section 8f: cache_probe, cost_calibration and loader_cliff run on both versions back to back. Requests identical in every row; a full scan about 7% slower on the CPU."
+    },
+    {
+      "entry": "2026-10-13-version-0-2-1.md",
+      "key": "Nothing is released by this commit.",
+      "verdict": "moment",
       "reviewed": "2026-10-13"
+    },
+    {
+      "entry": "2026-10-13-version-0-2-1.md",
+      "key": "The 7% is located, not explained.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "Against a correctness fix and a network round trip of milliseconds per GET, 7% of a scan's CPU does not change the decision to upgrade; a profile would explain a number that decides nothing. Recorded in docs/performance.md 8f so the next scan measurement is not mistaken for a fresh regression."
+    },
+    {
+      "entry": "2026-10-13-version-0-2-1.md",
+      "key": "The compatibility test used a local directory, not R2.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-13",
+      "by": "The format is what crosses versions and a local directory holds the same objects a bucket does; the lease, the one part that leans on the store's conditional writes, is slate-server's own lease.rs over object_store, whose only change in this upgrade is 0.14.1 to 0.14.2."
     }
   ]
 }
