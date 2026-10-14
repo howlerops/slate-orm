@@ -64,7 +64,7 @@ binaries_dir=${BINARIES_DIR:-$root/target/debug/examples}
 # the state `slate-headbench` was in before #265 — built by clippy, run by
 # nothing. Unlike that crate, all five of theirs already worked.
 case "$crate" in
-    slate-headbench) least=5 ;;
+    slate-headbench) least=6 ;;
     slate-slatedb) least=10 ;;
     slate-kernel) least=4 ;;
     slate-orm) least=1 ;;

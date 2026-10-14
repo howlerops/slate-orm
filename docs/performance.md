@@ -2426,6 +2426,13 @@ on a container with 16 GB of memory. Row counts here are properties of that.
 
 ### 8f. SlateDB 0.16 → 0.17: the same requests, and a scan about 7% slower on the CPU
 
+> **Corrected later, in §8g.** The 7% below was the clock on a busy machine
+> and is withdrawn. Counted in instructions, which load does not move, 0.17
+> does 0.6–3.3% more work per scan, depending on how the same source is
+> built. Of the two causes guessed at the end of this section, the tracing
+> spans are confirmed as roughly 1% of a scan, and filter evaluation on range
+> scans is refuted. The request counts and load rates below stand.
+
 The move to 0.17 (`ledger/2026-10-13-slatedb-0-17-and-the-descending-scan.md`)
 was for a correctness fix. Its release notes also touch the paths every
 section above measured: point lookups probe sources concurrently, range scans
@@ -2479,6 +2486,80 @@ regression of its own.
 the runs, from work outside this measurement. That is why the GET counts lead
 and the clock follows. One machine, one fixture, aarch64 rather than the
 x86_64 container §8b–§8e ran on, and no profile of where the 7% goes.
+
+### 8g. The 0.17 scan cost, counted in instructions rather than timed
+
+§8f's 7% did not survive a second look. A day later, at load average 15–19,
+the same comparison gave 23.0 against 23.2 ms. Interleaved with the original
+0.17 binary it gave spreads of ±300%. This is a ten-core Mac, eight
+performance cores and two efficiency cores, shared with other work, so a
+process's speed depends on where it is scheduled. The clock cannot settle 7%
+here.
+
+**Instructions retired can.** `crates/slate-headbench/examples/scan_count.rs`
+seeds `cache_probe`'s 20,000 rows, reopens them, and runs `SCANS` full scans
+on one thread. `/usr/bin/time -l` with `SCANS=0` and `SCANS=200` gives two
+instruction counts, and their difference over 200 is one scan's work. Seeding
+and start-up cancel out. Five runs of one binary agree to the thousand, in one
+of two or three modes about 1.5M apart. Compare like with like, and every
+range below is the spread of the runs.
+
+build: slate-slatedb 0.2.0 | features aws, cache | off dhat-heap | release (opt-level 3, debug line-tables-only) | aarch64-apple-darwin | slatedb 0.16.0, foyer 0.22.3, object_store 0.14.1, tokio 1.53.1
+
+build: slate-slatedb 0.2.1 | features aws, cache | off dhat-heap | release (opt-level 3, debug line-tables-only) | aarch64-apple-darwin | slatedb 0.17.0, foyer 0.22.6, object_store 0.14.2, tokio 1.53.1
+
+| build | instructions per scan |
+|---|---:|
+| registry 0.16, in the 0.16 tree | 328.1M – 331.2M |
+| registry 0.16, in the 0.17 tree (0.17's lockfile) | 329.3M – 333.8M |
+| registry 0.16, plus foyer 0.22.6 and object_store 0.14.2 | 329.6M – 331.0M |
+| registry 0.17 | 340.1M – 341.7M |
+| 0.17 with the per-row tracing span removed | 337.0M – 338.7M |
+
+**So the work grew, and by less than the clock said:** 340.2M against
+329.3M is 3.3%. The dependency bumps that came with 0.17 are not it: foyer
+0.22.6 and object_store 0.14.2 on top of 0.16 sit inside 0.16's own range.
+
+**One cause is demonstrated three ways.** 0.17 wraps every row a scan yields
+in a tracing span. `DbIterator::next_entry` clones the read's span and
+`.instrument()`s the fetch, and does it even when no tracing is configured,
+when the span is `Span::none()`. 0.16's `db_iter.rs` has no tracing at all.
+The three pieces of evidence:
+- **The profile:** Instruments' Time Profiler, 300 scans a side, found
+  `drop_in_place<tracing::instrument::Instrumented<…next_entry_inner…>>`
+  and `drop_in_place<tracing::span::Span>` in 0.17's samples and not in
+  0.16's.
+- **The counterfactual:** a copy of 0.17 with only those two lines changed
+  (`self.next_entry_inner().await`) saves 1.7M–3.4M a scan. That is the last
+  row of the table.
+- **The bisect:** SlateDB built from git at 14 of the 39 commits between the
+  two tags, every build identical but for the commit. The step at the commit
+  that added the span (#2048) is +3.4M in like modes, 330.6M → 334.0M.
+
+That is about 1% of a scan, or 135–170 instructions a row.
+
+**The rest is not attributable, and here is why not.** Built from a path at
+v0.16.0 and at the last commit before 0.17.0's version bump, the code moved
+334.0M → 335.9M, only +0.6%. Built from the registry, 0.16.0 → 0.17.0 moved
+329.3M → 340.2M, +3.3%. The same source compiles to a different instruction
+count depending on how it is built: registry 0.17.0 is byte-identical to the
+git commit, and costs 340.2M against 335.9M–338.8M. A ~1.5% difference between
+two builds is not yet a difference between two versions. Ruled out at the
+bisect's resolution:
+- Range-scan filters (#2076): 334.8M before and after.
+- The descending-scan fix (#2067): −1.5M, so it costs nothing measurable.
+- The cache hit/miss results (#2083) and streamed L0 flushes (#2064): no step
+  outside the noise.
+
+**What it weighs against has not changed.** 1–3% of a scan's CPU, over an
+in-memory store, against a correctness fix. In a bucket, each of a scan's
+GETs costs milliseconds. No change in this repository follows from it. The
+per-row span is upstream's to remove or to skip when the span is disabled.
+
+**Where this stops.** One fixture, on aarch64, one thread. Instructions are
+not cycles: cycles per scan moved 70.5–71.7M → 73.9–76.7M, the same direction
+and noisier. The bisect measured 14 commits, not 39. The profile was sampled
+at 1 ms, where a single function's share has a noise of about ±0.15%.
 
 ## Paging by key, and loading relations in one read
 

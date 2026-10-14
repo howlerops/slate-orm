@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-14T23:16:38+00:00",
+  "file": "docs/performance.md",
+  "dialect": "python",
+  "command": [
+    "python3",
+    "scripts/mutate_guard.py",
+    "scripts/check_closed_caveats.py"
+  ],
+  "commit": "afa1c94",
+  "python": "3.12.2",
+  "outcome": "clean",
+  "cases": [
+    {
+      "name": "the 0.17 scan attribution is removed",
+      "old": "### 8g. The 0.17 scan cost, counted in instructions rather than timed",
+      "new": "### 8g. Notes on scans",
+      "verdict": "caught",
+      "caught_by": [
+        "check_closed_caveats: FAIL  every witness is still in the tree"
+      ],
+      "suites_reported": 1,
+      "expect_survivor": null
+    }
+  ],
+  "restored_clean": true
+}

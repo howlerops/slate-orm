@@ -78,6 +78,11 @@ WITNESS: dict[str, tuple[str | None, str]] = {
         "exists to move every artefact onto SlateDB 0.17",
         "docs/releasing.md",
     ),
+    # The 0.17 scan cost, attributed. The needle is the section's heading.
+    "slatedb-0-17-scan-explained": (
+        "### 8g. The 0.17 scan cost, counted in instructions",
+        "docs/performance.md",
+    ),
     "slatedb-0-17-measured": (
         "### 8f. SlateDB 0.16 \u2192 0.17",
         "docs/performance.md",
@@ -1263,6 +1268,10 @@ WITNESSED: dict[tuple[str, str], str] = {
         "2026-10-13-slatedb-0-17-and-the-descending-scan.md",
         "v0.2.0 still ships SlateDB 0.16, and so does the live explor",
     ): "released-on-slatedb-0-17",
+    (
+        "2026-10-13-version-0-2-1.md",
+        "The 7% is located, not explained.",
+    ): "slatedb-0-17-scan-explained",
     (
         "2026-09-13-typescript-client.md",
         "The package is not published anywhere and its version is `0.",

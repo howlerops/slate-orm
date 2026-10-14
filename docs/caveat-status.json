@@ -16296,9 +16296,9 @@
     {
       "entry": "2026-10-13-version-0-2-1.md",
       "key": "The 7% is located, not explained.",
-      "verdict": "deliberate",
-      "reviewed": "2026-10-13",
-      "by": "Against a correctness fix and a network round trip of milliseconds per GET, 7% of a scan's CPU does not change the decision to upgrade; a profile would explain a number that decides nothing. Recorded in docs/performance.md 8f so the next scan measurement is not mistaken for a fresh regression."
+      "verdict": "closed",
+      "reviewed": "2026-10-14",
+      "by": "docs/performance.md 8g: counted in instructions rather than timed, the 7% was the clock on a busy machine; 0.17 does 0.6-3.3% more work per scan, of which the per-row tracing span in DbIterator::next_entry is about 1%, shown by profile, counterfactual build and a 14-point bisect. ledger/2026-10-14-the-scan-cost-counted-not-timed.md."
     },
     {
       "entry": "2026-10-13-version-0-2-1.md",
@@ -16327,6 +16327,37 @@
       "verdict": "deliberate",
       "reviewed": "2026-10-13",
       "by": "The live deployment is a demonstration, not the test of the fix; crates/slate-slatedb/tests/descending.rs builds the compacted shape on purpose and fails on 0.16."
+    },
+    {
+      "entry": "2026-10-14-the-scan-cost-counted-not-timed.md",
+      "key": "About two thirds of the gap is not attributed.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-14",
+      "by": "Below the difference between two builds of byte-identical source (about 1.5%), a per-commit attribution would be dividing noise; docs/performance.md 8g states the residual and why it stops there."
+    },
+    {
+      "entry": "2026-10-14-the-scan-cost-counted-not-timed.md",
+      "key": "`scan_count` was not mutation-tested.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-14",
+      "by": "An instrument whose output is a number a person reads; its one assertion is the row-count check cache_probe already makes, and run_examples.sh runs it on every CI push."
+    },
+    {
+      "entry": "2026-10-14-the-scan-cost-counted-not-timed.md",
+      "key": "Nothing was reported upstream.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-14",
+      "by": "Filing an issue on slatedb/slatedb is an outward-facing act the owner decides; the finding and its evidence are in docs/performance.md 8g, ready to quote.",
+      "recheck": {
+        "manual": "Search https://github.com/slatedb/slatedb/issues for an issue about DbIterator::next_entry instrumenting every row with a disabled span; if one exists or the span is gone in a newer release, this caveat is overtaken."
+      }
+    },
+    {
+      "entry": "2026-10-14-the-scan-cost-counted-not-timed.md",
+      "key": "aarch64 only.",
+      "verdict": "deliberate",
+      "reviewed": "2026-10-14",
+      "by": "The cause found is source-level (a per-row span in DbIterator::next_entry), so it is not architecture-specific; the residual is build-layout and would differ per target anyway."
     }
   ]
 }
